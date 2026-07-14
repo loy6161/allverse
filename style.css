@@ -1,0 +1,86 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #06060f;
+  font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif;
+  color: #eee;
+}
+
+#scene {
+  position: fixed;
+  inset: 0;
+  display: block;
+}
+
+.hidden { display: none !important; }
+
+/* ---- HUD ---- */
+#hud {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 10;
+  pointer-events: none;
+  user-select: none;
+}
+
+#room-info {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  background: rgba(10, 10, 30, 0.6);
+  border: 1px solid rgba(0, 255, 234, 0.35);
+  border-radius: 8px;
+  padding: 8px 14px;
+  backdrop-filter: blur(6px);
+}
+
+#room-name {
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  color: #00ffea;
+  text-shadow: 0 0 8px rgba(0, 255, 234, 0.6);
+}
+
+#player-count {
+  font-size: 13px;
+  color: #ccc;
+}
+
+#controls-help {
+  margin-top: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(10, 10, 30, 0.45);
+  border-radius: 6px;
+  padding: 4px 10px;
+  display: inline-block;
+}
+
+/* join-screen / chat-root の中身は各モジュールがスタイルごと注入する */
+#join-screen { position: fixed; inset: 0; z-index: 20; }
+#chat-root { position: fixed; left: 16px; bottom: 16px; z-index: 10; }
+
+/* ---- アバター変更ボタン ---- */
+#avatar-btn {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: #eee;
+  background: rgba(10, 10, 30, 0.6);
+  border: 1px solid rgba(255, 0, 229, 0.45);
+  border-radius: 8px;
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+}
+#avatar-btn:hover {
+  background: rgba(255, 0, 229, 0.2);
+  box-shadow: 0 0 10px rgba(255, 0, 229, 0.4);
+}

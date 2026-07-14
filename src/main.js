@@ -1,0 +1,210 @@
+import * as THREE from 'three';
+import { createWorld } from './world.js';
+import { createAvatar } from './avatar.js';
+import { initJoinScreen, openCustomizer } from './join.js';
+import { initMobile } from './mobile.js';
+import { initChat } from './chat.js';
+import { initSimPlayers } from './players.js';
+import { initControls } from './controls.js';
+import { initLiveScreen } from './screen.js';
+import { initNet } from './net.js';
+import { initRemotePlayers } from './remote.js';
+
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+// タッチ端末（スマホ想定）では負荷軽減のため影を無効化
+const IS_TOUCH =
+  'ontouchstart' in window || navigator.maxTouchPoints > 0 || location.search.includes('mobile=1');
+renderer.shadowMap.enabled = !IS_TOUCH;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
+camera.position.set(0, 6, 14);
+camera.lookAt(0, 1, 0);
+
+const world = createWorld(scene);
+const liveScreen = initLiveScreen(camera);
+
+let player = null;
+let controls = null;
+let chat = null;
+let sim = null;
+let net = null;
+let remote = null;
+let myId = null;
+let demoMode = false;
+
+// 現在のプレイヤー情報（再カスタムで書き換わる）
+const session = { name: '', config: null };
+
+const hud = document.getElementById('hud');
+const chatRoot = document.getElementById('chat-root');
+const playerCountEl = document.getElementById('player-count');
+const roomNameEl = document.getElementById('room-name');
+const avatarBtn = document.getElementById('avatar-btn');
+
+// ?npc=1 でNPC（賑やかし）をネットワークモードでも追加できる
+const WANT_NPC = new URLSearchParams(location.search).get('npc') === '1';
+
+function updateCount(serverCount) {
+  const npc = sim ? sim.players.length : 0;
+  const others = remote ? remote.count() : 0;
+  const total = serverCount != null ? serverCount + npc : 1 + others + npc;
+  playerCountEl.textContent = `${total} 人`;
+}
+
+// サーバーに繋がらない/切断されたときは従来のNPCデモに切り替える
+function startDemoMode() {
+  if (demoMode) return;
+  demoMode = true;
+  if (remote) remote.clear();
+  if (!sim) {
+    sim = initSimPlayers(scene, {
+      count: 7,
+      bounds: world.bounds,
+      onChat: (n, t) => chat.addMessage(n, t),
+    });
+  }
+  chat.addMessage('', 'オフラインデモモード（同期サーバー未接続）', { system: true });
+  updateCount(null);
+}
+
+initJoinScreen(({ name, config }) => {
+  // 入場ボタンのクリック（ユーザー操作）を起点にライブ再生を開始する
+  liveScreen.play();
+
+  session.name = name;
+  session.config = { ...config };
+
+  player = createAvatar({ ...config, name });
+  player.position.copy(world.spawnPoint);
+  scene.add(player);
+
+  controls = initControls(camera, player, renderer.domElement, { bounds: world.bounds });
+
+  chat = initChat({
+    onSend: (text) => {
+      chat.addMessage(session.name, text, { self: true });
+      if (player.userData.say) player.userData.say(text);
+      if (net && !demoMode) net.sendChat(text);
+    },
+  });
+
+  // リアルタイム同期へ接続（失敗時は onDisconnect → NPCデモにフォールバック）
+  remote = initRemotePlayers(scene);
+  net = initNet({
+    name,
+    config,
+    handlers: {
+      onWelcome: ({ id, room, peers, count }) => {
+        myId = id;
+        roomNameEl.textContent = `VERSE CITY #${room}`;
+        peers.forEach((p) => remote.addPeer(p));
+        updateCount(count);
+      },
+      onPeerJoin: (p) => {
+        remote.addPeer(p);
+        chat.addMessage('', `${p.n} が入場しました`, { system: true });
+      },
+      onPeerMove: (m) => remote.movePeer(m),
+      onPeerUpdate: (m) => remote.updatePeer(m),
+      onPeerLeave: (id) => remote.removePeer(id),
+      onChat: (m) => {
+        if (m.id === myId) return; // 自分の発言はローカルで表示済み
+        chat.addMessage(m.n, m.txt);
+        remote.say(m.id, m.txt);
+      },
+      onCount: (c) => updateCount(c),
+      onDisconnect: () => startDemoMode(),
+    },
+  });
+
+  if (WANT_NPC) {
+    sim = initSimPlayers(scene, {
+      count: 7,
+      bounds: world.bounds,
+      onChat: (n, t) => chat.addMessage(n, t),
+    });
+  }
+
+  updateCount(null);
+  hud.classList.remove('hidden');
+  chatRoot.classList.remove('hidden');
+  avatarBtn.classList.remove('hidden');
+
+  // スマホ対応（タッチ端末 or ?mobile=1 のときだけ有効化される）
+  initMobile({ controls, chatRoot });
+});
+
+// ---- 入場後のアバター再カスタム ----
+avatarBtn.addEventListener('click', () => {
+  openCustomizer({
+    name: session.name,
+    config: session.config,
+    onApply: ({ name, config }) => {
+      session.name = name;
+      session.config = { ...config };
+
+      // 位置と向きを保ったままアバターを作り直す
+      const pos = player.position.clone();
+      const rotY = player.rotation.y;
+      scene.remove(player);
+      player = createAvatar({ ...config, name });
+      player.position.copy(pos);
+      player.rotation.y = rotY;
+      scene.add(player);
+      controls.setAvatar(player);
+
+      chat.addMessage('', `${name} がアバターを変更しました`, { system: true });
+      if (net && !demoMode) net.sendUpdate(name, config);
+    },
+  });
+});
+
+const clock = new THREE.Clock();
+const prevPos = new THREE.Vector3();
+
+function loop() {
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.1);
+  const t = clock.elapsedTime;
+
+  if (world.update) world.update(dt, t);
+
+  if (player) {
+    controls.update(dt);
+    if (player.userData.update) player.userData.update(dt);
+    if (sim) sim.update(dt);
+    if (remote) remote.update(dt);
+
+    // 自分の位置をサーバーへ（net.js側で10Hzスロットル＋変化なしスキップ）
+    if (net && !demoMode) {
+      const moving = prevPos.distanceToSquared(player.position) > 1e-6;
+      net.sendPos(
+        player.position.x,
+        player.position.z,
+        Math.round(THREE.MathUtils.radToDeg(player.rotation.y)),
+        moving
+      );
+      prevPos.copy(player.position);
+    }
+  } else {
+    // 入場前はステージ周りをゆっくり旋回するカメラ
+    const r = 26;
+    camera.position.set(Math.sin(t * 0.12) * r, 9, Math.cos(t * 0.12) * r);
+    camera.lookAt(0, 3, 0);
+  }
+
+  renderer.render(scene, camera);
+  liveScreen.update();
+}
+loop();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});

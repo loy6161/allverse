@@ -1,0 +1,55 @@
+# VERSE CITY Web
+
+clubVERSE のブラウザ版メタバース。フェーズ①（プリセットアバター＋歩き回り＋チャット）の
+**リアルタイムマルチプレイ実装済み**（ローカル環境）。
+
+## 現状の位置づけ
+
+- **リアルタイム同期: 実装済み**（server/ のWebSocketサーバー。複数ブラウザで相互にアバター・移動・チャットが同期）
+- サーバー未起動時は自動で**オフラインデモモード**（NPCが歩き回る従来の疑似マルチ）にフォールバック
+- `?npc=1` を付けるとネットワークモードでもNPC（賑やかし）を追加できる
+- ワールドは仮の VERSE CITY（ネオンシティ×ライブステージ）。将来 Unity から glTF 書き出しした本物のワールドに差し替える
+- 会員認証・VERSE COIN 連携は未接続（Allverse_Portal と連携予定）
+- デプロイ（ホスティング）は未実施。無料枠の候補選定はこれから
+
+## 起動方法
+
+```
+# 1) 同期サーバー（初回のみ server/ で npm install）
+cd verse_city_web/server && npm start        # ポート5179
+
+# 2) クライアント（ビルド不要の静的サイト。Three.jsはCDN importmap）
+npx -y serve -l 5178 verse_city_web
+```
+
+→ http://localhost:5178 を開く（複数タブ/複数端末で開くと同じワールドに入れる）
+→ サーバー状態: http://localhost:5179 ／ VRC連携用: http://localhost:5179/api/presence.json
+
+## 構成
+
+| ファイル | 役割 |
+|---|---|
+| index.html / style.css | 骨格・HUD・アバター変更ボタン |
+| src/main.js | 全体統合・描画ループ・再カスタム処理 |
+| src/controls.js | 三人称操作（WASD＋ドラッグ視点＋アナログ入力API） |
+| src/world.js | VERSE CITY ワールド（ステージ・ビル群・照明演出） |
+| src/avatar.js | プリセットアバター生成（歩行アニメ・吹き出し・ネームプレート） |
+| src/join.js | 入場画面＋入場後のアバター変更画面 |
+| src/chat.js | チャットUI |
+| src/players.js | 疑似マルチプレイ（NPC） |
+| src/screen.js | ステージのYouTube埋め込みスクリーン（CSS3D、入場ボタンで再生開始） |
+| src/mobile.js | スマホ対応（バーチャルジョイスティック・ピンチズーム・チャット折りたたみ） |
+| src/net.js | WebSocket通信（10Hz位置送信・チャット・アバター変更通知） |
+| src/remote.js | リモートプレイヤー表示（補間移動・歩行アニメ・吹き出し） |
+| server/server.js | 同期サーバー（ルーム制・presence.json・自動テスト server/test.js 付き） |
+
+通信仕様: [docs/PROTOCOL.md](docs/PROTOCOL.md)
+
+スマホ動作の確認: タッチ端末で開くか、PCでは `http://localhost:5178/?mobile=1` で強制有効化。
+連携仕様: [docs/PRESENCE_SPEC.md](docs/PRESENCE_SPEC.md)（VRChat相互プレゼンス連携）
+
+## ロードマップ（確定済み）
+
+1. **フェーズ①**: プリセットアバター＋歩き回り＋チャット（このモックの本実装化＋リアルタイム同期）
+2. **フェーズ②**: VRM対応（レギュラーメンバー）、ボイチャ（レギュラーのみ）、ルーム一覧・友達がいる部屋への合流
+3. **フェーズ③**: テクスチャカスタム（Tシャツ柄のテンプレ差し替え等）

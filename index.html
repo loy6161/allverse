@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VERSE CITY - clubVERSE Web (Mockup)</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <!-- 入場前：アバター選択＋名前入力（join.js がこの中にUIを構築する） -->
+  <div id="join-screen"></div>
+
+  <!-- 入場後HUD -->
+  <div id="hud" class="hidden">
+    <div id="room-info">
+      <span id="room-name">VERSE CITY #1</span>
+      <span id="player-count"></span>
+    </div>
+    <div id="controls-help">移動: WASD / 矢印キー ・ 視点: ドラッグ ・ ズーム: ホイール</div>
+  </div>
+
+  <!-- チャット（chat.js がこの中にUIを構築する） -->
+  <div id="chat-root" class="hidden"></div>
+
+  <!-- 入場後のアバター変更ボタン -->
+  <button id="avatar-btn" class="hidden">アバター変更</button>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

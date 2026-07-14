@@ -1,0 +1,10 @@
+# Render (無料プラン) 用のBlueprint
+# ダッシュボードで「New +」→「Blueprint」でこのリポジトリを選ぶと自動で読み込まれる
+services:
+  - type: web
+    name: verse-city-web
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node server.js

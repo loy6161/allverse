@@ -1,0 +1,206 @@
+import { AVATAR_PARTS } from './avatar.js';
+
+// ------------------------------------------------------------------
+// アバターconfig（hex色形式） ⇔ av（プリセット番号形式）の相互変換
+// PROTOCOL.md / PRESENCE_SPEC.md 付録A と同一の対応表（avatar.js の AVATAR_PARTS）
+//   av.h  = 髪型id（文字列。AVATAR_PARTS.hairStyles の値そのもの）
+//   av.hc = 髪色プリセット番号（AVATAR_PARTS.hairColors のindex）
+//   av.sc = 服色プリセット番号（AVATAR_PARTS.shirtColors のindex）
+//   av.bc = 肌色プリセット番号（AVATAR_PARTS.bodyColors のindex）
+// ------------------------------------------------------------------
+
+export function configToAv(config) {
+  const cfg = config || {};
+  const hc = AVATAR_PARTS.hairColors.indexOf(cfg.hairColor);
+  const sc = AVATAR_PARTS.shirtColors.indexOf(cfg.shirtColor);
+  const bc = AVATAR_PARTS.bodyColors.indexOf(cfg.bodyColor);
+  const h = AVATAR_PARTS.hairStyles.includes(cfg.hairStyle) ? cfg.hairStyle : AVATAR_PARTS.hairStyles[0];
+  return {
+    h,
+    hc: hc >= 0 ? hc : 0,
+    sc: sc >= 0 ? sc : 0,
+    bc: bc >= 0 ? bc : 0,
+  };
+}
+
+export function avToConfig(av) {
+  const a = av || {};
+  const bcIdx = Number.isInteger(a.bc) && a.bc >= 0 && a.bc < AVATAR_PARTS.bodyColors.length ? a.bc : 0;
+  const hcIdx = Number.isInteger(a.hc) && a.hc >= 0 && a.hc < AVATAR_PARTS.hairColors.length ? a.hc : 0;
+  const scIdx = Number.isInteger(a.sc) && a.sc >= 0 && a.sc < AVATAR_PARTS.shirtColors.length ? a.sc : 0;
+  const hairStyle = AVATAR_PARTS.hairStyles.includes(a.h) ? a.h : AVATAR_PARTS.hairStyles[0];
+  return {
+    bodyColor: AVATAR_PARTS.bodyColors[bcIdx],
+    hairStyle,
+    hairColor: AVATAR_PARTS.hairColors[hcIdx],
+    shirtColor: AVATAR_PARTS.shirtColors[scIdx],
+  };
+}
+
+// ------------------------------------------------------------------
+// WebSocket通信
+// ------------------------------------------------------------------
+
+const WELCOME_TIMEOUT_MS = 3000;
+const POS_INTERVAL_MS = 100; // 最大10Hz
+
+export function initNet({ name, config, handlers }) {
+  const h = handlers || {};
+  let ws = null;
+  let welcomeTimer = null;
+  let disconnectFired = false;
+  let joined = false;
+
+  function fireDisconnect() {
+    if (disconnectFired) return;
+    disconnectFired = true;
+    if (h.onDisconnect) h.onDisconnect();
+  }
+
+  function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(obj));
+    }
+  }
+
+  function clearWelcomeTimer() {
+    if (welcomeTimer) {
+      clearTimeout(welcomeTimer);
+      welcomeTimer = null;
+    }
+  }
+
+  // 接続先の自動判別:
+  // - 開発時（ポート5178の静的サーバーから配信）→ ws://<host>:5179/ws
+  // - 本番（同期サーバー自身が静的配信、https含む）→ 同一オリジンの /ws
+  const wsUrl =
+    location.port === '5178'
+      ? `ws://${location.hostname}:5179/ws`
+      : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+
+  try {
+    ws = new WebSocket(wsUrl);
+  } catch (e) {
+    // WebSocket自体を生成できない環境（不正URL等）→ 失敗扱い
+    fireDisconnect();
+    ws = null;
+  }
+
+  if (ws) {
+    ws.addEventListener('open', () => {
+      send({ t: 'join', n: name, av: configToAv(config) });
+      welcomeTimer = setTimeout(() => {
+        welcomeTimer = null;
+        try {
+          ws.close();
+        } catch (e) {
+          // noop
+        }
+        fireDisconnect();
+      }, WELCOME_TIMEOUT_MS);
+    });
+
+    ws.addEventListener('message', (ev) => {
+      let msg;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch (e) {
+        return;
+      }
+      if (!msg || typeof msg.t !== 'string') return;
+
+      switch (msg.t) {
+        case 'welcome':
+          joined = true;
+          clearWelcomeTimer();
+          if (h.onWelcome) {
+            h.onWelcome({ id: msg.id, room: msg.room, peers: msg.peers, count: msg.count });
+          }
+          break;
+        case 'peer-join':
+          if (h.onPeerJoin) h.onPeerJoin(msg.p);
+          break;
+        case 'pos':
+          if (h.onPeerMove) h.onPeerMove(msg);
+          break;
+        case 'peer-update':
+          if (h.onPeerUpdate) h.onPeerUpdate(msg);
+          break;
+        case 'peer-leave':
+          if (h.onPeerLeave) h.onPeerLeave(msg.id);
+          break;
+        case 'chat':
+          if (h.onChat) h.onChat({ id: msg.id, n: msg.n, txt: msg.txt });
+          break;
+        case 'count':
+          if (h.onCount) h.onCount(msg.c);
+          break;
+        default:
+          break;
+      }
+    });
+
+    ws.addEventListener('close', () => {
+      clearWelcomeTimer();
+      fireDisconnect();
+    });
+
+    ws.addEventListener('error', () => {
+      // closeイベントが後続して発火するため、ここでは何もしない（fireDisconnectは1回だけ）
+    });
+  }
+
+  // ---- 送信（位置は10Hzスロットル＋変化なしなら送らない） ----
+  let lastSentPos = null;
+  let lastPosSendAt = 0;
+
+  function sendPos(x, z, r, moving) {
+    if (!joined) return;
+    const qx = Math.round(x * 10) / 10;
+    const qz = Math.round(z * 10) / 10;
+    const qr = Math.round(r);
+    const qm = !!moving;
+
+    if (
+      lastSentPos &&
+      lastSentPos.x === qx &&
+      lastSentPos.z === qz &&
+      lastSentPos.r === qr &&
+      lastSentPos.m === qm
+    ) {
+      return;
+    }
+
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (now - lastPosSendAt < POS_INTERVAL_MS) return;
+
+    lastPosSendAt = now;
+    lastSentPos = { x: qx, z: qz, r: qr, m: qm };
+    send({ t: 'pos', x: qx, z: qz, r: qr, m: qm });
+  }
+
+  function sendChat(txt) {
+    if (!joined) return;
+    const s = String(txt == null ? '' : txt).slice(0, 200);
+    if (!s) return;
+    send({ t: 'chat', txt: s });
+  }
+
+  function sendUpdate(newName, newConfig) {
+    if (!joined) return;
+    send({ t: 'update', n: newName, av: configToAv(newConfig) });
+  }
+
+  function close() {
+    clearWelcomeTimer();
+    if (ws) {
+      try {
+        ws.close();
+      } catch (e) {
+        // noop
+      }
+    }
+  }
+
+  return { sendPos, sendChat, sendUpdate, close };
+}
