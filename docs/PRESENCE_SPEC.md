@@ -1,10 +1,20 @@
-# VERSE CITY 相互プレゼンス連携 仕様たたき台 v0.2
+# VERSE CITY 相互プレゼンス連携 仕様 v0.3
 
 ブラウザ版メタバース（VERSE CITY Web）と VRChat版 VERSE CITY の間で、
 「どちらの世界にいる人も、もう一方の世界の客席にアバターとして現れる」ための連携仕様。
 
-- 作成: 2026-07-14 ／ v0.2 更新: 2026-07-14（未決事項への回答を反映）
-- ステータス: たたき台（レビュー中）
+- 作成: 2026-07-14 ／ v0.2: 未決事項への回答反映 ／ **v0.3 (2026-07-15): Unity側返答（HANDOFF_REPLY_FROM_UNITY.md）の統合方針を反映・両チャット合意**
+- ステータス: **合意済み・presence.json は v=1 で凍結**（変更は両チャット協議＋バージョン上げ）
+
+## v0.3 での重要な構成変更（Unity側 ALLVERSE 基盤との統合）
+
+- **VRCワールドは presence.json を直接読まない。** Unity側の ALLVERSE Worker（Cloudflare）がサーバー間で
+  presence.json を取得（4秒キャッシュ）し、ワールドへは Worker の live.json 1本で配信する。
+  → ブラウザ側サーバーの改修はゼロ。presence.json は公開GETのまま
+- ts鮮度判定・Renderスリープ復帰の吸収は Worker 側が担当
+- §2.4 の「マスター取得＋同期変数」推奨は撤回（Unity側の裁量で全クライアント取得方式を採用）
+- **`yt[]` は実装しない（常に空・スキーマ互換のため残置）。** YouTube系データはALLVERSE Workerが正
+- 中間ソフト（§3.2）は ALLVERSE の harvester に一本化（`[VCITY1]` 行は本サーバーへ、`[ALLVERSE]` 行はWorkerへ送り分け）
 
 ---
 
