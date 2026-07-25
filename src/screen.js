@@ -3,7 +3,7 @@ import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer
 
 // デモ用の埋め込み動画ID（24時間ライブ配信・埋め込み許可されているもの）
 // 本番ではイベント配信のIDに差し替える（将来はサーバーから配信IDを受け取る）
-const VIDEO_ID = 'aqz-KE-bpKQ'; // デモ用: Blender公式オープンムービー（埋め込み可・安定）
+const VIDEO_ID = 'unrobrGhlv0'; // clubVERSE関連動画（loyさん指定）
 // 本番はイベントのYouTube生配信のIDに差し替える。ライブでも仕組みは同一
 
 // ステージのLEDスクリーン位置に合わせたYouTube埋め込みレイヤー（CSS3D方式）
