@@ -57,7 +57,7 @@ npx -y serve -l 5178 verse_city_web
 スマホ動作の確認: タッチ端末で開くか、PCでは `http://localhost:5178/?mobile=1` で強制有効化。
 連携仕様: [docs/PRESENCE_SPEC.md](docs/PRESENCE_SPEC.md)（VRChat相互プレゼンス連携）
 
-## ロードマップ（2026-07-18 確定・3フェイズ構成）
+## ロードマップ（2026-07-25 確定・3フェイズ構成）
 
 ### フェイズ1: 両世界の窓 —「ブラウザ勢・YouTubeコメント勢がVRCにも現れる」
 - ブラウザ会場（本リポジトリ）＋ presence.json → ALLVERSE Worker → VRCワールドに出現（Unity側と合意済み）
