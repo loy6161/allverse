@@ -88,23 +88,42 @@ export function initLiveScreen(camera, scene) {
     }
   }
 
+  // 動画を差し替えるとプレイヤーが作り直されるため、
+  // ユーザーの設定（ミュート・音量・再生状態）を覚えておいて毎回復元する。
+  // ※これは各自の手元の設定であり、他の人には同期しない
+  const prefs = { muted: false, volume: 70, playing: true };
+
+  function applyPrefs() {
+    command('setVolume', [prefs.volume]);
+    if (prefs.muted) command('mute');
+    else command('unMute');
+    if (!prefs.playing) command('pauseVideo');
+  }
+
   function mountIframe(videoId) {
     if (iframe) holder.removeChild(iframe);
     iframe = document.createElement('iframe');
     iframe.style.width = '100%';
     iframe.style.height = '100%';
     iframe.style.border = '0';
-    // enablejsapi=1 と origin 指定で、postMessage による再生・音量操作が有効になる
+    // enablejsapi=1 と origin 指定で、postMessage による再生・音量操作が有効になる。
+    // ミュート中は mute=1 で読み込む（postMessageが届く前に音が出るのを防ぐ）
     const origin = encodeURIComponent(location.origin);
     iframe.src =
       `https://www.youtube.com/embed/${videoId}` +
-      `?autoplay=1&mute=0&playsinline=1&rel=0&enablejsapi=1&origin=${origin}`;
+      `?autoplay=1&mute=${prefs.muted ? 1 : 0}&playsinline=1&rel=0&enablejsapi=1&origin=${origin}`;
     iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
     holder.appendChild(iframe);
-    // 読み込み後に listening を送ると、再生位置などが定期的に送られてくる
+    // 読み込み後に listening を送ると再生位置などが届くようになる。
+    // 同時に、覚えておいた設定を復元する（プレイヤー準備待ちのため数回試みる）
     iframe.addEventListener('load', () => {
       startListening();
-      setTimeout(startListening, 1000); // 取りこぼし対策
+      applyPrefs();
+      setTimeout(() => {
+        startListening();
+        applyPrefs();
+      }, 1000);
+      setTimeout(applyPrefs, 2500);
     });
   }
 
@@ -148,7 +167,7 @@ export function initLiveScreen(camera, scene) {
 
   // YouTubeから再生位置・長さ・再生状態を受け取る（listening を送ると定期的に届く）
   const stateListeners = new Set();
-  const state = { currentTime: 0, duration: 0, playing: true, live: false };
+  const state = { currentTime: 0, duration: 0, playing: true, live: false, muted: false, volume: 70 };
 
   window.addEventListener('message', (e) => {
     if (e.origin !== 'https://www.youtube.com') return;
@@ -167,6 +186,9 @@ export function initLiveScreen(camera, scene) {
       state.live = !info.duration || info.duration > 86400;
     }
     if (typeof info.playerState === 'number') state.playing = info.playerState === 1;
+    // 実際のプレイヤーの音量・ミュート状態（UIの表示をここに合わせる）
+    if (typeof info.muted === 'boolean') state.muted = info.muted;
+    if (typeof info.volume === 'number') state.volume = info.volume;
     for (const cb of stateListeners) cb({ ...state });
   });
 
@@ -183,11 +205,26 @@ export function initLiveScreen(camera, scene) {
   }
 
   const player = {
-    play: () => command('playVideo'),
-    pause: () => command('pauseVideo'),
-    mute: () => command('mute'),
-    unMute: () => command('unMute'),
-    setVolume: (v) => command('setVolume', [Math.max(0, Math.min(100, Math.round(v)))]),
+    play: () => {
+      prefs.playing = true;
+      command('playVideo');
+    },
+    pause: () => {
+      prefs.playing = false;
+      command('pauseVideo');
+    },
+    mute: () => {
+      prefs.muted = true;
+      command('mute');
+    },
+    unMute: () => {
+      prefs.muted = false;
+      command('unMute');
+    },
+    setVolume: (v) => {
+      prefs.volume = Math.max(0, Math.min(100, Math.round(v)));
+      command('setVolume', [prefs.volume]);
+    },
     seekTo: (sec) => command('seekTo', [Math.max(0, sec), true]),
     onState: (cb) => {
       stateListeners.add(cb);

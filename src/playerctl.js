@@ -211,6 +211,7 @@ export function initPlayerControls({ player }) {
   let playing = true;
   let muted = false;
   let seeking = false;
+  let adjustingVolume = false;
   let duration = 0;
   let live = false;
 
@@ -241,6 +242,16 @@ export function initPlayerControls({ player }) {
     }
   });
 
+  // 音量つまみを操作している間は、プレイヤー側からの値でつまみを上書きしない
+  vol.addEventListener('pointerdown', () => {
+    adjustingVolume = true;
+  });
+  const endVolume = () => {
+    adjustingVolume = false;
+  };
+  vol.addEventListener('pointerup', endVolume);
+  vol.addEventListener('pointercancel', endVolume);
+
   // シーク操作中は再生位置の自動更新を止める（つまみが飛ばないように）
   seek.addEventListener('pointerdown', () => {
     seeking = true;
@@ -261,6 +272,16 @@ export function initPlayerControls({ player }) {
 
     playing = s.playing;
     playBtn.textContent = playing ? '⏸' : '▶';
+
+    // 動画の差し替え後などに、実際のプレイヤーの状態へ表示を合わせる
+    if (typeof s.muted === 'boolean' && s.muted !== muted) {
+      muted = s.muted;
+      muteBtn.textContent = muted ? '🔇' : '🔊';
+    }
+    if (!adjustingVolume && typeof s.volume === 'number' && Math.abs(s.volume - Number(vol.value)) > 1) {
+      vol.value = String(Math.round(s.volume));
+      volLabel.textContent = vol.value;
+    }
 
     if (live) {
       seek.disabled = true;
