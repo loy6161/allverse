@@ -11,6 +11,7 @@ import { initNet } from './net.js';
 import { initRemotePlayers } from './remote.js';
 import { initEmoteBar } from './emotebar.js';
 import { initScreenUI } from './screenui.js';
+import { initViewMode } from './viewmode.js';
 
 const canvas = document.getElementById('scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -27,7 +28,8 @@ const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerH
 camera.position.set(0, 6, 14);
 camera.lookAt(0, 1, 0);
 
-const world = createWorld(scene);
+// タッチ端末は負荷を抑えた構成でワールドを作る（反射・粒子数など）
+const world = createWorld(scene, { lowSpec: IS_TOUCH });
 const liveScreen = initLiveScreen(camera);
 
 let player = null;
@@ -169,6 +171,9 @@ initJoinScreen(({ name, config }) => {
     },
   });
   screenUI.setCurrent(liveScreen.getVideo());
+
+  // 全画面表示・UI非表示（映像だけ見たいとき用）
+  initViewMode();
 
   // スマホ対応（タッチ端末 or ?mobile=1 のときだけ有効化される）
   initMobile({ controls, chatRoot });

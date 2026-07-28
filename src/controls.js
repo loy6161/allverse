@@ -21,9 +21,15 @@ export function initControls(camera, avatar, domElement, { bounds }) {
   });
   window.addEventListener('keyup', (e) => keys.delete(e.code));
 
+  // pitch: 負=カメラが下がって上を見上げる / 正=カメラが上がって見下ろす
+  // 月やモノリスの上部を見上げられるよう、負の側を広く取っている
+  const PITCH_MIN = -0.75;
+  const PITCH_MAX = 1.2;
+  const CAMERA_MIN_Y = 0.4; // 見上げてもカメラが床に潜らないようにする下限
+
   function orbit(dx, dy) {
     yaw -= dx * 0.005;
-    pitch = THREE.MathUtils.clamp(pitch + dy * 0.004, 0.05, 1.2);
+    pitch = THREE.MathUtils.clamp(pitch + dy * 0.004, PITCH_MIN, PITCH_MAX);
   }
 
   function zoom(delta) {
@@ -97,6 +103,8 @@ export function initControls(camera, avatar, domElement, { bounds }) {
       Math.cos(yaw) * Math.cos(pitch)
     ).multiplyScalar(dist);
     camera.position.copy(target).add(offset);
+    // 見上げた時にカメラが床下へ潜らないように持ち上げる
+    if (camera.position.y < CAMERA_MIN_Y) camera.position.y = CAMERA_MIN_Y;
     camera.lookAt(target);
   }
 

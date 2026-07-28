@@ -1,9 +1,16 @@
 import * as THREE from 'three';
+import { Reflector } from 'three/addons/objects/Reflector.js';
 
 // =====================================================================
-// VERSE CITY - ライブ会場ワールド（仮モデル）
-// clubVERSE を仮再現する夜のネオンシティ × ライブ会場
+// VERSE CITY - ライブ会場ワールド
+// clubVERSE（VRChat版）の実写を目標に、暖色ネオン×紺色の夜空で寄せた再現
+// 参照仕様: docs/WORLD_REFERENCE.md
 // =====================================================================
+
+// 暖色ネオンのメインパレット（オレンジ〜温白）。青紫は差し色のみ。
+const NEON_WARM_A = 0xffb066; // オレンジ寄りの温白
+const NEON_WARM_B = 0xffe3bf; // ほぼ白に近い温白
+const NEON_ACCENT_VIOLET = 0x7c4dff; // 差し色
 
 // ---------------------------------------------------------------------
 // ユーティリティ: CanvasTexture 生成
@@ -15,16 +22,16 @@ function makeScreenTexture(text) {
   canvas.height = 512;
   const ctx = canvas.getContext('2d');
 
-  // 背景グラデーション
+  // 背景グラデーション（紺〜黒）
   const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-  grad.addColorStop(0, '#050014');
-  grad.addColorStop(0.5, '#1a0033');
-  grad.addColorStop(1, '#000814');
+  grad.addColorStop(0, '#050810');
+  grad.addColorStop(0.5, '#0a1024');
+  grad.addColorStop(1, '#04060e');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // 格子ライン
-  ctx.strokeStyle = 'rgba(0, 255, 255, 0.15)';
+  // 格子ライン（温白の薄いライン）
+  ctx.strokeStyle = 'rgba(255, 210, 160, 0.10)';
   ctx.lineWidth = 2;
   for (let x = 0; x < canvas.width; x += 64) {
     ctx.beginPath();
@@ -39,75 +46,97 @@ function makeScreenTexture(text) {
     ctx.stroke();
   }
 
-  // メインテキスト（グロー）
+  // メインテキスト（暖色グロー）
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = 'bold 130px "Arial Black", sans-serif';
 
-  ctx.shadowColor = '#ff00ff';
+  ctx.shadowColor = '#ff9d4d';
   ctx.shadowBlur = 40;
-  ctx.fillStyle = '#ff33ff';
+  ctx.fillStyle = '#ffd7a8';
   ctx.fillText('VERSE', canvas.width / 2, canvas.height / 2 - 70);
 
-  ctx.shadowColor = '#00ffff';
+  ctx.shadowColor = '#ffb066';
   ctx.shadowBlur = 40;
-  ctx.fillStyle = '#33ffff';
+  ctx.fillStyle = '#fff1dd';
   ctx.fillText('CITY', canvas.width / 2, canvas.height / 2 + 90);
 
   ctx.shadowBlur = 0;
   ctx.font = '32px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.fillStyle = 'rgba(255,240,220,0.7)';
   ctx.fillText('c l u b V E R S E   L I V E', canvas.width / 2, canvas.height / 2 + 180);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8; // 急角度から見ても文字が潰れないように
+  tex.anisotropy = 8;
   return tex;
 }
 
-function makeWindowTexture(seed) {
+// 汎用ソフトグロー（放射グラデーション）。ムーンのハロー・ネオンの光芒・
+// パーティクルの粒に共用する。post-processingのブルームが無いための代替表現。
+function makeGlowTexture(innerColor, outerColor) {
   const canvas = document.createElement('canvas');
-  canvas.width = 64;
-  canvas.height = 128;
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+  grad.addColorStop(0, innerColor);
+  grad.addColorStop(0.4, outerColor);
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// 月面のクレーター模様を手続き的に描く
+function makeMoonTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
   const ctx = canvas.getContext('2d');
 
-  ctx.fillStyle = '#050510';
+  // ベースの地色（温白〜淡いグレー）
+  const base = ctx.createRadialGradient(200, 190, 20, 256, 256, 300);
+  base.addColorStop(0, '#fdf3e2');
+  base.addColorStop(0.55, '#e9dcc6');
+  base.addColorStop(1, '#c9b99e');
+  ctx.fillStyle = base;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  const cols = 6;
-  const rows = 14;
-  const cellW = canvas.width / cols;
-  const cellH = canvas.height / rows;
-
-  // 簡易乱数（seed固定でビルごとに柄を変える）
-  let s = seed;
+  // 簡易乱数（固定シードで再現性を持たせる）
+  let s = 918273;
   function rand() {
     s = (s * 9301 + 49297) % 233280;
     return s / 233280;
   }
 
-  const hueA = 190; // シアン系
-  const hueB = 300; // マゼンタ系
+  // クレーターを陰影付きで描く
+  const craterCount = 46;
+  for (let i = 0; i < craterCount; i++) {
+    const cx = rand() * canvas.width;
+    const cy = rand() * canvas.height;
+    const r = 8 + rand() * 42;
 
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const lit = rand() > 0.55;
-      if (!lit) continue;
-      const hue = rand() > 0.5 ? hueA : hueB;
-      const light = 55 + rand() * 25;
-      ctx.fillStyle = `hsl(${hue}, 90%, ${light}%)`;
-      ctx.fillRect(
-        c * cellW + cellW * 0.15,
-        r * cellH + cellH * 0.2,
-        cellW * 0.7,
-        cellH * 0.6
-      );
-    }
+    const shade = ctx.createRadialGradient(cx - r * 0.25, cy - r * 0.25, 0, cx, cy, r);
+    shade.addColorStop(0, 'rgba(120, 100, 80, 0.35)');
+    shade.addColorStop(0.7, 'rgba(150, 130, 105, 0.18)');
+    shade.addColorStop(1, 'rgba(150, 130, 105, 0)');
+    ctx.fillStyle = shade;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // クレーター縁のハイライト
+    ctx.strokeStyle = 'rgba(255, 250, 235, 0.25)';
+    ctx.lineWidth = Math.max(1, r * 0.06);
+    ctx.beginPath();
+    ctx.arc(cx + r * 0.12, cy + r * 0.12, r * 0.85, 0, Math.PI * 2);
+    ctx.stroke();
   }
 
   const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
@@ -118,11 +147,11 @@ function makeFloorTexture() {
   canvas.height = 512;
   const ctx = canvas.getContext('2d');
 
-  ctx.fillStyle = '#0a0a14';
+  ctx.fillStyle = '#07070b';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // タイル目地
-  ctx.strokeStyle = 'rgba(120, 200, 255, 0.25)';
+  // タイル目地（暖色の薄いライン）
+  ctx.strokeStyle = 'rgba(255, 176, 102, 0.14)';
   ctx.lineWidth = 3;
   const step = 64;
   for (let x = 0; x <= canvas.width; x += step) {
@@ -138,13 +167,13 @@ function makeFloorTexture() {
     ctx.stroke();
   }
 
-  // 中心付近を少し明るく（ダンスフロア感）
+  // 中心付近を暖色でわずかに明るく（ダンスフロア感）
   const grad = ctx.createRadialGradient(
     canvas.width / 2, canvas.height / 2, 20,
     canvas.width / 2, canvas.height / 2, 260
   );
-  grad.addColorStop(0, 'rgba(0,255,255,0.12)');
-  grad.addColorStop(1, 'rgba(0,255,255,0)');
+  grad.addColorStop(0, 'rgba(255,176,102,0.10)');
+  grad.addColorStop(1, 'rgba(255,176,102,0)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -160,46 +189,96 @@ function makeFloorTexture() {
 // メイン
 // ---------------------------------------------------------------------
 
-export function createWorld(scene) {
+export function createWorld(scene, opts = {}) {
+  const lowSpec = opts.lowSpec === true;
+
   const group = new THREE.Group();
   scene.add(group);
 
   const dancefloorRings = [];
-  const beacons = [];
 
-  // ---- 背景・霧 ----
-  scene.background = new THREE.Color(0x030308);
-  scene.fog = new THREE.FogExp2(0x0a0a1a, 0.018);
+  // ---- 背景・霧（深い紺の夜空） ----
+  scene.background = new THREE.Color(0x03050f);
+  scene.fog = new THREE.FogExp2(0x050a18, 0.015);
 
   // ---- ライト ----
-  const ambient = new THREE.AmbientLight(0x556688, 0.85);
+  const ambient = new THREE.AmbientLight(0x334466, 0.55);
   scene.add(ambient);
 
-  const hemi = new THREE.HemisphereLight(0x6666ff, 0x221133, 0.7);
+  const hemi = new THREE.HemisphereLight(0x24304f, 0x1a1208, 0.6);
   scene.add(hemi);
 
-  const moonLight = new THREE.DirectionalLight(0x8899ff, 0.25);
-  moonLight.position.set(-20, 30, -10);
+  // 月明かり（暖色寄りの薄い directional light。影は落とさない）
+  const moonLight = new THREE.DirectionalLight(0xfff0da, 0.35);
+  moonLight.position.set(30, 60, -180);
   scene.add(moonLight);
 
-  // ---- 地面 ----
-  const floorTex = makeFloorTexture();
-  const floorGeo = new THREE.CircleGeometry(40, 48);
-  const floorMat = new THREE.MeshStandardMaterial({
-    map: floorTex,
-    color: 0xffffff,
-    roughness: 0.55,
-    metalness: 0.3,
-    emissive: 0x0a1a2a,
-    emissiveIntensity: 0.3,
+  // =====================================================================
+  // 巨大な月
+  // =====================================================================
+  const moonTex = makeMoonTexture();
+  const moonGeo = new THREE.SphereGeometry(24, 48, 32);
+  const moonMat = new THREE.MeshBasicMaterial({
+    map: moonTex,
+    fog: false, // 遠景でも霧に埋もれず存在感を保つ
+    toneMapped: false,
   });
-  const floor = new THREE.Mesh(floorGeo, floorMat);
+  const moon = new THREE.Mesh(moonGeo, moonMat);
+  moon.position.set(18, 68, -210);
+  group.add(moon);
+
+  // 月のハロー（ビルボードのソフトグロー。ブルーム代替）
+  const moonGlowTex = makeGlowTexture('rgba(255,244,224,0.9)', 'rgba(255,220,170,0.35)');
+  const moonGlowMat = new THREE.SpriteMaterial({
+    map: moonGlowTex,
+    transparent: true,
+    depthWrite: false,
+    fog: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const moonGlow = new THREE.Sprite(moonGlowMat);
+  moonGlow.scale.set(90, 90, 1);
+  moonGlow.position.copy(moon.position);
+  group.add(moonGlow);
+
+  // ---- 地面（暗く艶のある床。lowSpec以外は簡易鏡面反射） ----
+  const floorGeo = new THREE.CircleGeometry(40, 48);
+  let floor;
+  if (!lowSpec) {
+    floor = new Reflector(floorGeo, {
+      color: 0x0c0c14,
+      textureWidth: 512,
+      textureHeight: 512,
+      clipBias: 0.003,
+    });
+  } else {
+    const floorMat = new THREE.MeshStandardMaterial({
+      color: 0x0a0a10,
+      roughness: 0.6,
+      metalness: 0.35,
+    });
+    floor = new THREE.Mesh(floorGeo, floorMat);
+  }
   floor.rotation.x = -Math.PI / 2;
-  floor.receiveShadow = true;
+  floor.receiveShadow = !lowSpec;
   group.add(floor);
 
-  // ダンスフロア中央の発光リング（複数）
-  const ringColors = [0x00ffff, 0xff00ff, 0x8000ff];
+  // 床の質感ディテール（タイル目地＋中央の暖色グラデーション）を反射面の上に重ねる
+  const floorDetailTex = makeFloorTexture();
+  const floorDetailMat = new THREE.MeshBasicMaterial({
+    map: floorDetailTex,
+    transparent: true,
+    opacity: 0.55,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const floorDetail = new THREE.Mesh(floorGeo, floorDetailMat);
+  floorDetail.rotation.x = -Math.PI / 2;
+  floorDetail.position.y = 0.015;
+  group.add(floorDetail);
+
+  // ダンスフロア中央の発光リング（暖色メイン＋差し色1本）
+  const ringColors = [NEON_WARM_A, NEON_WARM_B, NEON_ACCENT_VIOLET];
   for (let i = 0; i < 3; i++) {
     const ringGeo = new THREE.RingGeometry(4 + i * 3.2, 4.4 + i * 3.2, 48);
     const ringMat = new THREE.MeshBasicMaterial({
@@ -207,52 +286,58 @@ export function createWorld(scene) {
       transparent: true,
       opacity: 0.35,
       side: THREE.DoubleSide,
+      depthWrite: false,
     });
     const ring = new THREE.Mesh(ringGeo, ringMat);
     ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.02;
+    ring.position.y = 0.03;
     ring.userData.baseOpacity = 0.35;
     ring.userData.phase = i * 1.3;
     group.add(ring);
     dancefloorRings.push(ring);
   }
 
-  // ---- メインステージ ----
+  // =====================================================================
+  // ステージ（円形・暖色）
+  // ここに紐づく LED スクリーンはワールド座標 (0, 5.4, -18.95) / 幅14×高さ7 固定
+  // =====================================================================
   const stageGroup = new THREE.Group();
   stageGroup.position.set(0, 0, -15);
   group.add(stageGroup);
 
-  const stageWidth = 16;
-  const stageDepth = 8;
   const stageHeight = 1.2;
+  const stageRadius = 8.5;
+  const screenLocalZ = -18.95 - stageGroup.position.z; // = -3.95（スクリーンのワールド座標を固定するため直接計算）
 
-  const stageBaseGeo = new THREE.BoxGeometry(stageWidth, stageHeight, stageDepth);
+  const stageBaseGeo = new THREE.CylinderGeometry(stageRadius, stageRadius, stageHeight, 40);
   const stageBaseMat = new THREE.MeshStandardMaterial({
-    color: 0x111120,
+    color: 0x0e0e14,
     roughness: 0.4,
-    metalness: 0.6,
-    emissive: 0x220033,
+    metalness: 0.55,
+    emissive: 0x231404,
     emissiveIntensity: 0.4,
   });
   const stageBase = new THREE.Mesh(stageBaseGeo, stageBaseMat);
   stageBase.position.y = stageHeight / 2;
-  stageBase.castShadow = true;
+  stageBase.castShadow = !lowSpec;
   stageBase.receiveShadow = true;
   stageGroup.add(stageBase);
 
-  // ステージ縁の発光ライン
-  const edgeGeo = new THREE.BoxGeometry(stageWidth + 0.15, 0.12, stageDepth + 0.15);
-  const edgeMat = new THREE.MeshStandardMaterial({
-    color: 0x00ffff,
-    emissive: 0x00ffff,
-    emissiveIntensity: 1.5,
+  // ステージ縁の発光リング
+  const edgeRingGeo = new THREE.TorusGeometry(stageRadius + 0.05, 0.06, 8, 48);
+  const edgeRingMat = new THREE.MeshStandardMaterial({
+    color: NEON_WARM_A,
+    emissive: NEON_WARM_A,
+    emissiveIntensity: 2.2,
     roughness: 0.3,
+    toneMapped: false,
   });
-  const stageEdge = new THREE.Mesh(edgeGeo, edgeMat);
+  const stageEdge = new THREE.Mesh(edgeRingGeo, edgeRingMat);
+  stageEdge.rotation.x = Math.PI / 2;
   stageEdge.position.y = stageHeight + 0.02;
   stageGroup.add(stageEdge);
 
-  // 背面LEDスクリーン
+  // 背面LEDスクリーン（位置・サイズ固定: 幅14×高さ7、ワールド(0,5.4,-18.95)）
   const screenTex = makeScreenTexture('VERSE CITY');
   const screenGeo = new THREE.PlaneGeometry(14, 7);
   const screenMat = new THREE.MeshBasicMaterial({
@@ -260,58 +345,105 @@ export function createWorld(scene) {
     toneMapped: false,
   });
   const screen = new THREE.Mesh(screenGeo, screenMat);
-  screen.position.set(0, stageHeight + 4.2, -stageDepth / 2 - 0.05); // 枠(z=-0.2〜-0.5)より手前に出してZファイティング回避
+  screen.position.set(0, stageHeight + 4.2, screenLocalZ);
   stageGroup.add(screen);
 
-  // スクリーン枠
+  // スクリーン枠（screenより奥に配置してZファイティング回避）
   const frameGeo = new THREE.BoxGeometry(14.6, 7.6, 0.3);
   const frameMat = new THREE.MeshStandardMaterial({
-    color: 0x0a0a12,
-    emissive: 0xff00ff,
-    emissiveIntensity: 0.3,
+    color: 0x0a0a10,
+    emissive: NEON_WARM_A,
+    emissiveIntensity: 0.35,
     roughness: 0.5,
     metalness: 0.5,
   });
   const frame = new THREE.Mesh(frameGeo, frameMat);
-  frame.position.set(0, stageHeight + 4.2, -stageDepth / 2 - 0.35);
+  frame.position.set(0, stageHeight + 4.2, screenLocalZ - 0.3);
   stageGroup.add(frame);
 
-  // ステージ両脇の柱（トラス風）
-  const pillarGeo = new THREE.BoxGeometry(0.5, 8, 0.5);
+  // ---- 汎用の箱ジオメトリ（トラス柱・スピーカー等で使い回す） ----
+  const unitBoxGeo = new THREE.BoxGeometry(1, 1, 1);
+
+  // ステージ両脇のトラス柱
   const pillarMat = new THREE.MeshStandardMaterial({
-    color: 0x1a1a2a,
-    emissive: 0x00ffff,
+    color: 0x14141c,
+    emissive: NEON_WARM_A,
     emissiveIntensity: 0.6,
     roughness: 0.4,
     metalness: 0.7,
   });
   const pillarPositions = [
-    [-stageWidth / 2 - 0.5, 4, -stageDepth / 2],
-    [stageWidth / 2 + 0.5, 4, -stageDepth / 2],
-    [-stageWidth / 2 - 0.5, 4, stageDepth / 2],
-    [stageWidth / 2 + 0.5, 4, stageDepth / 2],
+    [-stageRadius - 0.6, 4, screenLocalZ],
+    [stageRadius + 0.6, 4, screenLocalZ],
   ];
   const trussPillars = [];
   for (const [x, y, z] of pillarPositions) {
-    const pillar = new THREE.Mesh(pillarGeo, pillarMat);
+    const pillar = new THREE.Mesh(unitBoxGeo, pillarMat);
+    pillar.scale.set(0.5, 8, 0.5);
     pillar.position.set(x, y, z);
-    pillar.castShadow = true;
+    pillar.castShadow = !lowSpec;
     stageGroup.add(pillar);
     trussPillars.push(pillar);
   }
 
-  // ---- ライブ照明（スポットライト + 光線コーン） ----
+  // ---- PAスピーカー（左右のスタック） ----
+  const speakerMat = new THREE.MeshStandardMaterial({
+    color: 0x101014,
+    roughness: 0.6,
+    metalness: 0.3,
+    emissive: NEON_WARM_A,
+    emissiveIntensity: 0.15,
+  });
+  const paPositions = [
+    [-stageRadius - 1.6, screenLocalZ + 0.5],
+    [stageRadius + 1.6, screenLocalZ + 0.5],
+  ];
+  for (const [x, z] of paPositions) {
+    let y = stageHeight;
+    for (let box = 0; box < 3; box++) {
+      const h = 1.6 - box * 0.15;
+      const w = 1.3 - box * 0.1;
+      const spk = new THREE.Mesh(unitBoxGeo, speakerMat);
+      spk.scale.set(w, h, w);
+      spk.position.set(x, y + h / 2, z);
+      spk.castShadow = !lowSpec;
+      stageGroup.add(spk);
+      y += h;
+    }
+  }
+
+  // ---- モニタースピーカー（ステージ前面に並べる） ----
+  const monitorMat = new THREE.MeshStandardMaterial({
+    color: 0x121216,
+    roughness: 0.55,
+    metalness: 0.35,
+    emissive: NEON_WARM_B,
+    emissiveIntensity: 0.2,
+  });
+  const monitorZ = stageRadius * 0.82;
+  for (let i = -2; i <= 2; i++) {
+    const monitor = new THREE.Mesh(unitBoxGeo, monitorMat);
+    monitor.scale.set(1.1, 0.5, 0.7);
+    monitor.position.set(i * 2.6, stageHeight + 0.25, monitorZ);
+    monitor.rotation.x = -0.35; // 客席側へ向けた傾き
+    monitor.castShadow = !lowSpec;
+    stageGroup.add(monitor);
+  }
+
+  // ---- ライブ照明（スポットライト + 光線コーン。暖色主体、差し色に青紫） ----
   const spotLights = [];
   const spotCones = [];
-  const spotColors = [0x00ffff, 0xff00ff, 0xffff00, 0x00ff88];
+  const spotColors = [NEON_WARM_A, NEON_WARM_B, NEON_ACCENT_VIOLET, 0xffcf8a];
 
   const spotOriginY = 7.5;
   const spotOriginPositions = [
-    [-6, spotOriginY, -12],
-    [-2, spotOriginY, -12],
-    [2, spotOriginY, -12],
-    [6, spotOriginY, -12],
+    [-6, spotOriginY, screenLocalZ + 3],
+    [-2, spotOriginY, screenLocalZ + 3],
+    [2, spotOriginY, screenLocalZ + 3],
+    [6, spotOriginY, screenLocalZ + 3],
   ];
+
+  const coneSegments = lowSpec ? 12 : 24;
 
   for (let i = 0; i < spotOriginPositions.length; i++) {
     const [x, y, z] = spotOriginPositions[i];
@@ -320,12 +452,12 @@ export function createWorld(scene) {
     const spot = new THREE.SpotLight(color, i === 1 ? 25 : 15, 30, Math.PI / 7, 0.4, 1.5);
     spot.position.set(x, y, z);
     const target = new THREE.Object3D();
-    target.position.set(x * 0.3, 0, -15);
+    target.position.set(x * 0.3, 0, screenLocalZ + 11);
     stageGroup.add(target);
     spot.target = target;
 
-    // 影を落とすのは1〜2灯のみ（性能配慮）
-    if (i === 1 || i === 2) {
+    // 影を落とすのは最大2灯のみ（性能配慮）。lowSpec時は一切影を使わない
+    if (!lowSpec && (i === 1 || i === 2)) {
       spot.castShadow = true;
       spot.shadow.mapSize.set(512, 512);
       spot.shadow.camera.near = 1;
@@ -334,8 +466,8 @@ export function createWorld(scene) {
     stageGroup.add(spot);
     spotLights.push(spot);
 
-    // 光線を表現する半透明コーン（頂点=光源側、底面=床側）
-    const coneGeo = new THREE.ConeGeometry(2.2, 7.5, 24, 1, true);
+    // 光線を表現する半透明コーン
+    const coneGeo = new THREE.ConeGeometry(2.2, 7.5, coneSegments, 1, true);
     const coneMat = new THREE.MeshBasicMaterial({
       color,
       transparent: true,
@@ -352,87 +484,157 @@ export function createWorld(scene) {
     spotCones.push(cone);
   }
 
-  // ---- 周囲のビル群 ----
-  const buildingGroup = new THREE.Group();
-  group.add(buildingGroup);
+  // =====================================================================
+  // V字/への字のネオンライン（会場の象徴的な意匠。左右対称）
+  // =====================================================================
+  const neonBarGeo = new THREE.BoxGeometry(1, 1, 1);
+  const neonGlowTex = makeGlowTexture('rgba(255,240,220,0.95)', 'rgba(255,176,102,0.4)');
 
-  const windowTex1 = makeWindowTexture(11);
-  const windowTex2 = makeWindowTexture(37);
-  const neonPanelColors = [0x00ffff, 0xff00ff, 0xffff00, 0xff3366, 0x33ff99];
+  function createNeonChevron(mirror) {
+    const chevron = new THREE.Group();
+    const armLength = 9;
+    const angle = THREE.MathUtils.degToRad(22); // 垂直からの開き角
+    const thickness = 0.22;
 
-  const buildingCount = 16;
-  const radiusMin = 26;
+    const coreMat = new THREE.MeshStandardMaterial({
+      color: NEON_WARM_B,
+      emissive: NEON_WARM_A,
+      emissiveIntensity: 4.5,
+      roughness: 0.25,
+      toneMapped: false,
+    });
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: NEON_WARM_A,
+      transparent: true,
+      opacity: 0.25,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+
+    for (const side of [-1, 1]) {
+      const dir = side * mirror;
+
+      // ネオンの芯（明るい発光バー）
+      const core = new THREE.Mesh(neonBarGeo, coreMat);
+      core.scale.set(thickness, armLength, thickness);
+      core.position.set((Math.sin(angle) * armLength * dir) / 2, (Math.cos(angle) * armLength) / 2, 0);
+      core.rotation.z = -angle * dir;
+      chevron.add(core);
+
+      // にじみ（太め・低不透明度の同形状を重ねてブルーム風の見た目に）
+      const halo = new THREE.Mesh(neonBarGeo, haloMat);
+      halo.scale.set(thickness * 3.2, armLength * 1.02, thickness * 3.2);
+      halo.position.copy(core.position);
+      halo.rotation.copy(core.rotation);
+      chevron.add(halo);
+    }
+
+    // 光芒スプライト（カメラ常に正対、ソフトなグローでブルームを代替）
+    const glow = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: neonGlowTex,
+        transparent: true,
+        opacity: 0.55,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    );
+    glow.scale.set(14, 18, 1);
+    glow.position.set(0, armLength * 0.55, 0.2);
+    chevron.add(glow);
+
+    return chevron;
+  }
+
+  const chevronLeft = createNeonChevron(-1);
+  chevronLeft.position.set(-13.5, 3.4, screenLocalZ - 1.2);
+  stageGroup.add(chevronLeft);
+
+  const chevronRight = createNeonChevron(1);
+  chevronRight.position.set(13.5, 3.4, screenLocalZ - 1.2);
+  stageGroup.add(chevronRight);
+
+  // =====================================================================
+  // 板状モノリス群（黒〜濃灰の細長い構造物。窓のあるビルは廃止）
+  // =====================================================================
+  const monolithGroup = new THREE.Group();
+  group.add(monolithGroup);
+
+  const monolithBodyGeo = new THREE.BoxGeometry(1, 1, 1); // scaleで使い回す
+  const monolithEdgeGeo = new THREE.BoxGeometry(1, 1, 1); // 発光ラインもscaleで使い回す
+
+  const monolithBodyMat = new THREE.MeshStandardMaterial({
+    color: 0x0b0b0f,
+    roughness: 0.75,
+    metalness: 0.25,
+    emissive: 0x050508,
+    emissiveIntensity: 0.3,
+  });
+
+  const monolithCount = lowSpec ? 14 : 26;
+  const radiusMin = 24;
   const radiusMax = 34;
+  const edgeGlowMeshes = [];
 
-  for (let i = 0; i < buildingCount; i++) {
-    const angle = (i / buildingCount) * Math.PI * 2 + (i % 2) * 0.15;
+  for (let i = 0; i < monolithCount; i++) {
+    const angle = (i / monolithCount) * Math.PI * 2 + (i % 2) * 0.15;
     const radius = radiusMin + Math.random() * (radiusMax - radiusMin);
     const x = Math.sin(angle) * radius;
     const z = Math.cos(angle) * radius;
 
-    // ステージ正面(z=+18付近)にはビルを置かず視界を確保
+    // ステージ正面（客席側の視界）にはモノリスを置かない
     if (z > 10 && Math.abs(x) < 10) continue;
 
-    const width = 3 + Math.random() * 3;
-    const depth = 3 + Math.random() * 3;
-    const height = 6 + Math.random() * 20;
+    const width = 1.6 + Math.random() * 2.2;
+    const depth = 1.2 + Math.random() * 1.6;
+    const height = 7 + Math.random() * 22;
 
-    const windowTex = i % 2 === 0 ? windowTex1 : windowTex2;
-    const tex = windowTex.clone();
-    tex.needsUpdate = true;
-    tex.repeat.set(1, Math.max(1, Math.round(height / 6)));
+    const body = new THREE.Mesh(monolithBodyGeo, monolithBodyMat);
+    body.scale.set(width, height, depth);
+    body.position.set(x, height / 2, z);
+    body.rotation.y = Math.random() * Math.PI;
+    body.castShadow = false;
+    body.receiveShadow = true;
+    monolithGroup.add(body);
 
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x14141f,
-      roughness: 0.7,
-      metalness: 0.2,
-      emissiveMap: tex,
-      emissive: 0xffffff,
-      emissiveIntensity: 0.9,
+    // 縦の発光エッジライン（暖色 or 差し色の青紫を稀に）
+    const edgeColor = Math.random() > 0.15 ? NEON_WARM_A : NEON_ACCENT_VIOLET;
+    const edgeMat = new THREE.MeshStandardMaterial({
+      color: edgeColor,
+      emissive: edgeColor,
+      emissiveIntensity: 2.4,
+      roughness: 0.3,
+      toneMapped: false,
     });
+    const edge = new THREE.Mesh(monolithEdgeGeo, edgeMat);
+    const edgeThickness = 0.06;
+    edge.scale.set(edgeThickness, height * 0.92, edgeThickness);
+    const side = Math.random() > 0.5 ? 1 : -1;
+    edge.position.set((width / 2) * side * 0.98, 0, (depth / 2) * 0.98);
+    body.add(edge);
+    edgeGlowMeshes.push(edge);
 
-    const bldg = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), bodyMat);
-    bldg.position.set(x, height / 2, z);
-    bldg.rotation.y = Math.random() * Math.PI;
-    bldg.castShadow = false;
-    bldg.receiveShadow = true;
-    buildingGroup.add(bldg);
-
-    // ネオン看板パネル（ところどころ）
-    if (Math.random() > 0.4) {
-      const panelColor = neonPanelColors[i % neonPanelColors.length];
-      const panelMat = new THREE.MeshStandardMaterial({
-        color: panelColor,
-        emissive: panelColor,
+    // 上部の横向き発光ライン（一部のみ）
+    if (Math.random() > 0.5) {
+      const bandMat = new THREE.MeshStandardMaterial({
+        color: NEON_WARM_B,
+        emissive: NEON_WARM_B,
         emissiveIntensity: 1.8,
-        roughness: 0.4,
+        roughness: 0.3,
+        toneMapped: false,
       });
-      const panelW = width * 0.7;
-      const panelH = 1 + Math.random() * 1.5;
-      const panel = new THREE.Mesh(new THREE.PlaneGeometry(panelW, panelH), panelMat);
-      const side = Math.random() > 0.5 ? 1 : -1;
-      panel.position.set(0, height * (0.3 + Math.random() * 0.4), (depth / 2 + 0.02) * side);
-      if (side < 0) panel.rotation.y = Math.PI;
-      bldg.add(panel);
+      const band = new THREE.Mesh(monolithEdgeGeo, bandMat);
+      band.scale.set(width * 0.9, 0.05, depth * 1.02);
+      band.position.set(0, height * (0.28 + Math.random() * 0.3), 0);
+      body.add(band);
     }
-
-    // 屋上の点滅灯
-    const beaconMat = new THREE.MeshStandardMaterial({
-      color: 0xff3355,
-      emissive: 0xff3355,
-      emissiveIntensity: 2,
-    });
-    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), beaconMat);
-    beacon.position.set(0, height / 2 + 0.2, 0);
-    bldg.add(beacon);
-    beacons.push(beacon);
   }
 
-  // ---- 観客エリアの簡易柵/装飾（雰囲気付け） ----
+  // ---- 観客エリアの簡易柵（雰囲気付け・暖色） ----
   const barrierMat = new THREE.MeshStandardMaterial({
-    color: 0x222233,
-    emissive: 0x00ffff,
-    emissiveIntensity: 0.4,
+    color: 0x1c1c22,
+    emissive: NEON_WARM_A,
+    emissiveIntensity: 0.35,
     roughness: 0.5,
     metalness: 0.5,
   });
@@ -450,8 +652,59 @@ export function createWorld(scene) {
   }
 
   // =====================================================================
+  // 光の粒子（空間に舞う小さな光の粒）
+  // =====================================================================
+  const particleCount = lowSpec ? 220 : 1400;
+  const particlePositions = new Float32Array(particleCount * 3);
+  const particleBaseY = new Float32Array(particleCount);
+  const particlePhase = new Float32Array(particleCount);
+  const particleColors = new Float32Array(particleCount * 3);
+
+  const warmColorA = new THREE.Color(NEON_WARM_A);
+  const warmColorB = new THREE.Color(0xfff4e0);
+
+  for (let i = 0; i < particleCount; i++) {
+    const radius = Math.random() * 33;
+    const angle = Math.random() * Math.PI * 2;
+    const x = Math.sin(angle) * radius;
+    const z = Math.cos(angle) * radius;
+    const y = 0.5 + Math.random() * 13;
+
+    particlePositions[i * 3] = x;
+    particlePositions[i * 3 + 1] = y;
+    particlePositions[i * 3 + 2] = z;
+    particleBaseY[i] = y;
+    particlePhase[i] = Math.random() * Math.PI * 2;
+
+    const mixed = warmColorA.clone().lerp(warmColorB, Math.random());
+    particleColors[i * 3] = mixed.r;
+    particleColors[i * 3 + 1] = mixed.g;
+    particleColors[i * 3 + 2] = mixed.b;
+  }
+
+  const particleGeo = new THREE.BufferGeometry();
+  particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+  particleGeo.setAttribute('color', new THREE.BufferAttribute(particleColors, 3));
+
+  const particleDotTex = makeGlowTexture('rgba(255,255,255,1)', 'rgba(255,200,150,0.6)');
+  const particleMat = new THREE.PointsMaterial({
+    size: 0.22,
+    map: particleDotTex,
+    transparent: true,
+    opacity: 0.8,
+    vertexColors: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    sizeAttenuation: true,
+  });
+  const particles = new THREE.Points(particleGeo, particleMat);
+  group.add(particles);
+
+  // =====================================================================
   // アニメーション用ステート
   // =====================================================================
+
+  const tmpColor = new THREE.Color();
 
   function update(dt, elapsedTime) {
     // ダンスフロアのリングを明滅させる
@@ -460,24 +713,23 @@ export function createWorld(scene) {
       ring.material.opacity = Math.max(0.05, pulse);
     }
 
-    // スポットライトの色相・角度をゆっくり回す
+    // スポットライトの色相・角度をゆっくり回す（暖色域中心、たまに青紫）
     for (let i = 0; i < spotLights.length; i++) {
       const spot = spotLights[i];
-      const hue = (elapsedTime * 0.05 + i * 0.25) % 1;
-      const c = new THREE.Color();
-      c.setHSL(hue, 1, 0.55);
-      spot.color.copy(c);
+      const hue = (0.08 + Math.sin(elapsedTime * 0.07 + i) * 0.06 + i * 0.02) % 1;
+      tmpColor.setHSL(hue, 0.85, 0.6);
+      spot.color.copy(tmpColor);
 
       const swing = Math.sin(elapsedTime * 0.6 + i * 1.7) * 4;
       spot.target.position.x = spotOriginPositions[i][0] * 0.3 + swing;
-      spot.target.position.z = -15 + Math.cos(elapsedTime * 0.4 + i) * 3;
+      spot.target.position.z = screenLocalZ + 11 + Math.cos(elapsedTime * 0.4 + i) * 3;
     }
 
     // 光線コーンも同じ色・角度に追従
     for (let i = 0; i < spotCones.length; i++) {
       const cone = spotCones[i];
-      const hue = (elapsedTime * 0.05 + i * 0.25) % 1;
-      cone.material.color.setHSL(hue, 1, 0.55);
+      const hue = (0.08 + Math.sin(elapsedTime * 0.07 + i) * 0.06 + i * 0.02) % 1;
+      cone.material.color.setHSL(hue, 0.85, 0.6);
       const swing = Math.sin(elapsedTime * 0.6 + i * 1.7) * 0.35;
       cone.rotation.z = swing;
       cone.rotation.x = Math.cos(elapsedTime * 0.4 + i) * 0.15;
@@ -489,11 +741,20 @@ export function createWorld(scene) {
       pillar.material.emissiveIntensity = trussPulse;
     }
 
-    // 屋上ビーコンの点滅
-    const beaconBlink = (Math.sin(elapsedTime * 3) + 1) / 2;
-    for (const beacon of beacons) {
-      beacon.material.emissiveIntensity = 0.5 + beaconBlink * 2.5;
+    // モノリスの縦エッジラインをごくゆっくり明滅させて生っぽさを出す
+    for (let i = 0; i < edgeGlowMeshes.length; i++) {
+      const edge = edgeGlowMeshes[i];
+      edge.material.emissiveIntensity = 2.0 + Math.sin(elapsedTime * 0.8 + i * 0.7) * 0.5;
     }
+
+    // 光の粒子：ゆるやかに上下しつつ全体をゆっくり回転
+    const posAttr = particleGeo.attributes.position;
+    for (let i = 0; i < particleCount; i++) {
+      const y = particleBaseY[i] + Math.sin(elapsedTime * 0.3 + particlePhase[i]) * 0.6;
+      posAttr.array[i * 3 + 1] = y;
+    }
+    posAttr.needsUpdate = true;
+    particles.rotation.y += dt * 0.015;
   }
 
   return {
