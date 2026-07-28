@@ -5,7 +5,7 @@
 // ============================================================
 
 import http from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
@@ -414,8 +414,39 @@ function buildPresenceJson() {
 // HTTPサーバー本体
 // ------------------------------------------------------------
 
+// 開発用: ブラウザで描いた絵をファイルに保存する（見た目を確認しながら直すため）。
+// 環境変数 ALLOW_SHOTS=1 のときだけ有効。本番(Render)では設定しないので動かない。
+const ALLOW_SHOTS = process.env.ALLOW_SHOTS === '1';
+
+async function handleShot(req, res) {
+  let body = '';
+  req.on('data', (c) => {
+    body += c;
+    if (body.length > 20 * 1024 * 1024) req.destroy();
+  });
+  await new Promise((resolve) => req.on('end', resolve));
+  try {
+    const { name, data } = JSON.parse(body);
+    const safeName = String(name || 'shot').replace(/[^A-Za-z0-9_-]/g, '');
+    const base64 = String(data).replace(/^data:image\/png;base64,/, '');
+    const dir = path.join(CLIENT_ROOT, '_shots');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, `${safeName}.png`), Buffer.from(base64, 'base64'));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, file: `_shots/${safeName}.png` }));
+  } catch (e) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: e.message }));
+  }
+}
+
 const httpServer = http.createServer(async (req, res) => {
   const url = (req.url || '/').split('?')[0];
+
+  if (ALLOW_SHOTS && req.method === 'POST' && url === '/api/_shot') {
+    await handleShot(req, res);
+    return;
+  }
 
   if (req.method === 'GET' && url === '/api/status') {
     const body = JSON.stringify(buildStatusJson());

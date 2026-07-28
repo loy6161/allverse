@@ -156,7 +156,8 @@ export function createStyleAvatar(config) {
   root.name = 'avatar_simple_lowpoly';
 
   const skinMat = matteMat(bodyColor);
-  const pantsMat = matteMat(new THREE.Color(bodyColor).multiplyScalar(0.55).getStyle());
+  const pantsMat = skinMat.clone();
+  pantsMat.color.multiplyScalar(0.55);
   const shirtMat = matteMat(shirtColor);
 
   // ---- 脚（先細りの低ポリ円柱＋丸い足） ----

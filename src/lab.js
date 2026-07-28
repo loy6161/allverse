@@ -10,6 +10,7 @@ import { AVATAR_PARTS, randomConfig } from './avatar.js';
 // 比較する案の一覧。読み込みに失敗した案はカードにエラーを表示して他は続行する
 const STYLE_MODULES = [
   { path: './avatar.js', current: true },
+  { path: './styles/refined.js' },
   { path: './styles/anime_tall.js' },
   { path: './styles/simple_lowpoly.js' },
   { path: './styles/mini_deform.js' },
