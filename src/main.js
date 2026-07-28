@@ -14,7 +14,10 @@ import { initScreenUI } from './screenui.js';
 import { initViewMode } from './viewmode.js';
 
 const canvas = document.getElementById('scene');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+// alpha:true = キャンバスを透過可能にする。スクリーン面に開けた「穴」から
+// 背後のYouTube iframeを見せ、手前のアバターはキャンバス側に描くため（screen.js参照）
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setClearColor(0x000000, 0);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 // タッチ端末（スマホ想定）では負荷軽減のため影を無効化
@@ -30,7 +33,16 @@ camera.lookAt(0, 1, 0);
 
 // タッチ端末は負荷を抑えた構成でワールドを作る（反射・粒子数など）
 const world = createWorld(scene, { lowSpec: IS_TOUCH });
-const liveScreen = initLiveScreen(camera);
+
+// 背景色はキャンバスではなくページ側で持つ（キャンバスを透過させるため）。
+// 見た目は変わらないが、スクリーン面の穴から背後のiframeが見えるようになる。
+const skyColor = scene.background && scene.background.isColor ? scene.background : null;
+if (skyColor) {
+  document.body.style.background = `#${skyColor.getHexString()}`;
+  scene.background = null;
+}
+
+const liveScreen = initLiveScreen(camera, scene);
 
 let player = null;
 let controls = null;
@@ -88,7 +100,13 @@ initJoinScreen(({ name, config }) => {
   player.position.copy(world.spawnPoint);
   scene.add(player);
 
-  controls = initControls(camera, player, renderer.domElement, { bounds: world.bounds });
+  controls = initControls(camera, player, renderer.domElement, {
+    bounds: world.bounds,
+    // 自分は物理でジャンプするが、他の人の画面ではジャンプのモーションとして見せる
+    onJump: () => {
+      if (net && !demoMode) net.sendEmote('jump');
+    },
+  });
 
   chat = initChat({
     onSend: (text) => {
@@ -174,6 +192,21 @@ initJoinScreen(({ name, config }) => {
 
   // 全画面表示・UI非表示（映像だけ見たいとき用）
   initViewMode();
+
+  // Pキー: スクリーンを一時的に手前に出してYouTubeプレイヤーを直接操作できるようにする
+  // （普段は映像がアバターの後ろに来るよう背面に置いているため）
+  window.addEventListener('keydown', (e) => {
+    const el = document.activeElement;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+    if (e.key.toLowerCase() !== 'p' || e.repeat) return;
+    e.preventDefault();
+    const on = liveScreen.toggleInteractive();
+    chat.addMessage(
+      '',
+      on ? 'スクリーンを操作モードにしました（もう一度Pで戻す）' : 'スクリーンを通常表示に戻しました',
+      { system: true },
+    );
+  });
 
   // スマホ対応（タッチ端末 or ?mobile=1 のときだけ有効化される）
   initMobile({ controls, chatRoot });

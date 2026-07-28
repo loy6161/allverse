@@ -13,6 +13,8 @@ html, body {
   position: fixed;
   inset: 0;
   display: block;
+  /* CSS3Dレイヤー(YouTube iframe, z=1)より前。スクリーン面に開けた穴から映像が見える */
+  z-index: 2;
 }
 
 .hidden { display: none !important; }

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 // ------------------------------------------------------------------
-// プリセット式・低ポリ「ちびキャラ」アバター
+// プリセット式・デフォルメちびキャラアバター（VRoid/VRChat系トゥーン調）
 // ------------------------------------------------------------------
 
 export const AVATAR_PARTS = {
@@ -22,6 +22,217 @@ export function randomConfig() {
     hairColor: pick(AVATAR_PARTS.hairColors),
     shirtColor: pick(AVATAR_PARTS.shirtColors),
   };
+}
+
+// ------------------------------------------------------------------
+// 共有リソース（全アバター共通・色に依存しないもの）
+// メッシュ数・GC負荷を抑えるため、形状はモジュール読み込み時に一度だけ生成して使い回す。
+// ------------------------------------------------------------------
+
+const HEAD_R = 0.22;
+const NECK_R = 0.075;
+const NECK_H = 0.09;
+const TORSO_TOP_Y = 0.5; // = shoulderY（腰base=0からの高さ）
+const ARM_R_TOP = 0.062;
+const ARM_R_BOTTOM = 0.046;
+const ARM_LEN = 0.34;
+const HAND_R = 0.06;
+const LEG_R_TOP = 0.1;
+const LEG_R_BOTTOM = 0.074;
+const LEG_LEN = 0.44;
+const FOOT_R = 0.09;
+const HIP_Y = 0.5;
+const SHOULDER_X = 0.175 + ARM_R_TOP + 0.025; // 胸幅 + 腕半径 + 隙間
+
+// ---- トゥーン用グラデーションマップ（2〜3段の階調を手続き生成） ----
+function createGradientMap(steps) {
+  const data = new Uint8Array(steps);
+  for (let i = 0; i < steps; i++) {
+    data[i] = Math.round((i / (steps - 1)) * 255);
+  }
+  const tex = new THREE.DataTexture(data, steps, 1, THREE.RedFormat, THREE.UnsignedByteType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+const GRADIENT_MAP = createGradientMap(3);
+
+function toonMat(color, emissiveFactor = 0.05) {
+  const emissive = new THREE.Color(color).multiplyScalar(emissiveFactor);
+  return new THREE.MeshToonMaterial({ color, gradientMap: GRADIENT_MAP, emissive });
+}
+
+// 靴（全アバター共通のニュートラル色。ユーザー色に依存しないので共有できる）
+const SHOE_MAT = new THREE.MeshToonMaterial({ color: '#22222c', gradientMap: GRADIENT_MAP });
+
+// 輪郭線（反転ハル方式）：常に単色の黒なので全アバターで共有できる
+const OUTLINE_MAT = new THREE.MeshBasicMaterial({ color: '#0c0714', side: THREE.BackSide });
+
+// ---- 共有ジオメトリ（色を持たないので全アバター・全パーツで使い回せる） ----
+const HEAD_GEO = new THREE.SphereGeometry(HEAD_R, 14, 10);
+const FACE_PLANE_GEO = new THREE.PlaneGeometry(HEAD_R * 1.32, HEAD_R * 1.18);
+const NECK_GEO = new THREE.CylinderGeometry(NECK_R, NECK_R * 1.05, NECK_H, 8, 1, true);
+const LEG_GEO = new THREE.CylinderGeometry(LEG_R_TOP, LEG_R_BOTTOM, LEG_LEN, 8, 1, true);
+const ARM_GEO = new THREE.CylinderGeometry(ARM_R_TOP, ARM_R_BOTTOM, ARM_LEN, 8, 1, true);
+const FOOT_GEO = new THREE.SphereGeometry(FOOT_R, 6, 5);
+const HAND_GEO = new THREE.SphereGeometry(HAND_R, 6, 5);
+const COLLAR_RING_GEO = new THREE.CylinderGeometry(0.16, 0.18, 0.05, 10, 1, true);
+const WAIST_RING_GEO = new THREE.CylinderGeometry(0.16, 0.15, 0.06, 10, 1, true);
+const CUFF_RING_GEO = new THREE.CylinderGeometry(ARM_R_BOTTOM * 1.15, ARM_R_BOTTOM * 1.35, 0.045, 10, 1, true);
+const PENLIGHT_GEO = new THREE.CapsuleGeometry(0.022, 0.34, 4, 8);
+
+// 胴体：くびれのあるラウンドシルエット（Latheで回転生成。上下は他パーツで隠れるので開放でOK）
+const TORSO_GEO = new THREE.LatheGeometry(
+  [
+    [0.145, 0.0], // 腰の張り（waist ringに隠れる下端）
+    [0.125, 0.16], // ウエスト（最も細い）
+    [0.155, 0.32], // 胸まわり
+    [0.185, 0.44], // 肩幅
+    [0.175, TORSO_TOP_Y], // 肩上（首の付け根）
+  ].map(([r, y]) => new THREE.Vector2(r, y)),
+  10
+);
+
+// ---- 髪パーツ用の共有ジオメトリ ----
+const HAIR_CAP_GEO = new THREE.SphereGeometry(HEAD_R * 1.08, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.54);
+const HAIR_FRINGE_GEO = new THREE.SphereGeometry(HEAD_R * 0.66, 8, 6, 0, Math.PI, 0, Math.PI * 0.62);
+const HAIR_LONG_BACK_GEO = new THREE.CylinderGeometry(HEAD_R * 0.98, HEAD_R * 0.55, HEAD_R * 2.3, 8, 1, true);
+const HAIR_TWIN_TAIL_GEO = new THREE.CapsuleGeometry(HEAD_R * 0.2, HEAD_R * 1.15, 3, 7);
+const HAT_BRIM_GEO = new THREE.CylinderGeometry(HEAD_R * 1.18, HEAD_R * 1.18, HEAD_R * 0.14, 12, 1, false);
+const HAT_CONE_GEO = new THREE.ConeGeometry(HEAD_R * 0.82, HEAD_R * 1.7, 12, 1, false);
+const HAT_POM_GEO = new THREE.SphereGeometry(HEAD_R * 0.17, 6, 6);
+
+// ------------------------------------------------------------------
+// 顔テクスチャ（CanvasTexture）：目・まつげ・ハイライト・眉・口・頬を描画
+// 全アバター共通の絵柄（色ではなく表情そのものなので共有可）。
+// まばたきは「開いた顔」「閉じた顔」2枚のテクスチャを差し替えるだけで実現し、
+// アバターごとにCanvasを再描画しない（軽量）。
+// ------------------------------------------------------------------
+
+let faceTexturesCache = null;
+
+function drawFace(ctx, size, closed) {
+  ctx.clearRect(0, 0, size, size);
+  const leftX = size * 0.335;
+  const rightX = size * 0.665;
+  const eyeY = size * 0.5;
+  const eyeW = size * 0.15;
+  const eyeH = size * 0.185;
+
+  // 頬（ブラッシュ）
+  ctx.save();
+  ctx.globalAlpha = 0.32;
+  [leftX - size * 0.02, rightX + size * 0.02].forEach((cx) => {
+    const grad = ctx.createRadialGradient(cx, size * 0.66, 1, cx, size * 0.66, size * 0.1);
+    grad.addColorStop(0, '#ff8fae');
+    grad.addColorStop(1, 'rgba(255,143,174,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, size * 0.66, size * 0.1, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+
+  // 目
+  [leftX, rightX].forEach((ex) => {
+    if (closed) {
+      ctx.strokeStyle = '#140b12';
+      ctx.lineWidth = size * 0.02;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(ex, eyeY, eyeW * 0.62, Math.PI * 0.12, Math.PI * 0.88);
+      ctx.stroke();
+      // まつげのはね
+      ctx.beginPath();
+      ctx.moveTo(ex + eyeW * 0.55, eyeY + eyeH * 0.05);
+      ctx.lineTo(ex + eyeW * 0.75, eyeY - eyeH * 0.12);
+      ctx.stroke();
+      return;
+    }
+
+    // 白目
+    ctx.fillStyle = '#fffdfb';
+    ctx.beginPath();
+    ctx.ellipse(ex, eyeY, eyeW * 0.5, eyeH * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 瞳（大きめの黒目でVRoid風に）
+    ctx.fillStyle = '#1c1420';
+    ctx.beginPath();
+    ctx.ellipse(ex, eyeY + eyeH * 0.06, eyeW * 0.4, eyeH * 0.42, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // まぶたの上ライン
+    ctx.strokeStyle = '#140b12';
+    ctx.lineWidth = size * 0.018;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.ellipse(ex, eyeY - eyeH * 0.05, eyeW * 0.52, eyeH * 0.5, 0, Math.PI * 1.02, Math.PI * 1.98);
+    ctx.stroke();
+
+    // まつげのはね
+    ctx.beginPath();
+    ctx.moveTo(ex + eyeW * 0.48, eyeY - eyeH * 0.3);
+    ctx.lineTo(ex + eyeW * 0.72, eyeY - eyeH * 0.52);
+    ctx.stroke();
+
+    // ハイライト
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(ex - eyeW * 0.14, eyeY - eyeH * 0.14, eyeW * 0.14, eyeH * 0.16, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(ex + eyeW * 0.16, eyeY + eyeH * 0.22, eyeW * 0.07, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // 眉
+  ctx.strokeStyle = '#2a1c22';
+  ctx.lineWidth = size * 0.016;
+  ctx.lineCap = 'round';
+  [leftX, rightX].forEach((ex, i) => {
+    const dir = i === 0 ? -1 : 1;
+    ctx.beginPath();
+    ctx.moveTo(ex - dir * eyeW * 0.05 - eyeW * 0.4, eyeY - eyeH * 0.85);
+    ctx.quadraticCurveTo(ex, eyeY - eyeH * 1.05, ex + eyeW * 0.4, eyeY - eyeH * 0.82);
+    ctx.stroke();
+  });
+
+  // 口（小さな笑み）
+  ctx.strokeStyle = '#7a3b4a';
+  ctx.lineWidth = size * 0.016;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(size * 0.44, size * 0.74);
+  ctx.quadraticCurveTo(size * 0.5, size * 0.79, size * 0.56, size * 0.74);
+  ctx.stroke();
+}
+
+function getFaceTextures() {
+  if (faceTexturesCache) return faceTexturesCache;
+  const size = 256;
+
+  const openCanvas = document.createElement('canvas');
+  openCanvas.width = size;
+  openCanvas.height = size;
+  drawFace(openCanvas.getContext('2d'), size, false);
+
+  const closedCanvas = document.createElement('canvas');
+  closedCanvas.width = size;
+  closedCanvas.height = size;
+  drawFace(closedCanvas.getContext('2d'), size, true);
+
+  const open = new THREE.CanvasTexture(openCanvas);
+  const closed = new THREE.CanvasTexture(closedCanvas);
+  open.colorSpace = THREE.SRGBColorSpace;
+  closed.colorSpace = THREE.SRGBColorSpace;
+  open.needsUpdate = true;
+  closed.needsUpdate = true;
+
+  faceTexturesCache = { open, closed };
+  return faceTexturesCache;
 }
 
 // ---- キャンバステキスト（ネームプレート／吹き出し） ----------------
@@ -135,61 +346,70 @@ function createTextSprite(text, opts = {}) {
 }
 
 // ---- 髪パーツ生成 ----------------------------------------------------
+// シルエットで魅せる：前髪の房（fringe）を全スタイル共通で使い、
+// スタイルごとに後ろ髪・ツインテール・帽子を足す。
 
-function buildHair(style, hairColor, headRadius) {
+function addFringe(group, hairMat) {
+  const fringe = new THREE.Mesh(HAIR_FRINGE_GEO, hairMat);
+  fringe.position.set(0, HEAD_R * 0.3, HEAD_R * 0.72);
+  fringe.rotation.x = -0.4;
+  fringe.scale.set(1.3, 0.72, 0.5);
+  fringe.castShadow = true;
+  group.add(fringe);
+}
+
+function buildHair(style, hairColor) {
   const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color: hairColor, roughness: 0.85, metalness: 0.02, flatShading: true });
+  const mat = toonMat(hairColor, 0.04);
 
   if (style === 'long') {
-    const cap = new THREE.Mesh(
-      new THREE.SphereGeometry(headRadius * 1.06, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
-      mat
-    );
+    const cap = new THREE.Mesh(HAIR_CAP_GEO, mat);
     cap.castShadow = true;
     group.add(cap);
+    addFringe(group, mat);
 
-    const back = new THREE.Mesh(new THREE.BoxGeometry(headRadius * 1.5, headRadius * 2.4, headRadius * 0.9), mat);
-    back.position.set(0, -headRadius * 1.15, -headRadius * 0.75);
+    const back = new THREE.Mesh(HAIR_LONG_BACK_GEO, mat);
+    back.position.set(0, -HEAD_R * 0.95, -HEAD_R * 0.42);
+    back.rotation.x = 0.12;
     back.castShadow = true;
     group.add(back);
   } else if (style === 'twin') {
-    const cap = new THREE.Mesh(
-      new THREE.SphereGeometry(headRadius * 1.05, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.5),
-      mat
-    );
+    const cap = new THREE.Mesh(HAIR_CAP_GEO, mat);
     cap.castShadow = true;
     group.add(cap);
+    addFringe(group, mat);
 
     [-1, 1].forEach((side) => {
-      const tail = new THREE.Mesh(new THREE.CapsuleGeometry(headRadius * 0.22, headRadius * 1.3, 4, 8), mat);
-      tail.position.set(side * headRadius * 1.05, -headRadius * 0.3, -headRadius * 0.1);
-      tail.rotation.z = side * 0.55;
+      const tail = new THREE.Mesh(HAIR_TWIN_TAIL_GEO, mat);
+      tail.position.set(side * HEAD_R * 1.05, -HEAD_R * 0.15, -HEAD_R * 0.15);
+      tail.rotation.z = side * 0.6;
+      tail.rotation.x = 0.25;
       tail.castShadow = true;
       group.add(tail);
     });
   } else if (style === 'hat') {
-    const brim = new THREE.Mesh(new THREE.CylinderGeometry(headRadius * 1.15, headRadius * 1.15, headRadius * 0.16, 12), mat);
-    brim.position.set(0, headRadius * 0.55, 0);
+    addFringe(group, mat);
+
+    const brim = new THREE.Mesh(HAT_BRIM_GEO, mat);
+    brim.position.set(0, HEAD_R * 0.5, 0);
     brim.castShadow = true;
     group.add(brim);
 
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(headRadius * 0.85, headRadius * 1.9, 12), mat);
-    cone.position.set(0, headRadius * 0.55 + headRadius * 0.95 + headRadius * 0.08, 0);
+    const cone = new THREE.Mesh(HAT_CONE_GEO, mat);
+    cone.position.set(0, HEAD_R * 0.5 + HEAD_R * 0.85 + HEAD_R * 0.08, 0);
     cone.castShadow = true;
     group.add(cone);
 
-    const pom = new THREE.Mesh(new THREE.SphereGeometry(headRadius * 0.18, 8, 8), mat);
-    pom.position.set(0, headRadius * 0.55 + headRadius * 1.9 + headRadius * 0.12, 0);
+    const pom = new THREE.Mesh(HAT_POM_GEO, mat);
+    pom.position.set(0, HEAD_R * 0.5 + HEAD_R * 1.7 + HEAD_R * 0.15, 0);
     pom.castShadow = true;
     group.add(pom);
   } else {
-    // 'short' （既定）
-    const cap = new THREE.Mesh(
-      new THREE.SphereGeometry(headRadius * 1.08, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.52),
-      mat
-    );
+    // 'short'（既定）：キャップ＋前髪の房でボブ感を出す
+    const cap = new THREE.Mesh(HAIR_CAP_GEO, mat);
     cap.castShadow = true;
     group.add(cap);
+    addFringe(group, mat);
   }
 
   return group;
@@ -209,53 +429,85 @@ export function createAvatar(config) {
   const root = new THREE.Group();
   root.name = 'avatar';
 
-  const skinMat = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.75, metalness: 0.02, flatShading: true });
-  const shirtMat = new THREE.MeshStandardMaterial({ color: shirtColor, roughness: 0.8, metalness: 0.02, flatShading: true });
-  const eyeMat = new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.4, metalness: 0.1 });
+  const skinMat = toonMat(bodyColor, 0.05);
+  const pantsMat = skinMat.clone();
+  pantsMat.color.set(bodyColor).multiplyScalar(0.6);
+  pantsMat.emissive.set(bodyColor).multiplyScalar(0.03);
+  const shirtMat = toonMat(shirtColor, 0.07);
+  const trimMat = shirtMat.clone();
+  trimMat.color.multiplyScalar(0.55);
+  trimMat.emissive.multiplyScalar(0.5);
 
-  const HIP_Y = 0.5;
-  const LEG_R = 0.095;
-  const LEG_LEN = 0.3;
-  const ARM_R = 0.075;
-  const ARM_LEN = 0.26;
-  const TORSO_R = 0.2;
-  const TORSO_LEN = 0.24;
-  const HEAD_R = 0.27;
-
-  // ---- 脚 ----
+  // ---- 脚（先細りのテーパー円柱＋足） ----
   function makeLeg(side) {
     const pivot = new THREE.Group();
     pivot.position.set(side * 0.12, HIP_Y, 0);
-    const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(LEG_R, LEG_LEN, 4, 8), skinMat.clone());
-    mesh.material.color.set(bodyColor).multiplyScalar(0.6); // ズボン風に少し暗めのボディ色
-    mesh.position.y = -(LEG_LEN / 2 + LEG_R) + 0.02;
+
+    const mesh = new THREE.Mesh(LEG_GEO, pantsMat);
+    mesh.position.y = -(LEG_LEN / 2);
     mesh.castShadow = true;
     pivot.add(mesh);
+
+    const foot = new THREE.Mesh(FOOT_GEO, SHOE_MAT);
+    foot.position.y = -LEG_LEN + FOOT_R * 0.25;
+    foot.position.z = FOOT_R * 0.25;
+    foot.scale.set(1, 0.55, 1.3);
+    foot.castShadow = true;
+    pivot.add(foot);
+
     return pivot;
   }
   const legL = makeLeg(-1);
   const legR = makeLeg(1);
   root.add(legL, legR);
 
-  // ---- 上半身（胴・腕・頭）：まとめて上下にバウンドさせる ----
+  // ---- 上半身（胴・腕・首・頭）：まとめて上下にバウンドさせる ----
   const upperGroup = new THREE.Group();
   upperGroup.position.set(0, HIP_Y, 0);
   root.add(upperGroup);
 
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(TORSO_R, TORSO_LEN, 4, 8), shirtMat);
-  torso.position.y = TORSO_LEN / 2 + TORSO_R;
+  const torso = new THREE.Mesh(TORSO_GEO, shirtMat);
   torso.castShadow = true;
   upperGroup.add(torso);
 
-  const shoulderY = TORSO_LEN + TORSO_R * 1.5;
+  const torsoOutline = new THREE.Mesh(TORSO_GEO, OUTLINE_MAT);
+  torsoOutline.scale.set(1.06, 1.03, 1.06);
+  torso.add(torsoOutline);
+
+  const collarRing = new THREE.Mesh(COLLAR_RING_GEO, trimMat);
+  collarRing.position.y = TORSO_TOP_Y - 0.025;
+  upperGroup.add(collarRing);
+
+  const waistRing = new THREE.Mesh(WAIST_RING_GEO, trimMat);
+  waistRing.position.y = 0.03;
+  upperGroup.add(waistRing);
+
+  const neck = new THREE.Mesh(NECK_GEO, skinMat);
+  neck.position.y = TORSO_TOP_Y + NECK_H / 2;
+  neck.castShadow = true;
+  upperGroup.add(neck);
+
+  const shoulderY = TORSO_TOP_Y;
 
   function makeArm(side) {
     const pivot = new THREE.Group();
-    pivot.position.set(side * (TORSO_R + ARM_R + 0.03), shoulderY, 0);
-    const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(ARM_R, ARM_LEN, 4, 8), skinMat);
-    mesh.position.y = -(ARM_LEN / 2 + ARM_R) + 0.02;
+    pivot.position.set(side * SHOULDER_X, shoulderY, 0);
+
+    const mesh = new THREE.Mesh(ARM_GEO, skinMat);
+    mesh.position.y = -(ARM_LEN / 2);
     mesh.castShadow = true;
     pivot.add(mesh);
+
+    const cuff = new THREE.Mesh(CUFF_RING_GEO, trimMat);
+    cuff.position.y = -ARM_LEN + 0.05;
+    pivot.add(cuff);
+
+    const hand = new THREE.Mesh(HAND_GEO, skinMat);
+    hand.position.y = -ARM_LEN + HAND_R * 0.2;
+    hand.scale.set(1, 0.9, 1.1);
+    hand.castShadow = true;
+    pivot.add(hand);
+
     return pivot;
   }
   const armL = makeArm(-1);
@@ -271,31 +523,41 @@ export function createAvatar(config) {
     roughness: 0.3,
     metalness: 0.1,
   });
-  const penlightMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.022, penlightLen, 4, 8), penlightMat);
-  const handY = -(ARM_LEN + ARM_R * 2);
-  penlightMesh.position.set(0, handY - penlightLen / 2 - 0.03, 0);
+  const penlightMesh = new THREE.Mesh(PENLIGHT_GEO, penlightMat);
+  const handBottomY = -ARM_LEN;
+  penlightMesh.position.set(0, handBottomY - penlightLen / 2 - 0.05, 0);
   penlightMesh.visible = false;
   armR.add(penlightMesh);
 
   // ---- 頭 ----
-  const headY = shoulderY + HEAD_R * 0.95;
+  const headY = TORSO_TOP_Y + NECK_H + HEAD_R * 0.8;
   const headGroup = new THREE.Group();
   headGroup.position.set(0, headY, 0);
   upperGroup.add(headGroup);
 
-  const head = new THREE.Mesh(new THREE.SphereGeometry(HEAD_R, 14, 12), skinMat);
+  const head = new THREE.Mesh(HEAD_GEO, skinMat);
+  head.scale.set(1, 0.96, 0.94);
   head.castShadow = true;
   headGroup.add(head);
 
-  // 目
-  [-1, 1].forEach((side) => {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(HEAD_R * 0.1, 8, 8), eyeMat);
-    eye.position.set(side * HEAD_R * 0.38, HEAD_R * 0.05, HEAD_R * 0.92);
-    headGroup.add(eye);
+  const headOutline = new THREE.Mesh(HEAD_GEO, OUTLINE_MAT);
+  headOutline.scale.set(1.07, 1.07, 1.07);
+  head.add(headOutline);
+
+  // 顔（CanvasTextureを前面に貼る。まばたきはテクスチャの差し替えで実現）
+  const faceTex = getFaceTextures();
+  const faceMat = new THREE.MeshBasicMaterial({
+    map: faceTex.open,
+    transparent: true,
+    depthWrite: false,
   });
+  const face = new THREE.Mesh(FACE_PLANE_GEO, faceMat);
+  face.position.set(0, HEAD_R * 0.02, HEAD_R * 0.93);
+  face.renderOrder = 2;
+  headGroup.add(face);
 
   // 髪
-  const hair = buildHair(hairStyle, hairColor, HEAD_R);
+  const hair = buildHair(hairStyle, hairColor);
   headGroup.add(hair);
 
   // ---- ネームプレート ----
@@ -352,6 +614,32 @@ export function createAvatar(config) {
   let moving = false;
   let walkT = 0;
   let idleT = Math.random() * 10;
+
+  // ---- まばたき ----
+  let blinking = false;
+  let blinkElapsed = 0;
+  let blinkTimer = 1 + Math.random() * 3;
+  const BLINK_DURATION = 0.12;
+
+  function updateBlink(dt) {
+    if (!blinking) {
+      blinkTimer -= dt;
+      if (blinkTimer <= 0) {
+        blinking = true;
+        blinkElapsed = 0;
+        faceMat.map = faceTex.closed;
+        faceMat.needsUpdate = true;
+      }
+    } else {
+      blinkElapsed += dt;
+      if (blinkElapsed >= BLINK_DURATION) {
+        blinking = false;
+        faceMat.map = faceTex.open;
+        faceMat.needsUpdate = true;
+        blinkTimer = 2.4 + Math.random() * 3.6;
+      }
+    }
+  }
 
   // ---- エモート ----
   let emoteId = null;
@@ -483,6 +771,8 @@ export function createAvatar(config) {
   }
 
   function update(dt) {
+    updateBlink(dt);
+
     if (emoteId) {
       const dur = EMOTE_DURATIONS[emoteId];
       emoteT += dt;
