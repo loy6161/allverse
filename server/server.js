@@ -478,7 +478,32 @@ httpServer.on('upgrade', (req, socket, head) => {
   });
 });
 
+// ---- 死活監視 ----
+// タブが強制終了した・回線が切れた等で切断イベントが届かないと、
+// 存在しない人が会場に残り続ける（人数表示やpresence.jsonが狂う）。
+// 定期的にpingを送り、応答が無い接続を掃除する。
+const HEARTBEAT_MS = 30000;
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    try {
+      ws.ping();
+    } catch {
+      ws.terminate();
+    }
+  }
+}, HEARTBEAT_MS).unref?.();
+
 wss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
+
   const client = {
     id: `c${nextClientSeq++}`,
     ws,

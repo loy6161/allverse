@@ -202,16 +202,22 @@ export function createWorld(scene, opts = {}) {
   scene.fog = new THREE.FogExp2(0x050a18, 0.015);
 
   // ---- ライト ----
-  const ambient = new THREE.AmbientLight(0x334466, 0.55);
+  // ステージ照明を撤去したぶん、アバターが暗くならないよう環境光を補っている
+  const ambient = new THREE.AmbientLight(0x44557a, 0.85);
   scene.add(ambient);
 
-  const hemi = new THREE.HemisphereLight(0x24304f, 0x1a1208, 0.6);
+  const hemi = new THREE.HemisphereLight(0x33406a, 0x241a0c, 0.85);
   scene.add(hemi);
 
   // 月明かり（暖色寄りの薄い directional light。影は落とさない）
-  const moonLight = new THREE.DirectionalLight(0xfff0da, 0.35);
+  const moonLight = new THREE.DirectionalLight(0xfff0da, 0.55);
   moonLight.position.set(30, 60, -180);
   scene.add(moonLight);
+
+  // スクリーン側からの照り返し（客席に立つ人の顔が見えるように）
+  const screenFill = new THREE.DirectionalLight(0xffd9ac, 0.45);
+  screenFill.position.set(0, 6, -12);
+  scene.add(screenFill);
 
   // =====================================================================
   // 巨大な月
@@ -298,44 +304,18 @@ export function createWorld(scene, opts = {}) {
   }
 
   // =====================================================================
-  // ステージ（円形・暖色）
-  // ここに紐づく LED スクリーンはワールド座標 (0, 5.4, -18.95) / 幅14×高さ7 固定
+  // スクリーン設置エリア
+  // ステージ（床の段差）は「スクリーンに近づくと登ってしまう／めり込む」ため撤去し、
+  // 平らな床のまま、LEDスクリーンだけを設置している。
+  // LEDスクリーンはワールド座標 (0, 5.4, -18.95) / 幅14×高さ7 固定（screen.jsが重ねる）
   // =====================================================================
   const stageGroup = new THREE.Group();
   stageGroup.position.set(0, 0, -15);
   group.add(stageGroup);
 
-  const stageHeight = 1.2;
-  const stageRadius = 8.5;
+  const stageHeight = 1.2; // スクリーン高さの基準として残す（床の段差そのものは無い）
+  const stageRadius = 8.5; // 意匠（ネオン等）の配置基準として残す
   const screenLocalZ = -18.95 - stageGroup.position.z; // = -3.95（スクリーンのワールド座標を固定するため直接計算）
-
-  const stageBaseGeo = new THREE.CylinderGeometry(stageRadius, stageRadius, stageHeight, 40);
-  const stageBaseMat = new THREE.MeshStandardMaterial({
-    color: 0x0e0e14,
-    roughness: 0.4,
-    metalness: 0.55,
-    emissive: 0x231404,
-    emissiveIntensity: 0.4,
-  });
-  const stageBase = new THREE.Mesh(stageBaseGeo, stageBaseMat);
-  stageBase.position.y = stageHeight / 2;
-  stageBase.castShadow = !lowSpec;
-  stageBase.receiveShadow = true;
-  stageGroup.add(stageBase);
-
-  // ステージ縁の発光リング
-  const edgeRingGeo = new THREE.TorusGeometry(stageRadius + 0.05, 0.06, 8, 48);
-  const edgeRingMat = new THREE.MeshStandardMaterial({
-    color: NEON_WARM_A,
-    emissive: NEON_WARM_A,
-    emissiveIntensity: 2.2,
-    roughness: 0.3,
-    toneMapped: false,
-  });
-  const stageEdge = new THREE.Mesh(edgeRingGeo, edgeRingMat);
-  stageEdge.rotation.x = Math.PI / 2;
-  stageEdge.position.y = stageHeight + 0.02;
-  stageGroup.add(stageEdge);
 
   // 背面LEDスクリーン（位置・サイズ固定: 幅14×高さ7、ワールド(0,5.4,-18.95)）
   const screenTex = makeScreenTexture('VERSE CITY');
@@ -361,128 +341,15 @@ export function createWorld(scene, opts = {}) {
   frame.position.set(0, stageHeight + 4.2, screenLocalZ - 0.3);
   stageGroup.add(frame);
 
-  // ---- 汎用の箱ジオメトリ（トラス柱・スピーカー等で使い回す） ----
+  // ---- 汎用の箱ジオメトリ（意匠で使い回す） ----
   const unitBoxGeo = new THREE.BoxGeometry(1, 1, 1);
 
-  // ステージ両脇のトラス柱
-  const pillarMat = new THREE.MeshStandardMaterial({
-    color: 0x14141c,
-    emissive: NEON_WARM_A,
-    emissiveIntensity: 0.6,
-    roughness: 0.4,
-    metalness: 0.7,
-  });
-  const pillarPositions = [
-    [-stageRadius - 0.6, 4, screenLocalZ],
-    [stageRadius + 0.6, 4, screenLocalZ],
-  ];
+  // ステージ・トラス柱・スピーカー・スポットライトは撤去した。
+  // 理由: スクリーンの近くで見たいのに段差や機材にぶつかる／めり込むため。
+  // 会場の明るさは環境光とネオンの意匠で確保している。
   const trussPillars = [];
-  for (const [x, y, z] of pillarPositions) {
-    const pillar = new THREE.Mesh(unitBoxGeo, pillarMat);
-    pillar.scale.set(0.5, 8, 0.5);
-    pillar.position.set(x, y, z);
-    pillar.castShadow = !lowSpec;
-    stageGroup.add(pillar);
-    trussPillars.push(pillar);
-  }
-
-  // ---- PAスピーカー（左右のスタック） ----
-  const speakerMat = new THREE.MeshStandardMaterial({
-    color: 0x101014,
-    roughness: 0.6,
-    metalness: 0.3,
-    emissive: NEON_WARM_A,
-    emissiveIntensity: 0.15,
-  });
-  const paPositions = [
-    [-stageRadius - 1.6, screenLocalZ + 0.5],
-    [stageRadius + 1.6, screenLocalZ + 0.5],
-  ];
-  for (const [x, z] of paPositions) {
-    let y = stageHeight;
-    for (let box = 0; box < 3; box++) {
-      const h = 1.6 - box * 0.15;
-      const w = 1.3 - box * 0.1;
-      const spk = new THREE.Mesh(unitBoxGeo, speakerMat);
-      spk.scale.set(w, h, w);
-      spk.position.set(x, y + h / 2, z);
-      spk.castShadow = !lowSpec;
-      stageGroup.add(spk);
-      y += h;
-    }
-  }
-
-  // ---- モニタースピーカー（ステージ前面に並べる） ----
-  const monitorMat = new THREE.MeshStandardMaterial({
-    color: 0x121216,
-    roughness: 0.55,
-    metalness: 0.35,
-    emissive: NEON_WARM_B,
-    emissiveIntensity: 0.2,
-  });
-  const monitorZ = stageRadius * 0.82;
-  for (let i = -2; i <= 2; i++) {
-    const monitor = new THREE.Mesh(unitBoxGeo, monitorMat);
-    monitor.scale.set(1.1, 0.5, 0.7);
-    monitor.position.set(i * 2.6, stageHeight + 0.25, monitorZ);
-    monitor.rotation.x = -0.35; // 客席側へ向けた傾き
-    monitor.castShadow = !lowSpec;
-    stageGroup.add(monitor);
-  }
-
-  // ---- ライブ照明（スポットライト + 光線コーン。暖色主体、差し色に青紫） ----
   const spotLights = [];
   const spotCones = [];
-  const spotColors = [NEON_WARM_A, NEON_WARM_B, NEON_ACCENT_VIOLET, 0xffcf8a];
-
-  const spotOriginY = 7.5;
-  const spotOriginPositions = [
-    [-6, spotOriginY, screenLocalZ + 3],
-    [-2, spotOriginY, screenLocalZ + 3],
-    [2, spotOriginY, screenLocalZ + 3],
-    [6, spotOriginY, screenLocalZ + 3],
-  ];
-
-  const coneSegments = lowSpec ? 12 : 24;
-
-  for (let i = 0; i < spotOriginPositions.length; i++) {
-    const [x, y, z] = spotOriginPositions[i];
-    const color = spotColors[i % spotColors.length];
-
-    const spot = new THREE.SpotLight(color, i === 1 ? 25 : 15, 30, Math.PI / 7, 0.4, 1.5);
-    spot.position.set(x, y, z);
-    const target = new THREE.Object3D();
-    target.position.set(x * 0.3, 0, screenLocalZ + 11);
-    stageGroup.add(target);
-    spot.target = target;
-
-    // 影を落とすのは最大2灯のみ（性能配慮）。lowSpec時は一切影を使わない
-    if (!lowSpec && (i === 1 || i === 2)) {
-      spot.castShadow = true;
-      spot.shadow.mapSize.set(512, 512);
-      spot.shadow.camera.near = 1;
-      spot.shadow.camera.far = 40;
-    }
-    stageGroup.add(spot);
-    spotLights.push(spot);
-
-    // 光線を表現する半透明コーン
-    const coneGeo = new THREE.ConeGeometry(2.2, 7.5, coneSegments, 1, true);
-    const coneMat = new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.12,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    const cone = new THREE.Mesh(coneGeo, coneMat);
-    cone.position.set(x, y - 3.75, z);
-    cone.userData.baseX = x;
-    cone.userData.baseZ = z;
-    cone.userData.phase = i * 1.1;
-    stageGroup.add(cone);
-    spotCones.push(cone);
-  }
 
   // =====================================================================
   // V字/への字のネオンライン（会場の象徴的な意匠。左右対称）
@@ -630,26 +497,7 @@ export function createWorld(scene, opts = {}) {
     }
   }
 
-  // ---- 観客エリアの簡易柵（雰囲気付け・暖色） ----
-  const barrierMat = new THREE.MeshStandardMaterial({
-    color: 0x1c1c22,
-    emissive: NEON_WARM_A,
-    emissiveIntensity: 0.35,
-    roughness: 0.5,
-    metalness: 0.5,
-  });
-  const barrierGeo = new THREE.BoxGeometry(1.6, 0.6, 0.15);
-  const barrierCount = 14;
-  const barrierRadius = 10;
-  for (let i = 0; i < barrierCount; i++) {
-    const a = (i / barrierCount) * Math.PI * 1.1 - Math.PI * 0.55;
-    const x = Math.sin(a) * barrierRadius;
-    const z = -8 + Math.cos(a) * barrierRadius * 0.35;
-    const bar = new THREE.Mesh(barrierGeo, barrierMat);
-    bar.position.set(x, 0.3, z);
-    bar.rotation.y = -a;
-    group.add(bar);
-  }
+  // 観客エリアの柵も撤去（スクリーンへ自由に近づけるように、床には何も置かない）
 
   // =====================================================================
   // 光の粒子（空間に舞う小さな光の粒）

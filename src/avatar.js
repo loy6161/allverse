@@ -24,25 +24,40 @@ export function randomConfig() {
   };
 }
 
+// 文字列から決定論的な整数インデックスを作る（configの形は変えず、既存フィールドの
+// 値だけから服のバリエーション等を導出するためのハッシュ）
+function variantIndex(str, mod) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  }
+  return h % mod;
+}
+
 // ------------------------------------------------------------------
 // 共有リソース（全アバター共通・色に依存しないもの）
 // メッシュ数・GC負荷を抑えるため、形状はモジュール読み込み時に一度だけ生成して使い回す。
 // ------------------------------------------------------------------
 
 const HEAD_R = 0.22;
-const NECK_R = 0.075;
-const NECK_H = 0.09;
-const TORSO_TOP_Y = 0.5; // = shoulderY（腰base=0からの高さ）
-const ARM_R_TOP = 0.062;
-const ARM_R_BOTTOM = 0.046;
+const NECK_R = 0.078;
+const NECK_H = 0.1;
+const NECK_OVERLAP = 0.02; // 首を胴体にわずかに埋め込み、段差を消す
+const HEAD_OVERLAP = 0.035; // 頭を首にわずかに埋め込み、段差を消す
+const SHOULDER_Y = 0.42; // 胴体プロファイルの肩幅ピーク＝腕の付け根の高さ
+const TORSO_TOP_Y = 0.505; // 胴体プロファイルの上端（襟ぐり／首の付け根）
+const ARM_R_TOP = 0.066;
+const ARM_R_BOTTOM = 0.048;
 const ARM_LEN = 0.34;
-const HAND_R = 0.06;
+const HAND_R = 0.062;
 const LEG_R_TOP = 0.1;
 const LEG_R_BOTTOM = 0.074;
 const LEG_LEN = 0.44;
 const FOOT_R = 0.09;
 const HIP_Y = 0.5;
-const SHOULDER_X = 0.175 + ARM_R_TOP + 0.025; // 胸幅 + 腕半径 + 隙間
+const SHOULDER_X = 0.185 + ARM_R_TOP * 0.55; // 肩幅ピーク半径 + 腕の食い込み量（隙間を作らない）
+const ARM_REST_X = -0.05; // 腕の自然な休止角（わずかに前へ）
+const ARM_REST_Z = 0.1; // 腕の自然な休止角（わずかに外へ＝いかり肩を防ぐ）
 
 // ---- トゥーン用グラデーションマップ（2〜3段の階調を手続き生成） ----
 function createGradientMap(steps) {
@@ -66,6 +81,8 @@ function toonMat(color, emissiveFactor = 0.05) {
 
 // 靴（全アバター共通のニュートラル色。ユーザー色に依存しないので共有できる）
 const SHOE_MAT = new THREE.MeshToonMaterial({ color: '#22222c', gradientMap: GRADIENT_MAP });
+// 靴底（ソール）：本体より少し明るいニュートラル色で色分け
+const SOLE_MAT = new THREE.MeshToonMaterial({ color: '#34343e', gradientMap: GRADIENT_MAP });
 
 // 輪郭線（反転ハル方式）：常に単色の黒なので全アバターで共有できる
 const OUTLINE_MAT = new THREE.MeshBasicMaterial({ color: '#0c0714', side: THREE.BackSide });
@@ -73,24 +90,29 @@ const OUTLINE_MAT = new THREE.MeshBasicMaterial({ color: '#0c0714', side: THREE.
 // ---- 共有ジオメトリ（色を持たないので全アバター・全パーツで使い回せる） ----
 const HEAD_GEO = new THREE.SphereGeometry(HEAD_R, 14, 10);
 const FACE_PLANE_GEO = new THREE.PlaneGeometry(HEAD_R * 1.32, HEAD_R * 1.18);
-const NECK_GEO = new THREE.CylinderGeometry(NECK_R, NECK_R * 1.05, NECK_H, 8, 1, true);
+const NECK_GEO = new THREE.CylinderGeometry(NECK_R, NECK_R * 1.15, NECK_H, 8, 1, true);
 const LEG_GEO = new THREE.CylinderGeometry(LEG_R_TOP, LEG_R_BOTTOM, LEG_LEN, 8, 1, true);
 const ARM_GEO = new THREE.CylinderGeometry(ARM_R_TOP, ARM_R_BOTTOM, ARM_LEN, 8, 1, true);
 const FOOT_GEO = new THREE.SphereGeometry(FOOT_R, 6, 5);
 const HAND_GEO = new THREE.SphereGeometry(HAND_R, 6, 5);
-const COLLAR_RING_GEO = new THREE.CylinderGeometry(0.16, 0.18, 0.05, 10, 1, true);
-const WAIST_RING_GEO = new THREE.CylinderGeometry(0.16, 0.15, 0.06, 10, 1, true);
+const THUMB_GEO = new THREE.SphereGeometry(HAND_R * 0.62, 6, 5);
+const SOLE_GEO = new THREE.BoxGeometry(FOOT_R * 1.3, FOOT_R * 0.26, FOOT_R * 1.6);
+const COLLAR_RING_GEO = new THREE.CylinderGeometry(0.115, 0.1, 0.045, 10, 1, true);
+const WAIST_RING_GEO = new THREE.CylinderGeometry(0.165, 0.15, 0.07, 10, 1, true);
 const CUFF_RING_GEO = new THREE.CylinderGeometry(ARM_R_BOTTOM * 1.15, ARM_R_BOTTOM * 1.35, 0.045, 10, 1, true);
 const PENLIGHT_GEO = new THREE.CapsuleGeometry(0.022, 0.34, 4, 8);
 
-// 胴体：くびれのあるラウンドシルエット（Latheで回転生成。上下は他パーツで隠れるので開放でOK）
+// 胴体：くびれ＋なで肩のラウンドシルエット（Latheで回転生成）。
+// 肩ピーク(SHOULDER_Y)から襟ぐり(TORSO_TOP_Y)へなだらかに絞ることで、
+// 首の付け根との段差・いかり肩を防ぐ。上下は他パーツで隠れるので開放でOK。
 const TORSO_GEO = new THREE.LatheGeometry(
   [
     [0.145, 0.0], // 腰の張り（waist ringに隠れる下端）
-    [0.125, 0.16], // ウエスト（最も細い）
-    [0.155, 0.32], // 胸まわり
-    [0.185, 0.44], // 肩幅
-    [0.175, TORSO_TOP_Y], // 肩上（首の付け根）
+    [0.122, 0.14], // ウエスト（最も細い）
+    [0.152, 0.3], // 胸まわり
+    [0.185, SHOULDER_Y], // 肩幅ピーク（腕の付け根の高さ）
+    [0.15, 0.47], // なで肩カーブ
+    [0.092, TORSO_TOP_Y], // 襟ぐり（首の付け根、NECK_GEOの下端と径を合わせる）
   ].map(([r, y]) => new THREE.Vector2(r, y)),
   10
 );
@@ -103,27 +125,32 @@ const HAIR_TWIN_TAIL_GEO = new THREE.CapsuleGeometry(HEAD_R * 0.2, HEAD_R * 1.15
 const HAT_BRIM_GEO = new THREE.CylinderGeometry(HEAD_R * 1.18, HEAD_R * 1.18, HEAD_R * 0.14, 12, 1, false);
 const HAT_CONE_GEO = new THREE.ConeGeometry(HEAD_R * 0.82, HEAD_R * 1.7, 12, 1, false);
 const HAT_POM_GEO = new THREE.SphereGeometry(HEAD_R * 0.17, 6, 6);
+// アニメ調ハイライト帯（天使の輪）。頭と同じ原点を中心にした部分球なので、
+// 追加の位置合わせなしにキャップ表面へそのまま乗る。回転だけで毛束の非対称さを出す。
+const HAIR_HIGHLIGHT_GEO = new THREE.SphereGeometry(HEAD_R * 1.13, 12, 4, Math.PI * 0.15, Math.PI * 0.7, 0, Math.PI * 0.32);
 
 // ------------------------------------------------------------------
 // 顔テクスチャ（CanvasTexture）：目・まつげ・ハイライト・眉・口・頬を描画
 // 全アバター共通の絵柄（色ではなく表情そのものなので共有可）。
-// まばたきは「開いた顔」「閉じた顔」2枚のテクスチャを差し替えるだけで実現し、
-// アバターごとにCanvasを再描画しない（軽量）。
+// 表情は 'default' / 'smile' / 'happy' の3種類。default/smileはまばたきで
+// 開閉2枚を差し替え、happyは常に笑顔クローズドの1枚のみ（差し替え不要）。
 // ------------------------------------------------------------------
 
 let faceTexturesCache = null;
 
-function drawFace(ctx, size, closed) {
+function drawFace(ctx, size, closed, expression = 'default') {
   ctx.clearRect(0, 0, size, size);
   const leftX = size * 0.335;
   const rightX = size * 0.665;
   const eyeY = size * 0.5;
   const eyeW = size * 0.15;
   const eyeH = size * 0.185;
+  const happy = expression === 'happy';
+  const smiling = expression === 'smile';
 
   // 頬（ブラッシュ）
   ctx.save();
-  ctx.globalAlpha = 0.32;
+  ctx.globalAlpha = happy ? 0.42 : 0.32;
   [leftX - size * 0.02, rightX + size * 0.02].forEach((cx) => {
     const grad = ctx.createRadialGradient(cx, size * 0.66, 1, cx, size * 0.66, size * 0.1);
     grad.addColorStop(0, '#ff8fae');
@@ -137,6 +164,17 @@ function drawFace(ctx, size, closed) {
 
   // 目
   [leftX, rightX].forEach((ex) => {
+    if (happy) {
+      // ハート/ダンス用：常ににっこり閉じ目（^‿^）
+      ctx.strokeStyle = '#140b12';
+      ctx.lineWidth = size * 0.022;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(ex, eyeY + eyeH * 0.18, eyeW * 0.58, Math.PI * 1.12, Math.PI * 1.88);
+      ctx.stroke();
+      return;
+    }
+
     if (closed) {
       ctx.strokeStyle = '#140b12';
       ctx.lineWidth = size * 0.02;
@@ -144,9 +182,15 @@ function drawFace(ctx, size, closed) {
       ctx.beginPath();
       ctx.arc(ex, eyeY, eyeW * 0.62, Math.PI * 0.12, Math.PI * 0.88);
       ctx.stroke();
-      // まつげのはね
+      // まつげのはね（根元太め→先細りで強弱をつける）
+      ctx.lineWidth = size * 0.026;
       ctx.beginPath();
       ctx.moveTo(ex + eyeW * 0.55, eyeY + eyeH * 0.05);
+      ctx.lineTo(ex + eyeW * 0.66, eyeY - eyeH * 0.02);
+      ctx.stroke();
+      ctx.lineWidth = size * 0.014;
+      ctx.beginPath();
+      ctx.moveTo(ex + eyeW * 0.66, eyeY - eyeH * 0.02);
       ctx.lineTo(ex + eyeW * 0.75, eyeY - eyeH * 0.12);
       ctx.stroke();
       return;
@@ -158,8 +202,18 @@ function drawFace(ctx, size, closed) {
     ctx.ellipse(ex, eyeY, eyeW * 0.5, eyeH * 0.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // 瞳（大きめの黒目でVRoid風に）
-    ctx.fillStyle = '#1c1420';
+    // 瞳（グラデーションで奥行きを出す）
+    const irisGrad = ctx.createRadialGradient(
+      ex - eyeW * 0.05,
+      eyeY,
+      eyeW * 0.05,
+      ex,
+      eyeY + eyeH * 0.06,
+      eyeW * 0.42
+    );
+    irisGrad.addColorStop(0, '#3a2f4a');
+    irisGrad.addColorStop(1, '#1c1420');
+    ctx.fillStyle = irisGrad;
     ctx.beginPath();
     ctx.ellipse(ex, eyeY + eyeH * 0.06, eyeW * 0.4, eyeH * 0.42, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -172,13 +226,19 @@ function drawFace(ctx, size, closed) {
     ctx.ellipse(ex, eyeY - eyeH * 0.05, eyeW * 0.52, eyeH * 0.5, 0, Math.PI * 1.02, Math.PI * 1.98);
     ctx.stroke();
 
-    // まつげのはね
+    // まつげのはね（根元太め→先細りで強弱をつける）
+    ctx.lineWidth = size * 0.026;
     ctx.beginPath();
     ctx.moveTo(ex + eyeW * 0.48, eyeY - eyeH * 0.3);
+    ctx.lineTo(ex + eyeW * 0.6, eyeY - eyeH * 0.41);
+    ctx.stroke();
+    ctx.lineWidth = size * 0.013;
+    ctx.beginPath();
+    ctx.moveTo(ex + eyeW * 0.6, eyeY - eyeH * 0.41);
     ctx.lineTo(ex + eyeW * 0.72, eyeY - eyeH * 0.52);
     ctx.stroke();
 
-    // ハイライト
+    // ハイライト2点
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
     ctx.ellipse(ex - eyeW * 0.14, eyeY - eyeH * 0.14, eyeW * 0.14, eyeH * 0.16, 0, 0, Math.PI * 2);
@@ -188,50 +248,76 @@ function drawFace(ctx, size, closed) {
     ctx.fill();
   });
 
-  // 眉
-  ctx.strokeStyle = '#2a1c22';
-  ctx.lineWidth = size * 0.016;
+  // 眉（やわらかく：太いぼかしストローク＋細い芯の二重描き）
   ctx.lineCap = 'round';
   [leftX, rightX].forEach((ex, i) => {
     const dir = i === 0 ? -1 : 1;
+    const liftY = happy ? 1.05 : 0.85;
+    const peakY = happy ? 1.25 : 1.05;
+    const endY = happy ? 1.02 : 0.82;
+    ctx.strokeStyle = 'rgba(42,28,34,0.35)';
+    ctx.lineWidth = size * 0.026;
     ctx.beginPath();
-    ctx.moveTo(ex - dir * eyeW * 0.05 - eyeW * 0.4, eyeY - eyeH * 0.85);
-    ctx.quadraticCurveTo(ex, eyeY - eyeH * 1.05, ex + eyeW * 0.4, eyeY - eyeH * 0.82);
+    ctx.moveTo(ex - dir * eyeW * 0.05 - eyeW * 0.4, eyeY - eyeH * liftY);
+    ctx.quadraticCurveTo(ex, eyeY - eyeH * peakY, ex + eyeW * 0.4, eyeY - eyeH * endY);
+    ctx.stroke();
+    ctx.strokeStyle = '#2a1c22';
+    ctx.lineWidth = size * 0.014;
+    ctx.beginPath();
+    ctx.moveTo(ex - dir * eyeW * 0.05 - eyeW * 0.4, eyeY - eyeH * liftY);
+    ctx.quadraticCurveTo(ex, eyeY - eyeH * peakY, ex + eyeW * 0.4, eyeY - eyeH * endY);
     ctx.stroke();
   });
 
-  // 口（小さな笑み）
-  ctx.strokeStyle = '#7a3b4a';
-  ctx.lineWidth = size * 0.016;
+  // 口：表情ごとに大きさ・開き方を変える
   ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(size * 0.44, size * 0.74);
-  ctx.quadraticCurveTo(size * 0.5, size * 0.79, size * 0.56, size * 0.74);
-  ctx.stroke();
+  if (happy) {
+    ctx.fillStyle = '#7a3b4a';
+    ctx.beginPath();
+    ctx.moveTo(size * 0.4, size * 0.72);
+    ctx.quadraticCurveTo(size * 0.5, size * 0.85, size * 0.6, size * 0.72);
+    ctx.quadraticCurveTo(size * 0.5, size * 0.78, size * 0.4, size * 0.72);
+    ctx.fill();
+    ctx.strokeStyle = '#4a1f2a';
+    ctx.lineWidth = size * 0.012;
+    ctx.stroke();
+  } else if (smiling) {
+    ctx.strokeStyle = '#7a3b4a';
+    ctx.lineWidth = size * 0.02;
+    ctx.beginPath();
+    ctx.moveTo(size * 0.41, size * 0.735);
+    ctx.quadraticCurveTo(size * 0.5, size * 0.795, size * 0.59, size * 0.735);
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = '#7a3b4a';
+    ctx.lineWidth = size * 0.016;
+    ctx.beginPath();
+    ctx.moveTo(size * 0.44, size * 0.74);
+    ctx.quadraticCurveTo(size * 0.5, size * 0.79, size * 0.56, size * 0.74);
+    ctx.stroke();
+  }
 }
 
 function getFaceTextures() {
   if (faceTexturesCache) return faceTexturesCache;
-  const size = 256;
+  const size = 512; // 256→512：描き込み解像度を引き上げ
 
-  const openCanvas = document.createElement('canvas');
-  openCanvas.width = size;
-  openCanvas.height = size;
-  drawFace(openCanvas.getContext('2d'), size, false);
+  function makeTex(closed, expression) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    drawFace(canvas.getContext('2d'), size, closed, expression);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    return tex;
+  }
 
-  const closedCanvas = document.createElement('canvas');
-  closedCanvas.width = size;
-  closedCanvas.height = size;
-  drawFace(closedCanvas.getContext('2d'), size, true);
-
-  const open = new THREE.CanvasTexture(openCanvas);
-  const closed = new THREE.CanvasTexture(closedCanvas);
-  open.colorSpace = THREE.SRGBColorSpace;
-  closed.colorSpace = THREE.SRGBColorSpace;
-  open.needsUpdate = true;
-  closed.needsUpdate = true;
-
-  faceTexturesCache = { open, closed };
+  faceTexturesCache = {
+    default: { open: makeTex(false, 'default'), closed: makeTex(true, 'default') },
+    smile: { open: makeTex(false, 'smile'), closed: makeTex(true, 'smile') },
+    happy: { tex: makeTex(false, 'happy') },
+  };
   return faceTexturesCache;
 }
 
@@ -348,6 +434,8 @@ function createTextSprite(text, opts = {}) {
 // ---- 髪パーツ生成 ----------------------------------------------------
 // シルエットで魅せる：前髪の房（fringe）を全スタイル共通で使い、
 // スタイルごとに後ろ髪・ツインテール・帽子を足す。
+// 加えて全スタイル共通でハイライト帯（天使の輪）を1枚重ね、
+// アニメ調の質感と毛束の非対称な動きを出す。
 
 function addFringe(group, hairMat) {
   const fringe = new THREE.Mesh(HAIR_FRINGE_GEO, hairMat);
@@ -356,6 +444,22 @@ function addFringe(group, hairMat) {
   fringe.scale.set(1.3, 0.72, 0.5);
   fringe.castShadow = true;
   group.add(fringe);
+}
+
+function addHairHighlight(group, hairColor) {
+  const bright = new THREE.Color(hairColor).lerp(new THREE.Color('#ffffff'), 0.6);
+  const mat = new THREE.MeshBasicMaterial({
+    color: bright,
+    transparent: true,
+    opacity: 0.5,
+    depthWrite: false,
+  });
+  const band = new THREE.Mesh(HAIR_HIGHLIGHT_GEO, mat);
+  // 個体ごとにわずかに回転をずらし、単調な左右対称のハイライトにならないようにする
+  band.rotation.y = (Math.random() - 0.5) * 0.5;
+  band.rotation.z = (Math.random() - 0.5) * 0.12;
+  band.renderOrder = 1;
+  group.add(band);
 }
 
 function buildHair(style, hairColor) {
@@ -412,6 +516,8 @@ function buildHair(style, hairColor) {
     addFringe(group, mat);
   }
 
+  addHairHighlight(group, hairColor);
+
   return group;
 }
 
@@ -438,7 +544,20 @@ export function createAvatar(config) {
   trimMat.color.multiplyScalar(0.55);
   trimMat.emissive.multiplyScalar(0.5);
 
-  // ---- 脚（先細りのテーパー円柱＋足） ----
+  // ---- 服のバリエーション（configの形は変えず、既存の色フィールドから決定論的に導出） ----
+  const sleeveVariant = variantIndex(shirtColor, 3); // 0:半袖 1:普通 2:長袖ぎみ
+  const hemVariant = variantIndex(shirtColor + hairColor, 2); // 0:通常丈 1:長め（チュニック風）
+  const accentVariant = variantIndex(shirtColor, 2); // 0:通常トリム 1:明るいワンポイントトリム
+
+  if (accentVariant === 1) {
+    trimMat.color.lerp(new THREE.Color('#ffffff'), 0.3);
+    trimMat.emissive.lerp(new THREE.Color('#ffffff'), 0.3);
+  }
+
+  const SLEEVE_CUFF_Y = [-ARM_LEN * 0.42, -ARM_LEN + 0.11, -ARM_LEN + 0.03][sleeveVariant];
+  const SLEEVE_CUFF_SCALE = [1.35, 1.0, 1.05][sleeveVariant];
+
+  // ---- 脚（先細りのテーパー円柱＋足＋ソール） ----
   function makeLeg(side) {
     const pivot = new THREE.Group();
     pivot.position.set(side * 0.12, HIP_Y, 0);
@@ -454,6 +573,11 @@ export function createAvatar(config) {
     foot.scale.set(1, 0.55, 1.3);
     foot.castShadow = true;
     pivot.add(foot);
+
+    const sole = new THREE.Mesh(SOLE_GEO, SOLE_MAT);
+    sole.position.set(0, foot.position.y - FOOT_R * 0.42, foot.position.z + FOOT_R * 0.05);
+    sole.castShadow = true;
+    pivot.add(sole);
 
     return pivot;
   }
@@ -475,23 +599,29 @@ export function createAvatar(config) {
   torso.add(torsoOutline);
 
   const collarRing = new THREE.Mesh(COLLAR_RING_GEO, trimMat);
-  collarRing.position.y = TORSO_TOP_Y - 0.025;
+  collarRing.position.y = TORSO_TOP_Y - 0.015;
   upperGroup.add(collarRing);
 
   const waistRing = new THREE.Mesh(WAIST_RING_GEO, trimMat);
-  waistRing.position.y = 0.03;
+  if (hemVariant === 1) {
+    // 長め（チュニック風）の裾：位置を下げ、わずかにフレアさせる
+    waistRing.position.y = -0.055;
+    waistRing.scale.set(1.14, 1.3, 1.14);
+  } else {
+    waistRing.position.y = 0.02;
+  }
   upperGroup.add(waistRing);
 
   const neck = new THREE.Mesh(NECK_GEO, skinMat);
-  neck.position.y = TORSO_TOP_Y + NECK_H / 2;
+  neck.position.y = TORSO_TOP_Y - NECK_OVERLAP + NECK_H / 2;
   neck.castShadow = true;
   upperGroup.add(neck);
 
-  const shoulderY = TORSO_TOP_Y;
-
   function makeArm(side) {
     const pivot = new THREE.Group();
-    pivot.position.set(side * SHOULDER_X, shoulderY, 0);
+    pivot.position.set(side * SHOULDER_X, SHOULDER_Y, 0);
+    pivot.rotation.z = side * ARM_REST_Z;
+    pivot.rotation.x = ARM_REST_X;
 
     const mesh = new THREE.Mesh(ARM_GEO, skinMat);
     mesh.position.y = -(ARM_LEN / 2);
@@ -499,7 +629,8 @@ export function createAvatar(config) {
     pivot.add(mesh);
 
     const cuff = new THREE.Mesh(CUFF_RING_GEO, trimMat);
-    cuff.position.y = -ARM_LEN + 0.05;
+    cuff.position.y = SLEEVE_CUFF_Y;
+    cuff.scale.set(SLEEVE_CUFF_SCALE, 1, SLEEVE_CUFF_SCALE);
     pivot.add(cuff);
 
     const hand = new THREE.Mesh(HAND_GEO, skinMat);
@@ -507,6 +638,13 @@ export function createAvatar(config) {
     hand.scale.set(1, 0.9, 1.1);
     hand.castShadow = true;
     pivot.add(hand);
+
+    // 親指のふくらみ（ミトン手の内側＝体の中心側に配置）
+    const thumb = new THREE.Mesh(THUMB_GEO, skinMat);
+    thumb.position.set(-side * HAND_R * 0.7, -ARM_LEN + HAND_R * 0.15, HAND_R * 0.5);
+    thumb.scale.set(0.85, 1, 0.85);
+    thumb.castShadow = true;
+    pivot.add(thumb);
 
     return pivot;
   }
@@ -530,7 +668,7 @@ export function createAvatar(config) {
   armR.add(penlightMesh);
 
   // ---- 頭 ----
-  const headY = TORSO_TOP_Y + NECK_H + HEAD_R * 0.8;
+  const headY = TORSO_TOP_Y - NECK_OVERLAP + NECK_H - HEAD_OVERLAP + HEAD_R * 0.82;
   const headGroup = new THREE.Group();
   headGroup.position.set(0, headY, 0);
   upperGroup.add(headGroup);
@@ -544,10 +682,10 @@ export function createAvatar(config) {
   headOutline.scale.set(1.07, 1.07, 1.07);
   head.add(headOutline);
 
-  // 顔（CanvasTextureを前面に貼る。まばたきはテクスチャの差し替えで実現）
+  // 顔（CanvasTextureを前面に貼る。まばたき・表情はテクスチャの差し替えで実現）
   const faceTex = getFaceTextures();
   const faceMat = new THREE.MeshBasicMaterial({
-    map: faceTex.open,
+    map: faceTex.default.open,
     transparent: true,
     depthWrite: false,
   });
@@ -621,21 +759,45 @@ export function createAvatar(config) {
   let blinkTimer = 1 + Math.random() * 3;
   const BLINK_DURATION = 0.12;
 
+  // ---- 表情（エモートに連動） ----
+  let expression = 'default'; // 'default' | 'smile' | 'happy'
+
+  function applyFaceTexture() {
+    let tex;
+    if (expression === 'happy') {
+      tex = faceTex.happy.tex;
+    } else {
+      const set = faceTex[expression] || faceTex.default;
+      tex = blinking ? set.closed : set.open;
+    }
+    if (faceMat.map !== tex) {
+      faceMat.map = tex;
+      faceMat.needsUpdate = true;
+    }
+  }
+
+  function setExpression(next) {
+    expression = next;
+    applyFaceTexture();
+  }
+
   function updateBlink(dt) {
+    if (expression === 'happy') {
+      // happy表情中はまばたき演出をスキップ（顔テクスチャは1枚固定）
+      return;
+    }
     if (!blinking) {
       blinkTimer -= dt;
       if (blinkTimer <= 0) {
         blinking = true;
         blinkElapsed = 0;
-        faceMat.map = faceTex.closed;
-        faceMat.needsUpdate = true;
+        applyFaceTexture();
       }
     } else {
       blinkElapsed += dt;
       if (blinkElapsed >= BLINK_DURATION) {
         blinking = false;
-        faceMat.map = faceTex.open;
-        faceMat.needsUpdate = true;
+        applyFaceTexture();
         blinkTimer = 2.4 + Math.random() * 3.6;
       }
     }
@@ -655,6 +817,13 @@ export function createAvatar(config) {
     penlight: 4.0,
   };
 
+  // エモートごとの表情（未指定＝通常はデフォルト表情のまま）
+  const EMOTE_EXPRESSION = {
+    heart: 'happy',
+    dance: 'happy',
+    clap: 'smile',
+  };
+
   // 経過時間 t / 全体の長さ dur に対して、フェードイン・アウトする 0-1 の係数
   function ease(t, dur, fade = 0.25) {
     const inV = Math.min(1, t / fade);
@@ -666,10 +835,11 @@ export function createAvatar(config) {
   function resetEmotePose() {
     legL.rotation.set(0, 0, 0);
     legR.rotation.set(0, 0, 0);
-    armL.rotation.set(0, 0, 0);
-    armR.rotation.set(0, 0, 0);
+    armL.rotation.set(ARM_REST_X, 0, -ARM_REST_Z);
+    armR.rotation.set(ARM_REST_X, 0, ARM_REST_Z);
     upperGroup.rotation.set(0, 0, 0);
     upperGroup.position.y = HIP_Y;
+    upperGroup.position.x = 0;
     headGroup.rotation.set(0, 0, 0);
     root.scale.set(1, 1, 1);
     if (savedRootY !== null) {
@@ -683,6 +853,7 @@ export function createAvatar(config) {
     resetEmotePose();
     emoteId = null;
     emoteT = 0;
+    setExpression('default');
   }
 
   function playEmote(id) {
@@ -690,6 +861,7 @@ export function createAvatar(config) {
     resetEmotePose(); // 再生中の別エモートがあれば即座にリセットして差し替え
     emoteId = id;
     emoteT = 0;
+    setExpression(EMOTE_EXPRESSION[id] || 'default');
   }
 
   function applyEmote(id, t, dur) {
@@ -784,24 +956,35 @@ export function createAvatar(config) {
       }
     }
 
+    const easeT = Math.min(1, dt * 8);
+
     if (moving) {
       walkT += dt * 9;
       const swing = Math.sin(walkT);
       legL.rotation.x = swing * 0.75;
       legR.rotation.x = -swing * 0.75;
-      armL.rotation.x = -swing * 0.6;
-      armR.rotation.x = swing * 0.6;
+      legL.rotation.z = swing * 0.06;
+      legR.rotation.z = -swing * 0.06;
+      armL.rotation.x = ARM_REST_X - swing * 0.6;
+      armR.rotation.x = ARM_REST_X + swing * 0.6;
       upperGroup.position.y = HIP_Y + Math.abs(Math.sin(walkT)) * 0.05;
+      upperGroup.rotation.y = Math.sin(walkT) * 0.09; // 腰のひねり
+      upperGroup.position.x += (0 - upperGroup.position.x) * easeT;
       headGroup.rotation.z = Math.sin(walkT) * 0.03;
+      headGroup.rotation.x = Math.sin(walkT * 2) * 0.018; // 歩行時のわずかな頭の上下動
     } else {
       idleT += dt;
-      const easeT = Math.min(1, dt * 8);
       legL.rotation.x += (0 - legL.rotation.x) * easeT;
       legR.rotation.x += (0 - legR.rotation.x) * easeT;
-      armR.rotation.x += (Math.sin(idleT * 1.4) * 0.06 - armR.rotation.x) * easeT;
-      armL.rotation.x += (Math.sin(idleT * 1.4 + Math.PI) * 0.06 - armL.rotation.x) * easeT;
+      legL.rotation.z += (0 - legL.rotation.z) * easeT;
+      legR.rotation.z += (0 - legR.rotation.z) * easeT;
+      armR.rotation.x += (ARM_REST_X + Math.sin(idleT * 1.4) * 0.06 - armR.rotation.x) * easeT;
+      armL.rotation.x += (ARM_REST_X + Math.sin(idleT * 1.4 + Math.PI) * 0.05 - armL.rotation.x) * easeT;
       upperGroup.position.y += (HIP_Y + Math.sin(idleT * 1.6) * 0.015 - upperGroup.position.y) * easeT;
-      headGroup.rotation.z += (0 - headGroup.rotation.z) * easeT;
+      upperGroup.position.x += (Math.sin(idleT * 0.45) * 0.012 - upperGroup.position.x) * easeT; // わずかな重心移動
+      upperGroup.rotation.y += (0 - upperGroup.rotation.y) * easeT;
+      headGroup.rotation.z += (Math.sin(idleT * 0.3) * 0.02 - headGroup.rotation.z) * easeT;
+      headGroup.rotation.x += (0 - headGroup.rotation.x) * easeT;
     }
   }
 
