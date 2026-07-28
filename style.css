@@ -71,7 +71,7 @@ html, body {
 #avatar-btn {
   position: fixed;
   top: 16px;
-  right: 16px;
+  right: 64px; /* 右上隅はUI表示切替アイコン(.vc-ui-toggle)が使う */
   z-index: 10;
   padding: 8px 14px;
   font-size: 13px;

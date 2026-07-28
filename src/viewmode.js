@@ -17,23 +17,55 @@ function injectStyle() {
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
+    /* シアター表示ボタン: 右下の動画パネル内に置かれる */
     .vc-view-btn {
-      position: fixed;
-      top: 104px;
-      right: 16px;
-      z-index: 10;
-      padding: 8px 14px;
-      font-size: 13px;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
       color: #eee;
-      background: rgba(10, 10, 30, 0.6);
-      border: 1px solid rgba(255, 176, 92, 0.45);
-      border-radius: 8px;
-      backdrop-filter: blur(6px);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 176, 92, 0.3);
+      border-radius: 7px;
       cursor: pointer;
+      padding: 0;
       font-family: inherit;
       transition: background 0.15s, box-shadow 0.15s;
     }
     .vc-view-btn:hover {
+      background: rgba(255, 176, 92, 0.25);
+      box-shadow: 0 0 8px rgba(255, 176, 92, 0.4);
+    }
+    .vc-view-btn.is-on {
+      background: rgba(255, 176, 92, 0.35);
+      box-shadow: 0 0 10px rgba(255, 176, 92, 0.6);
+    }
+
+    /* UI表示/非表示アイコン: 画面の一番右上 */
+    .vc-ui-toggle {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 13;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      color: #eee;
+      background: rgba(10, 10, 30, 0.6);
+      border: 1px solid rgba(255, 176, 92, 0.45);
+      border-radius: 9px;
+      backdrop-filter: blur(6px);
+      cursor: pointer;
+      padding: 0;
+      font-family: inherit;
+      transition: background 0.15s, box-shadow 0.15s;
+    }
+    .vc-ui-toggle:hover {
       background: rgba(255, 176, 92, 0.22);
       box-shadow: 0 0 10px rgba(255, 176, 92, 0.45);
     }
@@ -43,12 +75,10 @@ function injectStyle() {
     body.${HIDDEN_CLASS} #chat-root,
     body.${HIDDEN_CLASS} #avatar-btn,
     body.${HIDDEN_CLASS} .vc-emote-bar,
-    body.${HIDDEN_CLASS} .vc-screen-btn,
     body.${HIDDEN_CLASS} .vc-screen-panel,
-    body.${HIDDEN_CLASS} .vc-pc-bar,
+    body.${HIDDEN_CLASS} .vc-video-panel,
     body.${HIDDEN_CLASS} .vc-mobile-joystick-base,
-    body.${HIDDEN_CLASS} .vc-mobile-chat-toggle,
-    body.${HIDDEN_CLASS} .vc-view-btn {
+    body.${HIDDEN_CLASS} .vc-mobile-chat-toggle {
       display: none !important;
     }
 
@@ -57,25 +87,6 @@ function injectStyle() {
     body.${THEATER_CLASS} .vc-mobile-joystick-base {
       display: none !important;
     }
-
-    /* UI非表示中・シアター中に出しておく案内 */
-    .vc-view-restore {
-      position: fixed;
-      bottom: 12px;
-      right: 12px;
-      z-index: 12;
-      padding: 6px 12px;
-      font-size: 11px;
-      color: rgba(255, 255, 255, 0.55);
-      background: rgba(10, 10, 30, 0.45);
-      border-radius: 6px;
-      backdrop-filter: blur(4px);
-      cursor: pointer;
-      font-family: inherit;
-      border: none;
-      display: none;
-    }
-    body.${HIDDEN_CLASS} .vc-view-restore { display: block; }
 
     .vc-theater-hint {
       position: fixed;
@@ -97,7 +108,7 @@ function injectStyle() {
     body.${HIDDEN_CLASS} .vc-theater-hint { display: none; }
 
     @media (max-width: 640px) {
-      .vc-view-btn { top: 104px; padding: 6px 10px; font-size: 12px; }
+      .vc-ui-toggle { top: 12px; right: 12px; width: 34px; height: 34px; }
     }
   `;
   document.head.appendChild(style);
@@ -110,21 +121,25 @@ function isTypingTarget(el) {
 }
 
 // controls: initControls の戻り値（setTheater を持つ）
-export function initViewMode({ controls } = {}) {
+// slot: 右下の動画パネル内のボタン置き場（あればシアターボタンをそこに入れる）
+export function initViewMode({ controls, slot } = {}) {
   injectStyle();
 
+  // シアター表示ボタン（動画関連なので右下の動画パネルに入れる）
   const btn = document.createElement('button');
   btn.className = 'vc-view-btn';
   btn.type = 'button';
-  btn.title = 'スクリーンを画面いっぱいに表示 (F) ／ UI非表示 (H)';
-  btn.textContent = '⛶ スクリーン全画面';
-  document.body.appendChild(btn);
+  btn.title = 'スクリーンを画面いっぱいに表示 (F)';
+  btn.textContent = '⛶';
+  (slot || document.body).appendChild(btn);
 
-  const restore = document.createElement('button');
-  restore.className = 'vc-view-restore';
-  restore.type = 'button';
-  restore.textContent = 'UIを表示 (H)';
-  document.body.appendChild(restore);
+  // UI表示/非表示アイコン（画面の一番右上）
+  const uiToggle = document.createElement('button');
+  uiToggle.className = 'vc-ui-toggle';
+  uiToggle.type = 'button';
+  uiToggle.title = 'UIの表示/非表示 (H)';
+  uiToggle.textContent = '👁';
+  document.body.appendChild(uiToggle);
 
   const hint = document.createElement('div');
   hint.className = 'vc-theater-hint';
@@ -136,13 +151,15 @@ export function initViewMode({ controls } = {}) {
   function applyTheater(on) {
     theater = on;
     document.body.classList.toggle(THEATER_CLASS, on);
-    btn.textContent = on ? '⛶ 元の視点に戻す' : '⛶ スクリーン全画面';
+    btn.classList.toggle('is-on', on);
+    btn.title = on ? '元の視点に戻す (F)' : 'スクリーンを画面いっぱいに表示 (F)';
     if (controls && controls.setTheater) {
       controls.setTheater(on, () => {
-        // 移動で自動解除されたときにUI表示も戻す
+        // 移動で自動解除されたとき
         theater = false;
         document.body.classList.remove(THEATER_CLASS);
-        btn.textContent = '⛶ スクリーン全画面';
+        btn.classList.remove('is-on');
+        btn.title = 'スクリーンを画面いっぱいに表示 (F)';
       });
     }
   }
@@ -153,6 +170,8 @@ export function initViewMode({ controls } = {}) {
 
   function setUIHidden(hidden) {
     document.body.classList.toggle(HIDDEN_CLASS, hidden);
+    uiToggle.textContent = hidden ? '🚫' : '👁';
+    uiToggle.title = hidden ? 'UIを表示 (H)' : 'UIを隠す (H)';
   }
 
   function toggleUI() {
@@ -160,7 +179,7 @@ export function initViewMode({ controls } = {}) {
   }
 
   btn.addEventListener('click', toggleTheater);
-  restore.addEventListener('click', () => setUIHidden(false));
+  uiToggle.addEventListener('click', toggleUI);
 
   window.addEventListener('keydown', (e) => {
     if (isTypingTarget(document.activeElement)) return;

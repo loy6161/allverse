@@ -256,6 +256,9 @@ export function initMobile({ controls, chatRoot }) {
     chatOpen = !chatOpen;
     chatRoot.style.display = chatOpen ? '' : 'none';
     chatToggle.textContent = chatOpen ? '✕' : '\u{1F4AC}'; // ✕ : 💬
+    // 画面が狭いので、チャットを開いている間は動画パネルを退避させる
+    const videoPanel = document.querySelector('.vc-video-panel');
+    if (videoPanel) videoPanel.style.display = chatOpen ? 'none' : '';
   });
 
   return { enabled: true };

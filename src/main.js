@@ -178,8 +178,12 @@ initJoinScreen(({ name, config }) => {
     },
   });
 
+  // 右下の動画パネル（再生・音量・シーク）。シアター表示と動画変更のボタンもここに入れる
+  const videoPanel = initPlayerControls({ player: liveScreen.player });
+
   // スクリーン変更パネル（会場全員のスクリーンが切り替わる共有状態）
   screenUI = initScreenUI({
+    slot: videoPanel.slot,
     onChange: (videoId) => {
       if (net && !demoMode) {
         net.sendScreen(videoId); // サーバー経由で全員に反映（自分にも返ってくる）
@@ -191,11 +195,8 @@ initJoinScreen(({ name, config }) => {
   });
   screenUI.setCurrent(liveScreen.getVideo());
 
-  // スクリーン全画面（シアター）・UI非表示
-  initViewMode({ controls });
-
-  // 映像のコントロール（再生/一時停止・ミュート・音量）
-  initPlayerControls({ player: liveScreen.player });
+  // スクリーン全画面（シアター）＝動画パネル内 ／ UI表示切替＝画面右上のアイコン
+  initViewMode({ controls, slot: videoPanel.slot });
 
   // Pキー: スクリーンを一時的に手前に出してYouTubeプレイヤーを直接操作できるようにする
   // （普段は映像がアバターの後ろに来るよう背面に置いているため）

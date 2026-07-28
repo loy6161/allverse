@@ -100,9 +100,9 @@ function injectStyle() {
 
     @media (max-width: 640px) {
       .vc-emote-bar {
-        /* ジョイスティック上端(約134px)とモバイルチャット入力欄(約150-190px)の
-           どちらとも重ならない高さに引き上げる */
-        bottom: 190px;
+        /* 下から: ジョイスティック/チャットトグル → 動画パネル(bottom:148) → エモートバー
+           の順に積むため、さらに上へ引き上げる */
+        bottom: 232px;
         gap: 6px;
         padding: 6px 8px;
       }

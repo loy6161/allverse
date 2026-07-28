@@ -11,31 +11,33 @@ function injectStyle() {
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
+    /* 動画URL変更ボタン: 右下の動画パネル内に置かれる */
     .vc-screen-btn {
-      position: fixed;
-      top: 60px;
-      right: 16px;
-      z-index: 10;
-      padding: 8px 14px;
-      font-size: 13px;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
       color: #eee;
-      background: rgba(10, 10, 30, 0.6);
-      border: 1px solid rgba(0, 255, 234, 0.45);
-      border-radius: 8px;
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 176, 92, 0.3);
+      border-radius: 7px;
       cursor: pointer;
+      padding: 0;
       font-family: "Segoe UI", "Hiragino Sans", "Yu Gothic", sans-serif;
+      transition: background 0.15s, box-shadow 0.15s;
     }
 
     .vc-screen-btn:hover {
-      background: rgba(0, 255, 234, 0.2);
-      box-shadow: 0 0 10px rgba(0, 255, 234, 0.4);
+      background: rgba(255, 176, 92, 0.25);
+      box-shadow: 0 0 8px rgba(255, 176, 92, 0.4);
     }
 
+    /* パネルは動画パネルの上に開く */
     .vc-screen-panel {
       position: fixed;
-      top: 100px;
+      bottom: 108px;
       right: 16px;
       z-index: 10;
       width: 260px;
@@ -165,7 +167,7 @@ function extractVideoId(raw) {
   return null;
 }
 
-export function initScreenUI({ onChange }) {
+export function initScreenUI({ onChange, slot }) {
   injectStyle();
 
   let open = false;
@@ -173,7 +175,8 @@ export function initScreenUI({ onChange }) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'vc-screen-btn';
-  btn.textContent = '\u{1F4FA} スクリーン'; // 📺 スクリーン
+  btn.textContent = '\u{1F4FA}'; // 📺（動画URLの変更）
+  btn.title = '流す動画を変える';
 
   const panel = document.createElement('div');
   panel.className = 'vc-screen-panel vc-screen-hidden';
@@ -217,7 +220,7 @@ export function initScreenUI({ onChange }) {
   panel.appendChild(row);
   panel.appendChild(error);
 
-  document.body.appendChild(btn);
+  (slot || document.body).appendChild(btn);
   document.body.appendChild(panel);
 
   function openPanel() {

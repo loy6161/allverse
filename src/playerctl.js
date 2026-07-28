@@ -1,7 +1,10 @@
-// スクリーン映像のコントロールバー
+// 画面右下の「動画パネル」
 //
-// スクリーンは3D空間の奥（アバターの後ろ）にあるため直接クリックできない。
-// そこで再生/一時停止・ミュート・音量をこのバーから操作する。
+// スクリーンは3D空間の奥（アバターの後ろ）にあり直接クリックできないため、
+// 映像に関する操作はすべてこのパネルに集約する。
+// - 上段: シークバー ＋ 経過/全体の時間（ライブ配信は LIVE 表示）
+// - 下段: 再生/一時停止・ミュート・音量、そして他モジュールのボタン置き場（slot）
+//   （シアター表示ボタン=viewmode.js、動画URL変更ボタン=screenui.js がここに入る）
 
 const STYLE_ID = 'vc-playerctl-style';
 
@@ -10,24 +13,58 @@ function injectStyle() {
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
-    .vc-pc-bar {
+    .vc-video-panel {
       position: fixed;
-      top: 148px;
       right: 16px;
+      bottom: 16px;
       z-index: 10;
+      width: 300px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      padding: 9px 12px 10px;
+      background: rgba(10, 10, 30, 0.62);
+      border: 1px solid rgba(255, 176, 92, 0.35);
+      border-radius: 12px;
+      backdrop-filter: blur(8px);
+      font-family: inherit;
+    }
+
+    .vc-vp-seekrow {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 7px 12px;
-      background: rgba(10, 10, 30, 0.6);
-      border: 1px solid rgba(255, 176, 92, 0.35);
-      border-radius: 10px;
-      backdrop-filter: blur(6px);
-      font-family: inherit;
     }
-    .vc-pc-btn {
+    .vc-vp-time {
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.62);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .vc-vp-live {
+      font-size: 10px;
+      font-weight: bold;
+      color: #ff5f5f;
+      letter-spacing: 1px;
+      white-space: nowrap;
+    }
+
+    .vc-vp-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .vc-vp-slot {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-left: auto;
+    }
+
+    .vc-vp-btn {
       width: 30px;
       height: 30px;
+      flex: 0 0 auto;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -40,21 +77,22 @@ function injectStyle() {
       padding: 0;
       transition: background 0.15s, box-shadow 0.15s;
     }
-    .vc-pc-btn:hover {
+    .vc-vp-btn:hover {
       background: rgba(255, 176, 92, 0.25);
       box-shadow: 0 0 8px rgba(255, 176, 92, 0.4);
     }
-    .vc-pc-vol {
-      width: 84px;
-      height: 4px;
+
+    /* スライダー（シーク・音量で共通） */
+    .vc-vp-range {
       -webkit-appearance: none;
       appearance: none;
+      height: 4px;
       background: rgba(255, 255, 255, 0.2);
       border-radius: 2px;
       outline: none;
       cursor: pointer;
     }
-    .vc-pc-vol::-webkit-slider-thumb {
+    .vc-vp-range::-webkit-slider-thumb {
       -webkit-appearance: none;
       appearance: none;
       width: 12px;
@@ -64,7 +102,7 @@ function injectStyle() {
       box-shadow: 0 0 6px rgba(255, 176, 102, 0.8);
       cursor: pointer;
     }
-    .vc-pc-vol::-moz-range-thumb {
+    .vc-vp-range::-moz-range-thumb {
       width: 12px;
       height: 12px;
       border: none;
@@ -73,61 +111,110 @@ function injectStyle() {
       box-shadow: 0 0 6px rgba(255, 176, 102, 0.8);
       cursor: pointer;
     }
-    .vc-pc-label {
+    .vc-vp-range:disabled { opacity: 0.35; cursor: default; }
+
+    .vc-vp-seek { flex: 1 1 auto; }
+    .vc-vp-vol { width: 72px; flex: 0 0 auto; }
+    .vc-vp-vollabel {
       font-size: 10px;
       color: rgba(255, 255, 255, 0.5);
-      min-width: 26px;
+      min-width: 20px;
       text-align: right;
+      font-variant-numeric: tabular-nums;
     }
 
     @media (max-width: 640px) {
-      .vc-pc-bar { top: 148px; right: 12px; padding: 6px 9px; gap: 6px; }
-      .vc-pc-vol { width: 60px; }
+      /* スマホは左下のジョイスティック(高さ約110px)・右下のチャットトグルを避けて上に置く */
+      .vc-video-panel {
+        right: 12px;
+        bottom: 148px;
+        width: calc(100vw - 24px);
+        max-width: 320px;
+        padding: 8px 10px 9px;
+      }
+      .vc-vp-vol { width: 56px; }
     }
   `;
   document.head.appendChild(style);
 }
 
-// player: { play, pause, mute, unMute, setVolume }
+function formatTime(sec) {
+  if (!Number.isFinite(sec) || sec < 0) sec = 0;
+  const s = Math.floor(sec % 60);
+  const m = Math.floor(sec / 60) % 60;
+  const h = Math.floor(sec / 3600);
+  const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
+  return (h > 0 ? `${h}:` : '') + `${mm}:${String(s).padStart(2, '0')}`;
+}
+
+// player: screen.js が返す { play, pause, mute, unMute, setVolume, seekTo, onState }
 export function initPlayerControls({ player }) {
   injectStyle();
 
-  const bar = document.createElement('div');
-  bar.className = 'vc-pc-bar';
+  const panel = document.createElement('div');
+  panel.className = 'vc-video-panel';
+
+  // ---- 上段: シークバー＋時間 ----
+  const seekRow = document.createElement('div');
+  seekRow.className = 'vc-vp-seekrow';
+
+  const seek = document.createElement('input');
+  seek.className = 'vc-vp-range vc-vp-seek';
+  seek.type = 'range';
+  seek.min = '0';
+  seek.max = '1000';
+  seek.value = '0';
+  seek.title = '再生位置';
+
+  const time = document.createElement('span');
+  time.className = 'vc-vp-time';
+  time.textContent = '--:-- / --:--';
+
+  seekRow.append(seek, time);
+
+  // ---- 下段: 再生・音量・他モジュールのボタン ----
+  const row = document.createElement('div');
+  row.className = 'vc-vp-row';
 
   const playBtn = document.createElement('button');
-  playBtn.className = 'vc-pc-btn';
+  playBtn.className = 'vc-vp-btn';
   playBtn.type = 'button';
   playBtn.textContent = '⏸';
   playBtn.title = '再生 / 一時停止';
 
   const muteBtn = document.createElement('button');
-  muteBtn.className = 'vc-pc-btn';
+  muteBtn.className = 'vc-vp-btn';
   muteBtn.type = 'button';
   muteBtn.textContent = '🔊';
   muteBtn.title = 'ミュート切替';
 
   const vol = document.createElement('input');
-  vol.className = 'vc-pc-vol';
+  vol.className = 'vc-vp-range vc-vp-vol';
   vol.type = 'range';
   vol.min = '0';
   vol.max = '100';
   vol.value = '70';
   vol.title = '音量';
 
-  const label = document.createElement('span');
-  label.className = 'vc-pc-label';
-  label.textContent = '70';
+  const volLabel = document.createElement('span');
+  volLabel.className = 'vc-vp-vollabel';
+  volLabel.textContent = '70';
 
-  bar.append(playBtn, muteBtn, vol, label);
-  document.body.appendChild(bar);
+  // 他モジュール（シアター表示・動画URL変更）のボタンが入る場所
+  const slot = document.createElement('div');
+  slot.className = 'vc-vp-slot';
+
+  row.append(playBtn, muteBtn, vol, volLabel, slot);
+  panel.append(seekRow, row);
+  document.body.appendChild(panel);
 
   let playing = true;
   let muted = false;
-  let lastVolume = 70;
+  let seeking = false;
+  let duration = 0;
+  let live = false;
 
-  // 初期音量を反映（プレイヤー準備前でも、後続の操作で確実に効く）
-  player.setVolume(lastVolume);
+  player.setVolume(Number(vol.value));
 
   playBtn.addEventListener('click', () => {
     playing = !playing;
@@ -144,21 +231,58 @@ export function initPlayerControls({ player }) {
   });
 
   vol.addEventListener('input', () => {
-    lastVolume = Number(vol.value);
-    label.textContent = String(lastVolume);
-    player.setVolume(lastVolume);
-    // 音量を動かしたらミュートは自然に解除する
-    if (muted && lastVolume > 0) {
+    const v = Number(vol.value);
+    volLabel.textContent = String(v);
+    player.setVolume(v);
+    if (muted && v > 0) {
       muted = false;
       muteBtn.textContent = '🔊';
       player.unMute();
     }
   });
 
+  // シーク操作中は再生位置の自動更新を止める（つまみが飛ばないように）
+  seek.addEventListener('pointerdown', () => {
+    seeking = true;
+  });
+  const endSeek = () => {
+    if (!seeking) return;
+    seeking = false;
+    if (duration > 0 && !live) player.seekTo((Number(seek.value) / 1000) * duration);
+  };
+  seek.addEventListener('pointerup', endSeek);
+  seek.addEventListener('pointercancel', endSeek);
+  seek.addEventListener('change', endSeek);
+
+  // 再生状態の反映
+  player.onState((s) => {
+    duration = s.duration;
+    live = s.live;
+
+    playing = s.playing;
+    playBtn.textContent = playing ? '⏸' : '▶';
+
+    if (live) {
+      seek.disabled = true;
+      seek.value = '1000';
+      time.className = 'vc-vp-live';
+      time.textContent = '● LIVE';
+      return;
+    }
+
+    seek.disabled = false;
+    time.className = 'vc-vp-time';
+    time.textContent = `${formatTime(s.currentTime)} / ${formatTime(duration)}`;
+    if (!seeking && duration > 0) {
+      seek.value = String(Math.round((s.currentTime / duration) * 1000));
+    }
+  });
+
   return {
-    element: bar,
+    element: panel,
+    slot, // 他モジュールがボタンを追加する場所
     setVisible(v) {
-      bar.style.display = v ? 'flex' : 'none';
+      panel.style.display = v ? 'flex' : 'none';
     },
   };
 }

@@ -101,6 +101,11 @@ export function initLiveScreen(camera, scene) {
       `?autoplay=1&mute=0&playsinline=1&rel=0&enablejsapi=1&origin=${origin}`;
     iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
     holder.appendChild(iframe);
+    // 読み込み後に listening を送ると、再生位置などが定期的に送られてくる
+    iframe.addEventListener('load', () => {
+      startListening();
+      setTimeout(startListening, 1000); // 取りこぼし対策
+    });
   }
 
   // 入場ボタンのクリック（ユーザー操作）を起点に再生開始する
@@ -141,12 +146,54 @@ export function initLiveScreen(camera, scene) {
     }
   }
 
+  // YouTubeから再生位置・長さ・再生状態を受け取る（listening を送ると定期的に届く）
+  const stateListeners = new Set();
+  const state = { currentTime: 0, duration: 0, playing: true, live: false };
+
+  window.addEventListener('message', (e) => {
+    if (e.origin !== 'https://www.youtube.com') return;
+    let data;
+    try {
+      data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+    } catch (err) {
+      return;
+    }
+    if (!data || !data.info) return;
+    const info = data.info;
+    if (typeof info.currentTime === 'number') state.currentTime = info.currentTime;
+    if (typeof info.duration === 'number') {
+      state.duration = info.duration;
+      // ライブ配信は duration が 0 や極端に大きい値になる
+      state.live = !info.duration || info.duration > 86400;
+    }
+    if (typeof info.playerState === 'number') state.playing = info.playerState === 1;
+    for (const cb of stateListeners) cb({ ...state });
+  });
+
+  function startListening() {
+    if (!iframe || !iframe.contentWindow) return;
+    try {
+      iframe.contentWindow.postMessage(
+        JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
+        'https://www.youtube.com',
+      );
+    } catch (e) {
+      // まだ準備できていない場合は次の呼び出しで届く
+    }
+  }
+
   const player = {
     play: () => command('playVideo'),
     pause: () => command('pauseVideo'),
     mute: () => command('mute'),
     unMute: () => command('unMute'),
     setVolume: (v) => command('setVolume', [Math.max(0, Math.min(100, Math.round(v)))]),
+    seekTo: (sec) => command('seekTo', [Math.max(0, sec), true]),
+    onState: (cb) => {
+      stateListeners.add(cb);
+      return () => stateListeners.delete(cb);
+    },
+    getState: () => ({ ...state }),
   };
 
   // 会場の共有スクリーンを別の動画に差し替える（サーバー経由で全員に届く）
