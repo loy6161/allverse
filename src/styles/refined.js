@@ -42,7 +42,9 @@ function outlined(geo, mat, thickness = 1.055) {
 }
 
 // ---- 顔テクスチャ：黒い四角の目＋小さな口 ----
-const FACE_EYE_Y = 0.5;
+// 参考画像では目は顔のかなり下寄りにある（おでこが広い）。
+// ここを中央にすると途端に「大人っぽく・怖く」なるので低めに置く。
+const FACE_EYE_Y = 0.62;
 
 function makeFaceTexture(expression = 'default') {
   const S = 512;
@@ -54,9 +56,10 @@ function makeFaceTexture(expression = 'default') {
 
   const cx = S / 2;
   const eyeY = S * FACE_EYE_Y;
-  const eyeDX = S * 0.168;
-  const eyeW = S * 0.105;
-  const eyeH = S * 0.175;
+  // 大きく・離して配置すると幼い印象になり可愛くなる
+  const eyeDX = S * 0.19;
+  const eyeW = S * 0.125;
+  const eyeH = S * 0.2;
 
   // 頬の赤み
   c.fillStyle = 'rgba(255,140,150,0.35)';
@@ -152,7 +155,7 @@ export function createStyleAvatar(config = {}) {
   const legs = [];
   for (const sx of [-1, 1]) {
     const hip = new THREE.Group();
-    hip.position.set(sx * 0.3, 1.5, 0);
+    hip.position.set(sx * 0.26, 1.5, 0);
     upper.add(hip);
 
     const leg = outlined(new THREE.CylinderGeometry(0.17, 0.15, 1.0, 7), legMat, 1.09);
@@ -173,13 +176,13 @@ export function createStyleAvatar(config = {}) {
 
   // ---------- トップス（お尻が隠れるゆったり丈） ----------
   // 下に向かって広がるシルエットにするとローポリ系の"服感"が出る
-  const topGeo = new THREE.CylinderGeometry(0.62, 0.86, 1.5, 9, 1);
+  const topGeo = new THREE.CylinderGeometry(0.52, 0.76, 1.5, 9, 1);
   const top = outlined(topGeo, topMat, 1.05);
   top.position.y = 2.35;
   upper.add(top);
 
   // 裾の縁（内側の影）
-  const hem = new THREE.Mesh(new THREE.CylinderGeometry(0.82, 0.82, 0.08, 9), flat(new THREE.Color(shirtColor).multiplyScalar(0.7).getHex()));
+  const hem = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.08, 9), flat(new THREE.Color(shirtColor).multiplyScalar(0.7).getHex()));
   hem.position.y = 1.63;
   upper.add(hem);
 
@@ -187,7 +190,7 @@ export function createStyleAvatar(config = {}) {
   const arms = [];
   for (const sx of [-1, 1]) {
     const shoulder = new THREE.Group();
-    shoulder.position.set(sx * 0.68, 2.9, 0);
+    shoulder.position.set(sx * 0.6, 2.9, 0);
     upper.add(shoulder);
 
     const sleeve = outlined(new THREE.CylinderGeometry(0.22, 0.19, 0.95, 7), topMat, 1.07);
@@ -292,15 +295,25 @@ export function createStyleAvatar(config = {}) {
     hairGroup.add(tip);
   }
 
-  // 横の房（頬に沿って下へ。横に張り出すと角に見えるので内側寄り・薄く）
+  // 横の房：頬にぴったり沿わせて顔を囲む（肌の見える面積を小さくすると可愛くなる）
   for (const sx of [-1, 1]) {
-    const side = outlined(new THREE.ConeGeometry(R * 0.3, R * 1.3, 3), hairMat, 1.05);
-    side.position.set(sx * R * 0.66, -R * 0.3, R * 0.14);
+    const side = outlined(new THREE.ConeGeometry(R * 0.34, R * 1.45, 3), hairMat, 1.05);
+    side.position.set(sx * R * 0.7, -R * 0.34, R * 0.3);
     side.rotation.x = Math.PI;
-    side.rotation.z = sx * 0.05;
-    side.scale.set(0.75, 1, 0.5);
+    side.rotation.z = sx * 0.02;
+    side.scale.set(0.62, 1, 0.62);
     hairGroup.add(side);
   }
+
+  // 髪のハイライト帯（2トーンにすると一気に"作られた感"が出る）
+  const hiColor = new THREE.Color(hairColor).lerp(new THREE.Color(0xffffff), 0.42).getHex();
+  const highlight = new THREE.Mesh(
+    new THREE.CylinderGeometry(R * 1.09, R * 1.09, R * 0.13, 8, 1, true, Math.PI * 0.62, Math.PI * 0.76),
+    flat(hiColor),
+  );
+  highlight.position.y = R * 0.5;
+  highlight.renderOrder = 1;
+  hairGroup.add(highlight);
 
   if (hairStyle === 'long') {
     const long = outlined(new THREE.CylinderGeometry(R * 0.7, R * 0.5, R * 1.9, 7), hairMat, 1.05);

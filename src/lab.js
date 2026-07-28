@@ -9,18 +9,20 @@ import { AVATAR_PARTS, randomConfig } from './avatar.js';
 
 // 比較する案の一覧。読み込みに失敗した案はカードにエラーを表示して他は続行する
 const STYLE_MODULES = [
-  { path: './avatar.js', current: true },
+  { path: './styles/pack_bob.js' },
+  { path: './styles/pack_fluffy.js' },
+  { path: './styles/pack_long.js' },
+  { path: './styles/pack_hood.js' },
   { path: './styles/refined.js' },
-  { path: './styles/anime_tall.js' },
-  { path: './styles/simple_lowpoly.js' },
-  { path: './styles/mini_deform.js' },
-  { path: './styles/mannequin.js' },
+  { path: './styles/soft_pop.js' },
+  { path: './styles/neon_beat.js' },
+  { path: './styles/mellow_shape.js' },
 ];
 
 const grid = document.getElementById('grid');
 const cards = [];
-let spinning = true;
-let config = { ...randomConfig(), hairStyle: 'short' };
+let spinning = false;
+let config = { ...randomConfig(), hairStyle: 'short', bottomColor: '#39445b', accentColor: '#ff4fd8', accessory: 'headphones' };
 
 const BG = {
   venue: { color: 0x080b16, ambient: 0x44557a, ambientI: 0.9, key: 0xffd9ac, keyI: 1.0, rim: 0x7c4dff },
@@ -266,6 +268,20 @@ document.getElementById('hair').addEventListener('change', (e) => {
   config = { ...config, hairStyle: e.target.value };
   cards.forEach(rebuild);
 });
+
+document.getElementById('accessory').addEventListener('change', (e) => {
+  config = { ...config, accessory: e.target.value };
+  cards.forEach(rebuild);
+});
+
+for (const [id, key] of [['skin-color', 'bodyColor'], ['hair-color', 'hairColor'], ['top-color', 'shirtColor'], ['bottom-color', 'bottomColor'], ['accent-color', 'accentColor']]) {
+  const input = document.getElementById(id);
+  input.value = config[key];
+  input.addEventListener('input', (e) => {
+    config = { ...config, [key]: e.target.value };
+    cards.forEach(rebuild);
+  });
+}
 
 document.getElementById('bg').addEventListener('change', (e) => {
   bgMode = e.target.value;

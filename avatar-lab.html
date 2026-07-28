@@ -41,7 +41,7 @@
     border: 1px solid rgba(255,176,102,0.25);
     border-radius: 10px;
   }
-  .toolbar button, .toolbar select {
+  .toolbar button, .toolbar select, .toolbar input {
     font-family: inherit;
     font-size: 13px;
     color: #eee;
@@ -53,6 +53,7 @@
   }
   .toolbar button:hover { background: rgba(255,176,102,0.25); }
   .toolbar label { font-size: 12px; color: rgba(255,255,255,0.65); }
+  .toolbar input[type="color"] { width: 34px; height: 30px; padding: 2px; }
 
   .grid {
     display: grid;
@@ -89,8 +90,8 @@
 <body>
   <h1>アバター デザイン比較</h1>
   <p class="lead">
-    5つの方向性を並べています。<b>ドラッグで回転</b>、<b>ホイールで拡大縮小</b>できます。<br>
-    「色を変える」「髪型を変える」で、いろいろな組み合わせでの見え方を確認できます。気に入った案の名前を教えてください。
+    3つの3Dアバター案を同じ条件で比較できます。<b>ドラッグで回転</b>、<b>ホイールで拡大縮小</b>できます。<br>
+    髪型・色・服・アクセサリーを変更して、キャラメイクを試せます。
   </p>
 
   <div class="toolbar">
@@ -102,12 +103,24 @@
       <option value="twin">ツインテール</option>
       <option value="hat">ぼうし</option>
     </select>
+    <label>肌:</label><input id="skin-color" type="color" aria-label="肌色">
+    <label>髪:</label><input id="hair-color" type="color" aria-label="髪色">
+    <label>上:</label><input id="top-color" type="color" aria-label="トップス色">
+    <label>下:</label><input id="bottom-color" type="color" aria-label="ボトムス色">
+    <label>差し色:</label><input id="accent-color" type="color" aria-label="差し色">
+    <label>アクセサリー:</label>
+    <select id="accessory">
+      <option value="headphones">ヘッドホン</option>
+      <option value="bag">バッグ</option>
+      <option value="wrist">リストライト</option>
+      <option value="none">なし</option>
+    </select>
     <label>背景:</label>
     <select id="bg">
       <option value="venue">会場（暗め）</option>
       <option value="plain">無地（明るめ）</option>
     </select>
-    <button id="spin">⏸ 回転を止める</button>
+    <button id="spin">▶ 回転させる</button>
   </div>
 
   <div class="grid" id="grid"></div>
