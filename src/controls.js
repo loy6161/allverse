@@ -20,6 +20,32 @@ export function initControls(camera, avatar, domElement, { bounds, onJump } = {}
   // 外部入力（バーチャルジョイスティック等）。-1〜1 のアナログ値
   const analog = { fw: 0, side: 0 };
 
+  // シアターモード: スクリーンを正面から見て画面いっぱいに映す
+  // （OSの全画面ではなく「ウィンドウ内でスクリーンだけを大きく見る」ためのもの）
+  const SCREEN_CENTER = new THREE.Vector3(0, 5.4, -18.95);
+  const SCREEN_W = 14;
+  const SCREEN_H = 7;
+  let theater = false;
+  let onTheaterExit = null;
+
+  function setTheater(on, exitCallback) {
+    theater = !!on;
+    onTheaterExit = exitCallback || null;
+    return theater;
+  }
+
+  function applyTheaterCamera() {
+    // 画面の縦横それぞれに収まる距離を求め、大きい方を採用する
+    const vFov = THREE.MathUtils.degToRad(camera.fov);
+    const distV = SCREEN_H / 2 / Math.tan(vFov / 2);
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+    const distH = SCREEN_W / 2 / Math.tan(hFov / 2);
+    const d = Math.max(distV, distH) * 1.02; // 端が切れないよう少し余裕を持たせる
+
+    camera.position.set(SCREEN_CENTER.x, SCREEN_CENTER.y, SCREEN_CENTER.z + d);
+    camera.lookAt(SCREEN_CENTER);
+  }
+
   function jump() {
     if (airborne) return false;
     airborne = true;
@@ -94,6 +120,13 @@ export function initControls(camera, avatar, domElement, { bounds, onJump } = {}
     if (keys.has('KeyD') || keys.has('ArrowRight')) side += 1;
 
     const moving = Math.abs(fw) > 0.1 || Math.abs(side) > 0.1;
+
+    // シアターモード中に動こうとしたら、自動的に通常表示へ戻す
+    if (theater && moving) {
+      theater = false;
+      if (onTheaterExit) onTheaterExit();
+    }
+
     if (moving) {
       const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
       const right = new THREE.Vector3(-forward.z, 0, forward.x);
@@ -122,6 +155,12 @@ export function initControls(camera, avatar, domElement, { bounds, onJump } = {}
       }
     }
 
+    // シアターモード中はアバター追従をやめ、スクリーン正面に固定する
+    if (theater) {
+      applyTheaterCamera();
+      return;
+    }
+
     // カメラ追従
     const target = new THREE.Vector3(avatar.position.x, avatar.position.y + 1.4, avatar.position.z);
     const offset = new THREE.Vector3(
@@ -147,6 +186,8 @@ export function initControls(camera, avatar, domElement, { bounds, onJump } = {}
     orbit,
     zoom,
     jump,
+    setTheater,
+    isTheater: () => theater,
     // バーチャルジョイスティック等からのアナログ入力（-1〜1）
     setAnalog(fw, side) {
       analog.fw = THREE.MathUtils.clamp(fw, -1, 1);

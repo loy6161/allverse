@@ -94,7 +94,11 @@ export function initLiveScreen(camera, scene) {
     iframe.style.width = '100%';
     iframe.style.height = '100%';
     iframe.style.border = '0';
-    iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&playsinline=1&rel=0`;
+    // enablejsapi=1 と origin 指定で、postMessage による再生・音量操作が有効になる
+    const origin = encodeURIComponent(location.origin);
+    iframe.src =
+      `https://www.youtube.com/embed/${videoId}` +
+      `?autoplay=1&mute=0&playsinline=1&rel=0&enablejsapi=1&origin=${origin}`;
     iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
     holder.appendChild(iframe);
   }
@@ -122,6 +126,29 @@ export function initLiveScreen(camera, scene) {
     return setInteractive(!interactive);
   }
 
+  // ---- プレイヤー操作（YouTube IFrame API を postMessage で呼ぶ） ----
+  // スクリーンは3D空間の奥にあって直接クリックしづらいので、
+  // 別UI（playerctl.js）からここを経由して再生・音量を操作する。
+  function command(func, args = []) {
+    if (!iframe || !iframe.contentWindow) return;
+    try {
+      iframe.contentWindow.postMessage(
+        JSON.stringify({ event: 'command', func, args }),
+        'https://www.youtube.com',
+      );
+    } catch (e) {
+      // プレイヤー未準備などは無視（次の操作で効く）
+    }
+  }
+
+  const player = {
+    play: () => command('playVideo'),
+    pause: () => command('pauseVideo'),
+    mute: () => command('mute'),
+    unMute: () => command('unMute'),
+    setVolume: (v) => command('setVolume', [Math.max(0, Math.min(100, Math.round(v)))]),
+  };
+
   // 会場の共有スクリーンを別の動画に差し替える（サーバー経由で全員に届く）
   function setVideo(videoId) {
     if (!videoId || videoId === currentVideoId) return;
@@ -141,5 +168,5 @@ export function initLiveScreen(camera, scene) {
     cssRenderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  return { play, setVideo, getVideo, update, setInteractive, toggleInteractive };
+  return { play, setVideo, getVideo, update, setInteractive, toggleInteractive, player };
 }

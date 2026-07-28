@@ -1,11 +1,16 @@
-// 表示モード: 全画面表示と、UIを隠して映像・空間だけを見るモード
+// 表示モード
 //
-// - 右上の「⛶」ボタン（またはFキー）で全画面を切り替える
-// - Hキーで画面上のUI（HUD・チャット・各種ボタン）をまとめて隠す/戻す
-//   「今はライブ映像だけ見ていたい」という時のため
+// - 「⛶ スクリーン全画面」ボタン / Fキー … シアターモード。
+//   OSの全画面ではなく、**ウィンドウの中でスクリーン（映像）だけを大きく映す**。
+//   カメラがスクリーン正面へ回り込み、画面いっぱいに映像が広がる。
+//   移動キーを押す、Escを押す、もう一度Fを押すと元の三人称表示に戻る。
+// - Hキー … UI（HUD・チャット・各種ボタン）を隠す/戻す
+//
+// ブラウザ自体を全画面にしたい場合はF11（ブラウザの標準機能）を使う。
 
 const STYLE_ID = 'vc-viewmode-style';
 const HIDDEN_CLASS = 'vc-ui-hidden';
+const THEATER_CLASS = 'vc-theater';
 
 function injectStyle() {
   if (document.getElementById(STYLE_ID)) return;
@@ -40,13 +45,20 @@ function injectStyle() {
     body.${HIDDEN_CLASS} .vc-emote-bar,
     body.${HIDDEN_CLASS} .vc-screen-btn,
     body.${HIDDEN_CLASS} .vc-screen-panel,
+    body.${HIDDEN_CLASS} .vc-pc-bar,
     body.${HIDDEN_CLASS} .vc-mobile-joystick-base,
     body.${HIDDEN_CLASS} .vc-mobile-chat-toggle,
     body.${HIDDEN_CLASS} .vc-view-btn {
       display: none !important;
     }
 
-    /* UI非表示中に出しておく復帰用の小さな案内 */
+    /* シアターモード中は、映像の邪魔になるものだけ隠す（音量操作は残す） */
+    body.${THEATER_CLASS} .vc-emote-bar,
+    body.${THEATER_CLASS} .vc-mobile-joystick-base {
+      display: none !important;
+    }
+
+    /* UI非表示中・シアター中に出しておく案内 */
     .vc-view-restore {
       position: fixed;
       bottom: 12px;
@@ -65,6 +77,25 @@ function injectStyle() {
     }
     body.${HIDDEN_CLASS} .vc-view-restore { display: block; }
 
+    .vc-theater-hint {
+      position: fixed;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 12;
+      padding: 6px 14px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.6);
+      background: rgba(10, 10, 30, 0.5);
+      border-radius: 6px;
+      backdrop-filter: blur(4px);
+      font-family: inherit;
+      pointer-events: none;
+      display: none;
+    }
+    body.${THEATER_CLASS} .vc-theater-hint { display: block; }
+    body.${HIDDEN_CLASS} .vc-theater-hint { display: none; }
+
     @media (max-width: 640px) {
       .vc-view-btn { top: 104px; padding: 6px 10px; font-size: 12px; }
     }
@@ -78,42 +109,46 @@ function isTypingTarget(el) {
   return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
 }
 
-export function initViewMode() {
+// controls: initControls の戻り値（setTheater を持つ）
+export function initViewMode({ controls } = {}) {
   injectStyle();
 
   const btn = document.createElement('button');
   btn.className = 'vc-view-btn';
   btn.type = 'button';
-  btn.title = '全画面 (F) ／ UI非表示 (H)';
-  btn.textContent = '⛶ 全画面';
+  btn.title = 'スクリーンを画面いっぱいに表示 (F) ／ UI非表示 (H)';
+  btn.textContent = '⛶ スクリーン全画面';
   document.body.appendChild(btn);
 
-  // UI非表示中でも戻せるように、小さな復帰ボタンを常設しておく
   const restore = document.createElement('button');
   restore.className = 'vc-view-restore';
   restore.type = 'button';
   restore.textContent = 'UIを表示 (H)';
   document.body.appendChild(restore);
 
-  function isFullscreen() {
-    return !!document.fullscreenElement;
-  }
+  const hint = document.createElement('div');
+  hint.className = 'vc-theater-hint';
+  hint.textContent = 'スクリーン全画面中 — 移動キー / Esc / F で戻る';
+  document.body.appendChild(hint);
 
-  function syncLabel() {
-    btn.textContent = isFullscreen() ? '⛶ 全画面を解除' : '⛶ 全画面';
-  }
+  let theater = false;
 
-  async function toggleFullscreen() {
-    try {
-      if (isFullscreen()) {
-        await document.exitFullscreen();
-      } else {
-        await document.documentElement.requestFullscreen();
-      }
-    } catch (e) {
-      // ブラウザが拒否した場合（権限・非対応）は何もしない
+  function applyTheater(on) {
+    theater = on;
+    document.body.classList.toggle(THEATER_CLASS, on);
+    btn.textContent = on ? '⛶ 元の視点に戻す' : '⛶ スクリーン全画面';
+    if (controls && controls.setTheater) {
+      controls.setTheater(on, () => {
+        // 移動で自動解除されたときにUI表示も戻す
+        theater = false;
+        document.body.classList.remove(THEATER_CLASS);
+        btn.textContent = '⛶ スクリーン全画面';
+      });
     }
-    syncLabel();
+  }
+
+  function toggleTheater() {
+    applyTheater(!theater);
   }
 
   function setUIHidden(hidden) {
@@ -124,9 +159,8 @@ export function initViewMode() {
     setUIHidden(!document.body.classList.contains(HIDDEN_CLASS));
   }
 
-  btn.addEventListener('click', toggleFullscreen);
+  btn.addEventListener('click', toggleTheater);
   restore.addEventListener('click', () => setUIHidden(false));
-  document.addEventListener('fullscreenchange', syncLabel);
 
   window.addEventListener('keydown', (e) => {
     if (isTypingTarget(document.activeElement)) return;
@@ -134,12 +168,15 @@ export function initViewMode() {
     const k = e.key.toLowerCase();
     if (k === 'f') {
       e.preventDefault();
-      toggleFullscreen();
+      toggleTheater();
     } else if (k === 'h') {
       e.preventDefault();
       toggleUI();
+    } else if (e.key === 'Escape') {
+      if (theater) applyTheater(false);
+      if (document.body.classList.contains(HIDDEN_CLASS)) setUIHidden(false);
     }
   });
 
-  return { toggleFullscreen, setUIHidden, isFullscreen };
+  return { toggleTheater, setUIHidden, isTheater: () => theater };
 }

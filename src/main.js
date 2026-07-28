@@ -12,6 +12,7 @@ import { initRemotePlayers } from './remote.js';
 import { initEmoteBar } from './emotebar.js';
 import { initScreenUI } from './screenui.js';
 import { initViewMode } from './viewmode.js';
+import { initPlayerControls } from './playerctl.js';
 
 const canvas = document.getElementById('scene');
 // alpha:true = キャンバスを透過可能にする。スクリーン面に開けた「穴」から
@@ -190,8 +191,11 @@ initJoinScreen(({ name, config }) => {
   });
   screenUI.setCurrent(liveScreen.getVideo());
 
-  // 全画面表示・UI非表示（映像だけ見たいとき用）
-  initViewMode();
+  // スクリーン全画面（シアター）・UI非表示
+  initViewMode({ controls });
+
+  // 映像のコントロール（再生/一時停止・ミュート・音量）
+  initPlayerControls({ player: liveScreen.player });
 
   // Pキー: スクリーンを一時的に手前に出してYouTubeプレイヤーを直接操作できるようにする
   // （普段は映像がアバターの後ろに来るよう背面に置いているため）
