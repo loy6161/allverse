@@ -140,6 +140,24 @@ function countStats(avatar) {
 }
 
 async function loadStyles() {
+  // ローポリ12案（1ファイルにまとまっているので先に展開して並べる）
+  try {
+    const { LP_LIST } = await import('./styles/lp_all.js');
+    for (const v of LP_LIST) {
+      const ui = makeCard({ name: v.name, desc: v.desc, badge: 'ローポリ' });
+      const ctx = setupScene(ui.canvas);
+      applyBackground(ctx);
+      const holder = new THREE.Group();
+      ctx.scene.add(holder);
+      const item = { ...ctx, holder, create: v.create, ui, avatar: null, yaw: 0, dragging: false, zoom: 1 };
+      rebuild(item);
+      attachInteraction(item);
+      cards.push(item);
+    }
+  } catch (e) {
+    makeCard({ name: 'ローポリ案', desc: '' }, e.message);
+  }
+
   for (const entry of STYLE_MODULES) {
     let mod = null;
     let err = null;
