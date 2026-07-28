@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>アバター デザイン比較 - VERSE CITY Web</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #05070f;
+    color: #eee;
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif;
+    padding: 20px;
+    min-height: 100vh;
+  }
+  h1 {
+    font-size: 20px;
+    letter-spacing: 2px;
+    color: #ffb066;
+    margin-bottom: 4px;
+  }
+  .lead { font-size: 13px; color: rgba(255,255,255,0.6); margin-bottom: 18px; line-height: 1.7; }
+  .lead b { color: #ffd7a8; }
+
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 18px;
+    padding: 10px 14px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,176,102,0.25);
+    border-radius: 10px;
+  }
+  .toolbar button, .toolbar select {
+    font-family: inherit;
+    font-size: 13px;
+    color: #eee;
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,176,102,0.35);
+    border-radius: 7px;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+  .toolbar button:hover { background: rgba(255,176,102,0.25); }
+  .toolbar label { font-size: 12px; color: rgba(255,255,255,0.65); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .card canvas { width: 100%; height: 320px; display: block; border-radius: 8px; background: #080b16; }
+  .card .name { font-size: 15px; font-weight: bold; color: #ffd7a8; }
+  .card .desc { font-size: 11px; color: rgba(255,255,255,0.55); line-height: 1.6; min-height: 2.8em; }
+  .card .meta { font-size: 10px; color: rgba(255,255,255,0.38); font-variant-numeric: tabular-nums; }
+  .card .badge {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    background: rgba(255,176,102,0.2);
+    border: 1px solid rgba(255,176,102,0.4);
+    color: #ffd7a8;
+    align-self: flex-start;
+  }
+  .card.err { border-color: rgba(255,90,90,0.5); }
+  .card .err-msg { font-size: 11px; color: #ff8f8f; word-break: break-all; }
+</style>
+</head>
+<body>
+  <h1>アバター デザイン比較</h1>
+  <p class="lead">
+    5つの方向性を並べています。<b>ドラッグで回転</b>、<b>ホイールで拡大縮小</b>できます。<br>
+    「色を変える」「髪型を変える」で、いろいろな組み合わせでの見え方を確認できます。気に入った案の名前を教えてください。
+  </p>
+
+  <div class="toolbar">
+    <button id="randomize">🎲 色を変える</button>
+    <label>髪型:</label>
+    <select id="hair">
+      <option value="short">ショート</option>
+      <option value="long">ロング</option>
+      <option value="twin">ツインテール</option>
+      <option value="hat">ぼうし</option>
+    </select>
+    <label>背景:</label>
+    <select id="bg">
+      <option value="venue">会場（暗め）</option>
+      <option value="plain">無地（明るめ）</option>
+    </select>
+    <button id="spin">⏸ 回転を止める</button>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <script type="module" src="src/lab.js"></script>
+</body>
+</html>
