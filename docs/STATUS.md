@@ -1,11 +1,11 @@
 # STATUS — VERSE CITY Web / (ALLVERSE parallel 候補)
 
-最終更新: 2026-07-26 ／ 現在地: **フェイズ1「両世界の窓」の中盤**
+最終更新: 2026-07-26 ／ 現在地: **フェイズ1「両世界の窓」の終盤**
 
 ## 一言でいうと
 
-ブラウザ会場のマルチプレイ実装は完成し、友人らとの実地テストも成功済み。
-残る大物は「Renderデプロイ（ユーザー操作5分）」と「Unity側presence連携の結合」。
+ブラウザ会場は**本番公開済み（https://verse-city-web.onrender.com ）**。
+残る大物は「Unity側presence連携の結合テスト」のみ。それが通ればフェイズ1完成。
 
 ## できていること（検証済み）
 
@@ -32,10 +32,9 @@
 
 ## 次にやること（優先順）
 
-1. **Renderデプロイ**（無料プラン・手順は DEPLOY.md・所要5分）
-   - **ユーザーの操作待ち**: ①GitHubへpush ②RenderでBlueprint適用
-   - 完了後: 公開URLを docs/DEPLOY_URL.md に記録し、Unity側（Worker環境変数）へ共有
-2. **結合テスト**: Workerモック → ローカル実データ → Render実データ の順（Unity側と合意済み）
+1. ~~Renderデプロイ~~ **完了（2026-07-26）**: https://verse-city-web.onrender.com （詳細 DEPLOY_URL.md）
+   - GitHub: https://github.com/loy6161/verse-city-web （private・git push で自動再デプロイ）
+2. **結合テスト**: Unity側がWorker環境変数にpresence.json URLを設定 → Workerモック → Render実データ の順（Unity側と合意済み）。**Unity側チャットへのURL共有が次のアクション**
 3. フェイズ1期間の機能育成（**着手には都度ユーザーOKが必要**）: VRM対応（レギュラー）、ボイチャ、ルーム一覧・友達合流、テクスチャカスタム（承認制）
 4. ALLVERSE Phase 1（ポータル設計）合流時: ワールド内チャット→YouTubeクロスポスト設計、VERSE COIN資金決済法整理
 
