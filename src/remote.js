@@ -97,6 +97,12 @@ export function initRemotePlayers(scene) {
     if (peer.root.userData.say) peer.root.userData.say(txt);
   }
 
+  function emote(id, emoteId) {
+    const peer = peers.get(id);
+    if (!peer) return;
+    if (peer.root.userData.playEmote) peer.root.userData.playEmote(emoteId);
+  }
+
   function count() {
     return peers.size;
   }
@@ -129,5 +135,5 @@ export function initRemotePlayers(scene) {
     peers.clear();
   }
 
-  return { addPeer, movePeer, updatePeer, removePeer, say, count, update, clear };
+  return { addPeer, movePeer, updatePeer, removePeer, say, emote, count, update, clear };
 }

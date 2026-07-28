@@ -9,6 +9,8 @@ import { initControls } from './controls.js';
 import { initLiveScreen } from './screen.js';
 import { initNet } from './net.js';
 import { initRemotePlayers } from './remote.js';
+import { initEmoteBar } from './emotebar.js';
+import { initScreenUI } from './screenui.js';
 
 const canvas = document.getElementById('scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -36,6 +38,7 @@ let net = null;
 let remote = null;
 let myId = null;
 let demoMode = false;
+let screenUI = null;
 
 // 現在のプレイヤー情報（再カスタムで書き換わる）
 const session = { name: '', config: null };
@@ -99,11 +102,16 @@ initJoinScreen(({ name, config }) => {
     name,
     config,
     handlers: {
-      onWelcome: ({ id, room, peers, count }) => {
+      onWelcome: ({ id, room, peers, count, screen }) => {
         myId = id;
         roomNameEl.textContent = `VERSE CITY #${room}`;
         peers.forEach((p) => remote.addPeer(p));
         updateCount(count);
+        // 途中入場でも、その部屋で今流れている動画に合わせる
+        if (screen) {
+          liveScreen.setVideo(screen);
+          if (screenUI) screenUI.setCurrent(screen);
+        }
       },
       onPeerJoin: (p) => {
         remote.addPeer(p);
@@ -118,6 +126,12 @@ initJoinScreen(({ name, config }) => {
         remote.say(m.id, m.txt);
       },
       onCount: (c) => updateCount(c),
+      onPeerEmote: (m) => remote.emote(m.id, m.e),
+      onScreen: ({ v, by }) => {
+        liveScreen.setVideo(v);
+        if (screenUI) screenUI.setCurrent(v);
+        chat.addMessage('', `${by} がスクリーンを変更しました`, { system: true });
+      },
       onDisconnect: () => startDemoMode(),
     },
   });
@@ -134,6 +148,27 @@ initJoinScreen(({ name, config }) => {
   hud.classList.remove('hidden');
   chatRoot.classList.remove('hidden');
   avatarBtn.classList.remove('hidden');
+
+  // エモートバー（自分の分はローカルで即再生し、サーバーへも通知）
+  initEmoteBar({
+    onEmote: (id) => {
+      if (player.userData.playEmote) player.userData.playEmote(id);
+      if (net && !demoMode) net.sendEmote(id);
+    },
+  });
+
+  // スクリーン変更パネル（会場全員のスクリーンが切り替わる共有状態）
+  screenUI = initScreenUI({
+    onChange: (videoId) => {
+      if (net && !demoMode) {
+        net.sendScreen(videoId); // サーバー経由で全員に反映（自分にも返ってくる）
+      } else {
+        liveScreen.setVideo(videoId); // オフラインデモ時は自分の画面だけ
+        screenUI.setCurrent(videoId);
+      }
+    },
+  });
+  screenUI.setCurrent(liveScreen.getVideo());
 
   // スマホ対応（タッチ端末 or ?mobile=1 のときだけ有効化される）
   initMobile({ controls, chatRoot });

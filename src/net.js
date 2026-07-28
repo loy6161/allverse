@@ -114,7 +114,13 @@ export function initNet({ name, config, handlers }) {
           joined = true;
           clearWelcomeTimer();
           if (h.onWelcome) {
-            h.onWelcome({ id: msg.id, room: msg.room, peers: msg.peers, count: msg.count });
+            h.onWelcome({
+              id: msg.id,
+              room: msg.room,
+              peers: msg.peers,
+              count: msg.count,
+              screen: msg.screen,
+            });
           }
           break;
         case 'peer-join':
@@ -134,6 +140,12 @@ export function initNet({ name, config, handlers }) {
           break;
         case 'count':
           if (h.onCount) h.onCount(msg.c);
+          break;
+        case 'emote':
+          if (h.onPeerEmote) h.onPeerEmote({ id: msg.id, e: msg.e });
+          break;
+        case 'screen':
+          if (h.onScreen) h.onScreen({ v: msg.v, by: msg.by });
           break;
         default:
           break;
@@ -191,6 +203,16 @@ export function initNet({ name, config, handlers }) {
     send({ t: 'update', n: newName, av: configToAv(newConfig) });
   }
 
+  function sendEmote(id) {
+    if (!joined) return;
+    send({ t: 'emote', e: id });
+  }
+
+  function sendScreen(videoId) {
+    if (!joined) return;
+    send({ t: 'screen', v: videoId });
+  }
+
   function close() {
     clearWelcomeTimer();
     if (ws) {
@@ -202,5 +224,5 @@ export function initNet({ name, config, handlers }) {
     }
   }
 
-  return { sendPos, sendChat, sendUpdate, close };
+  return { sendPos, sendChat, sendUpdate, sendEmote, sendScreen, close };
 }

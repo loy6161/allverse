@@ -39,6 +39,14 @@ const MAX_NAME_LEN = 12;          // n の最大文字数
 const MAX_TXT_LEN = 200;          // chat.txt の最大文字数
 const MAX_COORD_ABS = 100;        // 座標の絶対値上限（これを超える/非数は破棄）
 
+// エモートの既定リスト（docs/PROTOCOL.md と一致させること。ここにないidは破棄）
+const EMOTE_IDS = new Set(['wave', 'clap', 'jump', 'dance', 'heart', 'penlight']);
+const EMOTE_MIN_INTERVAL_MS = 500; // 1クライアントあたりのエモート最小間隔（連打防止）
+
+// スクリーン（ルーム共有状態）
+const DEFAULT_VIDEO_ID = 'unrobrGhlv0';       // 誰も変更していないルームの初期動画
+const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;    // YouTube動画IDの形式
+
 // PRESENCE_SPEC §2.2 向けの出力上限
 const PRESENCE_MAX_WEB = 60;      // web[] の最大人数
 const PRESENCE_MAX_YT = 100;      // yt[] の最大人数（現段階では常に空配列なので未使用）
@@ -54,6 +62,9 @@ const ENABLE_CHAT_FIELD = false;
 // ------------------------------------------------------------
 // rooms: Map<roomNumber, Map<clientId, ClientState>>
 const rooms = new Map();
+
+// roomScreens: Map<roomNumber, videoId> ルームごとの共有スクリーン状態
+const roomScreens = new Map();
 
 let nextClientSeq = 1; // "c1", "c2", ... を払い出す連番
 const startedAt = Date.now();
@@ -190,6 +201,7 @@ function handleJoin(client, msg) {
     room: roomNumber,
     peers,
     count: room.size,
+    screen: roomScreens.get(roomNumber) || DEFAULT_VIDEO_ID, // 途中入場でも今の動画に追従できる
   });
 
   // 他の同室メンバーへ参加通知
@@ -247,11 +259,40 @@ function handleUpdate(client, msg) {
   );
 }
 
+/** emote: エモート中継（既定リスト以外は破棄・連打は間引く） */
+function handleEmote(client, msg) {
+  if (!client.joined) return;
+  if (typeof msg.e !== 'string' || !EMOTE_IDS.has(msg.e)) return;
+
+  const now = Date.now();
+  if (client.lastEmoteAt && now - client.lastEmoteAt < EMOTE_MIN_INTERVAL_MS) return;
+  client.lastEmoteAt = now;
+
+  broadcastToRoom(
+    client.room,
+    { t: 'emote', id: client.id, e: msg.e },
+    client.id, // 自分の分はローカルで即再生済み
+  );
+}
+
+/** screen: ルーム共有のスクリーン動画を変更 */
+function handleScreen(client, msg) {
+  if (!client.joined) return;
+  if (typeof msg.v !== 'string' || !VIDEO_ID_RE.test(msg.v)) return;
+
+  roomScreens.set(client.room, msg.v);
+
+  // 発信者にも返す（「変更されました」の表示と再生開始を全員同じ経路で行う）
+  broadcastToRoom(client.room, { t: 'screen', v: msg.v, by: client.n });
+}
+
 const HANDLERS = {
   join: handleJoin,
   pos: handlePos,
   chat: handleChat,
   update: handleUpdate,
+  emote: handleEmote,
+  screen: handleScreen,
 };
 
 /** 切断時処理: ルームから外し、peer-leave/countを通知 */
@@ -265,6 +306,7 @@ function handleDisconnect(client) {
     broadcastToRoom(roomNumber, { t: 'peer-leave', id: client.id });
     if (room.size === 0) {
       rooms.delete(roomNumber); // 空ルームは破棄（番号の穴あきはassignRoomが埋める）
+      roomScreens.delete(roomNumber); // スクリーン状態も初期化
     } else {
       broadcastCount(roomNumber);
     }

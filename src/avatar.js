@@ -262,6 +262,21 @@ export function createAvatar(config) {
   const armR = makeArm(1);
   upperGroup.add(armL, armR);
 
+  // ---- ペンライト（emote用。使い回し、通常は非表示） ----
+  const penlightLen = 0.34;
+  const penlightMat = new THREE.MeshStandardMaterial({
+    color: '#8be8ff',
+    emissive: '#66e6ff',
+    emissiveIntensity: 1.6,
+    roughness: 0.3,
+    metalness: 0.1,
+  });
+  const penlightMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.022, penlightLen, 4, 8), penlightMat);
+  const handY = -(ARM_LEN + ARM_R * 2);
+  penlightMesh.position.set(0, handY - penlightLen / 2 - 0.03, 0);
+  penlightMesh.visible = false;
+  armR.add(penlightMesh);
+
   // ---- 頭 ----
   const headY = shoulderY + HEAD_R * 0.95;
   const headGroup = new THREE.Group();
@@ -338,11 +353,147 @@ export function createAvatar(config) {
   let walkT = 0;
   let idleT = Math.random() * 10;
 
+  // ---- エモート ----
+  let emoteId = null;
+  let emoteT = 0;
+  let savedRootY = null; // jump 中に退避する root.position.y
+
+  const EMOTE_DURATIONS = {
+    wave: 2.5,
+    clap: 2.5,
+    jump: 2.0,
+    dance: 4.0,
+    heart: 3.0,
+    penlight: 4.0,
+  };
+
+  // 経過時間 t / 全体の長さ dur に対して、フェードイン・アウトする 0-1 の係数
+  function ease(t, dur, fade = 0.25) {
+    const inV = Math.min(1, t / fade);
+    const outV = Math.min(1, (dur - t) / fade);
+    return Math.max(0, Math.min(inV, outV));
+  }
+
+  // 各パーツの回転・位置・スケールを基準値へ戻す（ズレの蓄積防止）
+  function resetEmotePose() {
+    legL.rotation.set(0, 0, 0);
+    legR.rotation.set(0, 0, 0);
+    armL.rotation.set(0, 0, 0);
+    armR.rotation.set(0, 0, 0);
+    upperGroup.rotation.set(0, 0, 0);
+    upperGroup.position.y = HIP_Y;
+    headGroup.rotation.set(0, 0, 0);
+    root.scale.set(1, 1, 1);
+    if (savedRootY !== null) {
+      root.position.y = savedRootY;
+      savedRootY = null;
+    }
+    penlightMesh.visible = false;
+  }
+
+  function endEmote() {
+    resetEmotePose();
+    emoteId = null;
+    emoteT = 0;
+  }
+
+  function playEmote(id) {
+    if (!EMOTE_DURATIONS[id]) return; // 未知のidは無視
+    resetEmotePose(); // 再生中の別エモートがあれば即座にリセットして差し替え
+    emoteId = id;
+    emoteT = 0;
+  }
+
+  function applyEmote(id, t, dur) {
+    switch (id) {
+      case 'wave': {
+        const env = ease(t, dur, 0.3);
+        const wiggle = Math.sin(t * 9) * 0.35 * env;
+        armR.rotation.z = 2.35 * env + wiggle; // 右腕を上げて左右に振る
+        headGroup.rotation.z = Math.sin(t * 9) * 0.05 * env;
+        break;
+      }
+      case 'clap': {
+        const env = ease(t, dur, 0.25);
+        const theta = 1.4 * env + Math.sin(t * 13) * 0.35 * env; // 速めの往復
+        armL.rotation.z = theta;
+        armR.rotation.z = -theta;
+        upperGroup.position.y = HIP_Y + Math.sin(t * 6.5) * 0.02 * env; // わずかに上下
+        break;
+      }
+      case 'jump': {
+        if (savedRootY === null) savedRootY = root.position.y;
+        const period = dur / 3; // 3回ほど跳ねる
+        const phase = (t % period) / period;
+        const h = Math.sin(Math.PI * phase); // 0→1→0 の弧
+        root.position.y = savedRootY + h * 0.32;
+        const scaleY = 1 + (h - 0.3) * 0.15;
+        const scaleXZ = 1 + (0.3 - h) * 0.1;
+        root.scale.set(scaleXZ, scaleY, scaleXZ); // 着地の縮み・跳躍の伸び
+        legL.rotation.x = h * 0.3;
+        legR.rotation.x = h * 0.3;
+        armL.rotation.x = -h * 0.2;
+        armR.rotation.x = -h * 0.2;
+        break;
+      }
+      case 'dance': {
+        const env = ease(t, dur, 0.3);
+        const waistFreq = 3.2;
+        const waist = Math.sin(t * waistFreq) * 0.3 * env; // 腰を左右に振る
+        upperGroup.rotation.z = waist;
+        upperGroup.position.y = HIP_Y + Math.abs(Math.sin(t * waistFreq * 2)) * 0.04 * env;
+        headGroup.rotation.z = -waist * 0.4;
+        legL.rotation.z = -waist * 0.5;
+        legR.rotation.z = -waist * 0.5;
+        const raise = 1.9 * env;
+        armL.rotation.z = Math.max(0, Math.sin(t * waistFreq)) * raise; // 腕を交互に上げる
+        armR.rotation.z = -Math.max(0, Math.sin(t * waistFreq + Math.PI)) * raise;
+        break;
+      }
+      case 'heart': {
+        const env = ease(t, dur, 0.35);
+        const pulse = Math.sin(t * 2.5) * 0.05 * env;
+        upperGroup.rotation.x = 0.16 * env; // 少し前傾
+        armL.rotation.z = 2.85 * env + pulse; // 両腕を頭上で輪にする
+        armR.rotation.z = -2.85 * env - pulse;
+        armL.rotation.x = 0.15 * env;
+        armR.rotation.x = 0.15 * env;
+        break;
+      }
+      case 'penlight': {
+        const env = ease(t, dur, 0.3);
+        penlightMesh.visible = env > 0.001;
+        const swing = Math.sin(t * 10) * 0.5 * env;
+        armR.rotation.z = 2.1 * env + swing; // 右手のペンライトを振る
+        armR.rotation.x = Math.sin(t * 5) * 0.08 * env;
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
   function setMoving(v) {
-    moving = !!v;
+    const val = !!v;
+    if (val && emoteId) {
+      // 移動が始まったら即座にエモートを打ち切って通常アニメへ復帰
+      endEmote();
+    }
+    moving = val;
   }
 
   function update(dt) {
+    if (emoteId) {
+      const dur = EMOTE_DURATIONS[emoteId];
+      emoteT += dt;
+      if (emoteT >= dur) {
+        endEmote(); // 終了：基準姿勢に戻し、同フレームで通常アニメに続行
+      } else {
+        applyEmote(emoteId, emoteT, dur);
+        return;
+      }
+    }
+
     if (moving) {
       walkT += dt * 9;
       const swing = Math.sin(walkT);
@@ -354,19 +505,20 @@ export function createAvatar(config) {
       headGroup.rotation.z = Math.sin(walkT) * 0.03;
     } else {
       idleT += dt;
-      const ease = Math.min(1, dt * 8);
-      legL.rotation.x += (0 - legL.rotation.x) * ease;
-      legR.rotation.x += (0 - legR.rotation.x) * ease;
-      armR.rotation.x += (Math.sin(idleT * 1.4) * 0.06 - armR.rotation.x) * ease;
-      armL.rotation.x += (Math.sin(idleT * 1.4 + Math.PI) * 0.06 - armL.rotation.x) * ease;
-      upperGroup.position.y += (HIP_Y + Math.sin(idleT * 1.6) * 0.015 - upperGroup.position.y) * ease;
-      headGroup.rotation.z += (0 - headGroup.rotation.z) * ease;
+      const easeT = Math.min(1, dt * 8);
+      legL.rotation.x += (0 - legL.rotation.x) * easeT;
+      legR.rotation.x += (0 - legR.rotation.x) * easeT;
+      armR.rotation.x += (Math.sin(idleT * 1.4) * 0.06 - armR.rotation.x) * easeT;
+      armL.rotation.x += (Math.sin(idleT * 1.4 + Math.PI) * 0.06 - armL.rotation.x) * easeT;
+      upperGroup.position.y += (HIP_Y + Math.sin(idleT * 1.6) * 0.015 - upperGroup.position.y) * easeT;
+      headGroup.rotation.z += (0 - headGroup.rotation.z) * easeT;
     }
   }
 
   root.userData.update = update;
   root.userData.setMoving = setMoving;
   root.userData.say = say;
+  root.userData.playEmote = playEmote;
 
   return root;
 }

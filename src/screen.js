@@ -37,19 +37,39 @@ export function initLiveScreen(camera) {
   cssScene.add(cssObj);
 
   let started = false;
+  let currentVideoId = VIDEO_ID;
+  let iframe = null;
 
-  function play() {
+  function mountIframe(videoId) {
+    if (iframe) holder.removeChild(iframe);
+    iframe = document.createElement('iframe');
+    iframe.style.width = '100%';
+    iframe.style.height = '100%';
+    iframe.style.border = '0';
+    iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&playsinline=1&rel=0`;
+    iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
+    holder.appendChild(iframe);
+  }
+
+  // 入場ボタンのクリック（ユーザー操作）を起点に再生開始する
+  function play(videoId) {
+    if (videoId) currentVideoId = videoId;
     if (started) return;
     started = true;
     holder.style.background = '#000';
     holder.style.pointerEvents = 'auto'; // プレイヤー操作（一時停止・音量等）を可能に
-    const iframe = document.createElement('iframe');
-    iframe.style.width = '100%';
-    iframe.style.height = '100%';
-    iframe.style.border = '0';
-    iframe.src = `https://www.youtube.com/embed/${VIDEO_ID}?autoplay=1&mute=0&playsinline=1&rel=0`;
-    iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
-    holder.appendChild(iframe);
+    mountIframe(currentVideoId);
+  }
+
+  // 会場の共有スクリーンを別の動画に差し替える（サーバー経由で全員に届く）
+  function setVideo(videoId) {
+    if (!videoId || videoId === currentVideoId) return;
+    currentVideoId = videoId;
+    if (started) mountIframe(currentVideoId);
+  }
+
+  function getVideo() {
+    return currentVideoId;
   }
 
   function update() {
@@ -60,5 +80,5 @@ export function initLiveScreen(camera) {
     cssRenderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  return { play, update };
+  return { play, setVideo, getVideo, update };
 }
