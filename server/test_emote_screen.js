@@ -91,6 +91,52 @@ async function main() {
     JSON.stringify(welcomeC && welcomeC.screen),
   );
 
+  // 7. 再生操作（一時停止）が相手に届き、自分には届かない
+  a.inbox.length = 0;
+  b.inbox.length = 0;
+  a.ws.send(JSON.stringify({ t: 'playback', st: 'pause', pos: 42.5 }));
+  await wait(300);
+  const pbAtB = find(b.inbox, 'playback');
+  check(
+    '一時停止が相手に届く',
+    !!pbAtB && pbAtB.st === 'pause' && Math.abs(pbAtB.pos - 42.5) < 0.01,
+    JSON.stringify(pbAtB),
+  );
+  check('再生操作は自分には届かない', !find(a.inbox, 'playback'));
+
+  // 8. 一時停止中は、途中入場者にも同じ位置が渡る（時間が経っても進まない）
+  await wait(600);
+  const d = await connect('EmoteD');
+  await wait(400);
+  const welcomeD = find(d.inbox, 'welcome');
+  check(
+    '一時停止中の途中入場者が同じ位置を受け取る',
+    !!welcomeD && welcomeD.playback && welcomeD.playback.st === 'pause' &&
+      Math.abs(welcomeD.playback.pos - 42.5) < 0.05,
+    JSON.stringify(welcomeD && welcomeD.playback),
+  );
+
+  // 9. 再生中は経過時間ぶん位置が進んだ状態で渡る
+  a.ws.send(JSON.stringify({ t: 'playback', st: 'play', pos: 100 }));
+  await wait(1200);
+  const e2 = await connect('EmoteE');
+  await wait(400);
+  const welcomeE = find(e2.inbox, 'welcome');
+  const posE = welcomeE && welcomeE.playback ? welcomeE.playback.pos : -1;
+  check(
+    '再生中の途中入場者は進んだ位置を受け取る',
+    posE > 100.5 && posE < 104,
+    `pos=${posE}`,
+  );
+
+  // 10. 不正な再生操作は破棄される
+  b.inbox.length = 0;
+  a.ws.send(JSON.stringify({ t: 'playback', st: 'evil', pos: 5 }));
+  await wait(250);
+  check('不正な再生操作は破棄される', !find(b.inbox, 'playback'));
+
+  d.ws.close();
+  e2.ws.close();
   a.ws.close();
   b.ws.close();
   c.ws.close();

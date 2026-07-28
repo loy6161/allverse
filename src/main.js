@@ -123,16 +123,17 @@ initJoinScreen(({ name, config }) => {
     name,
     config,
     handlers: {
-      onWelcome: ({ id, room, peers, count, screen }) => {
+      onWelcome: ({ id, room, peers, count, screen, playback }) => {
         myId = id;
         roomNameEl.textContent = `VERSE CITY #${room}`;
         peers.forEach((p) => remote.addPeer(p));
         updateCount(count);
-        // 途中入場でも、その部屋で今流れている動画に合わせる
+        // 途中入場でも、その部屋で今流れている動画と再生位置に合わせる
         if (screen) {
           liveScreen.setVideo(screen);
           if (screenUI) screenUI.setCurrent(screen);
         }
+        if (playback) liveScreen.player.applySync(playback);
       },
       onPeerJoin: (p) => {
         remote.addPeer(p);
@@ -153,6 +154,8 @@ initJoinScreen(({ name, config }) => {
         if (screenUI) screenUI.setCurrent(v);
         chat.addMessage('', `${by} がスクリーンを変更しました`, { system: true });
       },
+      // 他の人の再生/一時停止/シークを自分の映像にも反映する
+      onPlayback: (pb) => liveScreen.player.applySync(pb),
       onDisconnect: () => startDemoMode(),
     },
   });
@@ -179,7 +182,13 @@ initJoinScreen(({ name, config }) => {
   });
 
   // 右下の動画パネル（再生・音量・シーク）。シアター表示と動画変更のボタンもここに入れる
-  const videoPanel = initPlayerControls({ player: liveScreen.player });
+  const videoPanel = initPlayerControls({
+    player: liveScreen.player,
+    // 再生/一時停止/シークは会場全員で揃える（音量・ミュートは各自の設定なので送らない）
+    onAction: (type, pos) => {
+      if (net && !demoMode) net.sendPlayback(type === 'pause' ? 'pause' : 'play', pos);
+    },
+  });
 
   // スクリーン変更パネル（会場全員のスクリーンが切り替わる共有状態）
   screenUI = initScreenUI({

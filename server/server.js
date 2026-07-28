@@ -66,6 +66,17 @@ const rooms = new Map();
 // roomScreens: Map<roomNumber, videoId> ルームごとの共有スクリーン状態
 const roomScreens = new Map();
 
+// roomPlayback: Map<roomNumber, {playing, pos, at}> ルームごとの再生状態
+// pos = at の時点の再生位置(秒)。現在位置は playing なら経過時間を足して求める
+const roomPlayback = new Map();
+
+function currentPlayback(roomNumber) {
+  const pb = roomPlayback.get(roomNumber);
+  if (!pb) return { st: 'play', pos: 0 };
+  const elapsed = pb.playing ? (Date.now() - pb.at) / 1000 : 0;
+  return { st: pb.playing ? 'play' : 'pause', pos: Math.max(0, pb.pos + elapsed) };
+}
+
 let nextClientSeq = 1; // "c1", "c2", ... を払い出す連番
 const startedAt = Date.now();
 
@@ -202,6 +213,7 @@ function handleJoin(client, msg) {
     peers,
     count: room.size,
     screen: roomScreens.get(roomNumber) || DEFAULT_VIDEO_ID, // 途中入場でも今の動画に追従できる
+    playback: currentPlayback(roomNumber), // 再生位置・再生中かどうかも揃える
   });
 
   // 他の同室メンバーへ参加通知
@@ -281,9 +293,27 @@ function handleScreen(client, msg) {
   if (typeof msg.v !== 'string' || !VIDEO_ID_RE.test(msg.v)) return;
 
   roomScreens.set(client.room, msg.v);
+  // 動画が変わったら再生状態は先頭・再生中に戻す
+  roomPlayback.set(client.room, { playing: true, pos: 0, at: Date.now() });
 
   // 発信者にも返す（「変更されました」の表示と再生開始を全員同じ経路で行う）
   broadcastToRoom(client.room, { t: 'screen', v: msg.v, by: client.n });
+}
+
+/** playback: 再生/一時停止/シークをルーム全員へ揃える */
+function handlePlayback(client, msg) {
+  if (!client.joined) return;
+  if (msg.st !== 'play' && msg.st !== 'pause') return;
+  const pos = typeof msg.pos === 'number' && Number.isFinite(msg.pos) ? Math.max(0, msg.pos) : 0;
+  if (pos > 24 * 3600) return; // 異常値は破棄
+
+  roomPlayback.set(client.room, { playing: msg.st === 'play', pos, at: Date.now() });
+
+  broadcastToRoom(
+    client.room,
+    { t: 'playback', id: client.id, st: msg.st, pos },
+    client.id, // 発信者は自分で操作済み
+  );
 }
 
 const HANDLERS = {
@@ -293,6 +323,7 @@ const HANDLERS = {
   update: handleUpdate,
   emote: handleEmote,
   screen: handleScreen,
+  playback: handlePlayback,
 };
 
 /** 切断時処理: ルームから外し、peer-leave/countを通知 */
@@ -307,6 +338,7 @@ function handleDisconnect(client) {
     if (room.size === 0) {
       rooms.delete(roomNumber); // 空ルームは破棄（番号の穴あきはassignRoomが埋める）
       roomScreens.delete(roomNumber); // スクリーン状態も初期化
+      roomPlayback.delete(roomNumber);
     } else {
       broadcastCount(roomNumber);
     }

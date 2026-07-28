@@ -148,7 +148,12 @@ function formatTime(sec) {
 }
 
 // player: screen.js が返す { play, pause, mute, unMute, setVolume, seekTo, onState }
-export function initPlayerControls({ player }) {
+// onAction: ユーザーが再生/一時停止/シークを操作したときに呼ばれる ('play'|'pause'|'seek', 位置秒)
+//           → 会場の全員に同じ操作を伝えるために使う（音量とミュートは各自の設定なので通知しない）
+export function initPlayerControls({ player, onAction }) {
+  const notify = (type, pos) => {
+    if (onAction) onAction(type, pos);
+  };
   injectStyle();
 
   const panel = document.createElement('div');
@@ -222,6 +227,8 @@ export function initPlayerControls({ player }) {
     if (playing) player.play();
     else player.pause();
     playBtn.textContent = playing ? '⏸' : '▶';
+    // 会場の全員の再生状態を揃える（現在位置も一緒に送る）
+    notify(playing ? 'play' : 'pause', player.getState().currentTime);
   });
 
   muteBtn.addEventListener('click', () => {
@@ -259,7 +266,11 @@ export function initPlayerControls({ player }) {
   const endSeek = () => {
     if (!seeking) return;
     seeking = false;
-    if (duration > 0 && !live) player.seekTo((Number(seek.value) / 1000) * duration);
+    if (duration > 0 && !live) {
+      const pos = (Number(seek.value) / 1000) * duration;
+      player.seekTo(pos);
+      notify(playing ? 'play' : 'pause', pos); // 全員を同じ位置へ
+    }
   };
   seek.addEventListener('pointerup', endSeek);
   seek.addEventListener('pointercancel', endSeek);

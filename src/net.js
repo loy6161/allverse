@@ -120,6 +120,7 @@ export function initNet({ name, config, handlers }) {
               peers: msg.peers,
               count: msg.count,
               screen: msg.screen,
+              playback: msg.playback,
             });
           }
           break;
@@ -146,6 +147,9 @@ export function initNet({ name, config, handlers }) {
           break;
         case 'screen':
           if (h.onScreen) h.onScreen({ v: msg.v, by: msg.by });
+          break;
+        case 'playback':
+          if (h.onPlayback) h.onPlayback({ st: msg.st, pos: msg.pos });
           break;
         default:
           break;
@@ -213,6 +217,11 @@ export function initNet({ name, config, handlers }) {
     send({ t: 'screen', v: videoId });
   }
 
+  function sendPlayback(st, pos) {
+    if (!joined) return;
+    send({ t: 'playback', st, pos: Math.max(0, Number(pos) || 0) });
+  }
+
   function close() {
     clearWelcomeTimer();
     if (ws) {
@@ -224,5 +233,5 @@ export function initNet({ name, config, handlers }) {
     }
   }
 
-  return { sendPos, sendChat, sendUpdate, sendEmote, sendScreen, close };
+  return { sendPos, sendChat, sendUpdate, sendEmote, sendScreen, sendPlayback, close };
 }

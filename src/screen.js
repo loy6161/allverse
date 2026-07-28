@@ -102,6 +102,7 @@ export function initLiveScreen(camera, scene) {
 
   function mountIframe(videoId) {
     if (iframe) holder.removeChild(iframe);
+    hasState = false; // 新しいプレイヤーになるので、接続の確立からやり直す
     iframe = document.createElement('iframe');
     iframe.style.width = '100%';
     iframe.style.height = '100%';
@@ -117,12 +118,9 @@ export function initLiveScreen(camera, scene) {
     // 読み込み後に listening を送ると再生位置などが届くようになる。
     // 同時に、覚えておいた設定を復元する（プレイヤー準備待ちのため数回試みる）
     iframe.addEventListener('load', () => {
-      startListening();
+      ensureListening();
       applyPrefs();
-      setTimeout(() => {
-        startListening();
-        applyPrefs();
-      }, 1000);
+      setTimeout(applyPrefs, 1000);
       setTimeout(applyPrefs, 2500);
     });
   }
@@ -169,6 +167,8 @@ export function initLiveScreen(camera, scene) {
   const stateListeners = new Set();
   const state = { currentTime: 0, duration: 0, playing: true, live: false, muted: false, volume: 70 };
 
+  let hasState = false; // プレイヤーから情報が届いた＝操作を受け付けられる合図
+
   window.addEventListener('message', (e) => {
     if (e.origin !== 'https://www.youtube.com') return;
     let data;
@@ -178,6 +178,7 @@ export function initLiveScreen(camera, scene) {
       return;
     }
     if (!data || !data.info) return;
+    hasState = true;
     const info = data.info;
     if (typeof info.currentTime === 'number') state.currentTime = info.currentTime;
     if (typeof info.duration === 'number') {
@@ -204,6 +205,25 @@ export function initLiveScreen(camera, scene) {
     }
   }
 
+  // プレイヤーの準備が整うまで接続要求を送り続ける。
+  // 1回だけだと、タブが裏にある時などに取りこぼして
+  // 以後ずっと再生位置が取れなくなる（時間表示とシーク同期が死ぬ）。
+  let listenTimer = null;
+  function ensureListening() {
+    startListening();
+    if (listenTimer) return;
+    let tries = 0;
+    listenTimer = setInterval(() => {
+      tries += 1;
+      if (hasState || tries > 40) {
+        clearInterval(listenTimer);
+        listenTimer = null;
+        return;
+      }
+      startListening();
+    }, 1500);
+  }
+
   const player = {
     play: () => {
       prefs.playing = true;
@@ -226,6 +246,28 @@ export function initLiveScreen(camera, scene) {
       command('setVolume', [prefs.volume]);
     },
     seekTo: (sec) => command('seekTo', [Math.max(0, sec), true]),
+    // 他の人の操作（や途中入場時のルーム状態）を自分の映像に反映する。
+    // 送信はしない＝ここから同期のループは起きない。
+    applySync: ({ st, pos }) => {
+      let tries = 0;
+      const run = () => {
+        // プレイヤーがまだ応答していなければ準備を待つ（最大約5秒）
+        if (!hasState && tries < 7) {
+          tries += 1;
+          setTimeout(run, 700);
+          return;
+        }
+        if (typeof pos === 'number' && !state.live) command('seekTo', [Math.max(0, pos), true]);
+        if (st === 'pause') {
+          prefs.playing = false;
+          command('pauseVideo');
+        } else {
+          prefs.playing = true;
+          command('playVideo');
+        }
+      };
+      run();
+    },
     onState: (cb) => {
       stateListeners.add(cb);
       return () => stateListeners.delete(cb);
