@@ -1,0 +1,10 @@
+# VERSE CITY lowpoly avatar part (acc_ahoge) generated
+v -0.01430 1.15026 0.01000
+v 0.01337 1.13768 0.02662
+v 0.01593 1.14706 -0.00662
+v 0.05000 1.31000 0.06000
+o hair
+f 1 2 4
+f 2 3 4
+f 3 1 4
+f 3 2 1

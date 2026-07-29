@@ -14,24 +14,38 @@ import { createTextSprite } from './avatar.js';
 //   MatEye=目(黒) / MatEyeC=瞳の色 / MatEyeGlint=ハイライト / MatCheek=チーク
 // ------------------------------------------------------------------
 
-export const GLB_STYLES = ['bob', 'short', 'twin', 'bun', 'long', 'pony', 'kemo'];
+// パーツ合成方式: body_<服装> + hair_<髪型> + acc_<アクセ> を実行時に組む
+export const GLB_STYLES = ['long', 'short', 'twin', 'bun', 'pony'];
+export const GLB_OUTFITS = ['middle', 'long', 'short'];
+export const GLB_ACCESSORIES = ['none', 'kemo', 'ahoge'];
 
 const loader = new GLTFLoader();
-const templateCache = new Map(); // style -> Promise<THREE.Group>
+const templateCache = new Map(); // file key -> Promise<THREE.Group>
 
-function loadTemplate(style) {
-  const s = GLB_STYLES.includes(style) ? style : GLB_STYLES[0];
-  if (!templateCache.has(s)) {
+function loadPart(key) {
+  if (!templateCache.has(key)) {
     templateCache.set(
-      s,
-      loader.loadAsync(`assets/avatars/lp_${s}.glb`).then((gltf) => gltf.scene),
+      key,
+      loader.loadAsync(`assets/avatars/${key}.glb`).then((gltf) => gltf.scene),
     );
   }
-  return templateCache.get(s);
+  return templateCache.get(key);
+}
+
+function partsFor(config) {
+  const hair = GLB_STYLES.includes(config.hairStyle) ? config.hairStyle : GLB_STYLES[0];
+  const outfit = GLB_OUTFITS.includes(config.outfit) ? config.outfit : GLB_OUTFITS[0];
+  const acc = GLB_ACCESSORIES.includes(config.accessory) ? config.accessory : 'none';
+  const keys = [`body_${outfit}`, `hair_${hair}`];
+  if (acc !== 'none') keys.push(`acc_${acc}`);
+  return keys;
 }
 
 export function preloadAvatars() {
-  GLB_STYLES.forEach(loadTemplate);
+  for (const o of GLB_OUTFITS) loadPart(`body_${o}`);
+  for (const h of GLB_STYLES) loadPart(`hair_${h}`);
+  loadPart('acc_kemo');
+  loadPart('acc_ahoge');
 }
 
 // メッシュを「回転の支点」付きのグループで包む（腕=付け根、脚=腰）
@@ -53,9 +67,9 @@ function toon(color, emissiveScale = 0.05) {
 export function createGlbAvatar(config) {
   const {
     bodyColor = '#ffdbac',
-    hairStyle = 'bob',
     hairColor = '#3a2a1e',
     shirtColor = '#f2f2f4',
+    eyeColor = '',
     name = '',
   } = config || {};
 
@@ -64,9 +78,12 @@ export function createGlbAvatar(config) {
   const body = new THREE.Group(); // 上下バウンド・傾き用
   root.add(body);
 
-  // ---- 色の決定（wireに乗るのは body/hair/shirt の3色。残りは導出） ----
+  // ---- 色の決定 ----
   const bottomColor = new THREE.Color(shirtColor).multiplyScalar(0.3);
-  const eyeIrisColor = new THREE.Color(hairColor).lerp(new THREE.Color('#93242e'), 0.55);
+  // 目の色: 指定があればそれを使い、なければ髪色から導出（旧config互換）
+  const eyeIrisColor = eyeColor
+    ? new THREE.Color(eyeColor)
+    : new THREE.Color(hairColor).lerp(new THREE.Color('#93242e'), 0.55);
   const MAT_BUILDERS = {
     MatHair: () => toon(hairColor, 0.06),
     MatSkin: () => toon(bodyColor, 0.05),
@@ -86,13 +103,15 @@ export function createGlbAvatar(config) {
   let eyeGroup = null;
   let loaded = false;
 
-  loadTemplate(hairStyle).then((template) => {
-    const inst = template.clone(true);
-    inst.updateMatrixWorld(true);
+  Promise.all(partsFor(config || {}).map(loadPart)).then((templates) => {
     const meshes = [];
-    inst.traverse((o) => {
-      if (o.isMesh) meshes.push(o);
-    });
+    for (const template of templates) {
+      const inst = template.clone(true);
+      inst.updateMatrixWorld(true);
+      inst.traverse((o) => {
+        if (o.isMesh) meshes.push(o);
+      });
+    }
 
     const eyeMeshes = [];
     for (const mesh of meshes) {

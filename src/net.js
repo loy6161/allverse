@@ -14,12 +14,18 @@ export function configToAv(config) {
   const hc = AVATAR_PARTS.hairColors.indexOf(cfg.hairColor);
   const sc = AVATAR_PARTS.shirtColors.indexOf(cfg.shirtColor);
   const bc = AVATAR_PARTS.bodyColors.indexOf(cfg.bodyColor);
+  const ec = AVATAR_PARTS.eyeColors.indexOf(cfg.eyeColor);
   const h = AVATAR_PARTS.hairStyles.includes(cfg.hairStyle) ? cfg.hairStyle : AVATAR_PARTS.hairStyles[0];
+  const o = AVATAR_PARTS.outfits.includes(cfg.outfit) ? cfg.outfit : AVATAR_PARTS.outfits[0];
+  const ac = AVATAR_PARTS.accessories.includes(cfg.accessory) ? cfg.accessory : AVATAR_PARTS.accessories[0];
   return {
     h,
+    o,
+    ac,
     hc: hc >= 0 ? hc : 0,
     sc: sc >= 0 ? sc : 0,
     bc: bc >= 0 ? bc : 0,
+    ec: ec >= 0 ? ec : 0,
   };
 }
 
@@ -28,12 +34,18 @@ export function avToConfig(av) {
   const bcIdx = Number.isInteger(a.bc) && a.bc >= 0 && a.bc < AVATAR_PARTS.bodyColors.length ? a.bc : 0;
   const hcIdx = Number.isInteger(a.hc) && a.hc >= 0 && a.hc < AVATAR_PARTS.hairColors.length ? a.hc : 0;
   const scIdx = Number.isInteger(a.sc) && a.sc >= 0 && a.sc < AVATAR_PARTS.shirtColors.length ? a.sc : 0;
+  const ecIdx = Number.isInteger(a.ec) && a.ec >= 0 && a.ec < AVATAR_PARTS.eyeColors.length ? a.ec : 0;
   const hairStyle = AVATAR_PARTS.hairStyles.includes(a.h) ? a.h : AVATAR_PARTS.hairStyles[0];
+  const outfit = AVATAR_PARTS.outfits.includes(a.o) ? a.o : AVATAR_PARTS.outfits[0];
+  const accessory = AVATAR_PARTS.accessories.includes(a.ac) ? a.ac : AVATAR_PARTS.accessories[0];
   return {
     bodyColor: AVATAR_PARTS.bodyColors[bcIdx],
     hairStyle,
+    outfit,
+    accessory,
     hairColor: AVATAR_PARTS.hairColors[hcIdx],
     shirtColor: AVATAR_PARTS.shirtColors[scIdx],
+    eyeColor: AVATAR_PARTS.eyeColors[ecIdx],
   };
 }
 

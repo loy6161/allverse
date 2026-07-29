@@ -1,15 +1,20 @@
-// ローポリアバターのOBJ生成器（バリエーション対応版）
+// ローポリアバターのOBJ生成器（パーツ分割版）
 //
 // 参考モデル分析（docs/AVATAR_REFERENCE_ANALYSIS.md）の結論を実装する:
 //   - 髪は「1枚の連続メッシュ」。生え際のM字・毛先の尖りは面の折り込みで作る
-//   - 顔は下前方の窓。目は低く左右に離す（上=黒/下=色/白ハイライトの3層）
+//   - 顔は下前方の窓。目は低く左右に離す（上=黒/下=色/白ハイライトの3層)
 //   - 毛先（前髪の房・裾のギザギザ）はすべて設計された頂点
 //
+// 髪型・服装・アクセサリーを自由に組み合わせるため、パーツ単位でOBJを出す。
+// Web側（avatar_glb.js）が body + hair + acc を実行時に合成する。
+//
 // 座標系: OBJ標準 (Y=上, キャラは +Z を向く)。単位 m。身長 ≈ 1.21m
-// 使い方: node tools/gen_avatar_obj.mjs <variant>   （variant省略時 bob）
-//   variant: bob | short | twin | bun | long | pony | kemo
+// 使い方: node tools/gen_avatar_obj.mjs <part>
+//   part: hair_long | hair_short | hair_twin | hair_bun | hair_pony
+//       | body_long | body_middle | body_short
+//       | acc_kemo | acc_ahoge
 
-const VARIANT = process.argv[2] || 'bob';
+const PART = process.argv[2] || 'hair_long';
 
 const HEAD_C = 0.86; // 頭の球の中心高さ
 const N = 20; // 髪ドームの角度分割（18°刻み）
@@ -256,70 +261,77 @@ function ahoge() {
 }
 
 // ---------------------------------------------------------------
-// バリエーション定義
+// パーツ定義
+//   髪: hair_long は「承認済みボブの形」を ロング と呼ぶ（ユーザー指定 2026-07-29）。
+//       旧ロング（背中ケープ）は形が悪く廃止。アホ毛・けもみみはアクセサリーへ分離
+//   体: 服装（ロング/ミドル/ショート）＋肌・顔・腕・脚。髪型と自由に組み合わせる
 // ---------------------------------------------------------------
 const SHORT_RINGS = RINGS_ALL.slice(0, 5); // R5まで（裾が上）
-const VARIANTS = {
-  bob() {
+const shortDome = () => hairDome({ rings: SHORT_RINGS, hemDrop: 0.06, lockTipY: -0.2 });
+const PARTS = {
+  hair_long() {
     hairDome({});
-    OUTFITS.dress();
   },
-  short() {
-    hairDome({ rings: SHORT_RINGS, hemDrop: 0.06, lockTipY: -0.2 });
-    ahoge();
-    OUTFITS.tunic();
+  hair_short() {
+    shortDome();
   },
-  twin() {
-    hairDome({ rings: SHORT_RINGS, hemDrop: 0.06, lockTipY: -0.2 });
+  hair_twin() {
+    shortDome();
     for (const sx of [-1, 1]) {
       ball('hair', sx * 0.27, 1.0, -0.06, 0.055, 6, 4);
       cone3('hair', [sx * 0.29, 0.98, -0.07], [sx * 0.38, 0.44, -0.05], 0.075);
     }
-    OUTFITS.dress();
   },
-  bun() {
-    hairDome({ rings: SHORT_RINGS, hemDrop: 0.06, lockTipY: -0.2 });
-    ahoge();
+  hair_bun() {
+    shortDome();
     for (const sx of [-1, 1]) {
       ball('hair', sx * 0.185, 1.105, -0.03, 0.115, 7, 5);
     }
-    OUTFITS.dress();
   },
-  long() {
-    hairDome({});
-    backCape();
-    OUTFITS.coat();
-  },
-  pony() {
-    hairDome({ rings: SHORT_RINGS, hemDrop: 0.06, lockTipY: -0.2 });
+  hair_pony() {
+    shortDome();
     ball('hair', 0, 0.99, -0.28, 0.07, 6, 4);
     cone3('hair', [0, 0.96, -0.31], [0, 0.38, -0.4], 0.11);
+  },
+  body_long() {
+    headSkin();
+    face();
+    arms();
+    OUTFITS.coat();
+  },
+  body_middle() {
+    headSkin();
+    face();
+    arms();
+    OUTFITS.dress();
+  },
+  body_short() {
+    headSkin();
+    face();
+    arms();
     OUTFITS.tunic();
   },
-  kemo() {
-    hairDome({ rings: SHORT_RINGS, hemDrop: 0.06, lockTipY: -0.2 });
-    ahoge();
+  acc_kemo() {
     for (const sx of [-1, 1]) {
       cone3('hair', [sx * 0.13, 1.05, -0.01], [sx * 0.21, 1.26, 0.0], 0.062, 90);
     }
-    OUTFITS.dress();
+  },
+  acc_ahoge() {
+    ahoge();
   },
 };
 
-if (!VARIANTS[VARIANT]) {
-  console.error(`unknown variant: ${VARIANT}. available: ${Object.keys(VARIANTS).join(', ')}`);
+if (!PARTS[PART]) {
+  console.error(`unknown part: ${PART}. available: ${Object.keys(PARTS).join(', ')}`);
   process.exit(1);
 }
-headSkin();
-face();
-arms();
-VARIANTS[VARIANT]();
+PARTS[PART]();
 
-let out = `# VERSE CITY lowpoly avatar (${VARIANT}) generated\n`;
+let out = `# VERSE CITY lowpoly avatar part (${PART}) generated\n`;
 for (const [x, y, z] of verts) out += `v ${x.toFixed(5)} ${y.toFixed(5)} ${z.toFixed(5)}\n`;
 for (const [name, faces] of Object.entries(parts)) {
   out += `o ${name}\n`;
   for (const f of faces) out += `f ${f.join(' ')}\n`;
 }
 process.stdout.write(out);
-console.error(`${VARIANT}: verts=${verts.length} tris=${Object.values(parts).reduce((s, f) => s + f.length, 0)}`);
+console.error(`${PART}: verts=${verts.length} tris=${Object.values(parts).reduce((s, f) => s + f.length, 0)}`);

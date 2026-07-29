@@ -7,13 +7,24 @@ import { createGlbAvatar } from './avatar_glb.js';
 // 旧実装（createLegacyAvatar）を持つ
 // ------------------------------------------------------------------
 
+// 髪色・服色・目の色の共通14色（ユーザー指定 2026-07-29:
+// 黒・茶・明るい茶・黄・オレンジ・赤・ピンク・紫・青・水色・緑・黄緑・グレー・白）
+const COLOR14 = [
+  '#1a1a1a', '#4a2c17', '#a97a4e', '#ffd400', '#ff8c1a', '#e33b3b', '#ff6fd8',
+  '#8a5fff', '#3b82f6', '#4fd8ff', '#22a05a', '#9be34a', '#9aa0ad', '#f5f5f5',
+];
+
 export const AVATAR_PARTS = {
   bodyColors: ['#ffdbac', '#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#3a2a1e', '#7fe6ff', '#ff8fe6'],
-  // GLBアバター（Blender製）のスタイル一覧。wireには文字列がそのまま乗り、
+  // GLBアバター（Blender製）のパーツ一覧。wireには文字列がそのまま乗り、
   // 未知のidを受けた側は先頭にフォールバックする（net.js）ので追加は後方互換
-  hairStyles: ['bob', 'short', 'twin', 'bun', 'long', 'pony', 'kemo'],
-  hairColors: ['#1a1a1a', '#4a2c17', '#caa06b', '#e0483a', '#ff6fd8', '#4fd8ff', '#8a5fff', '#f2f2f2'],
-  shirtColors: ['#00ffea', '#ff00e5', '#ffb400', '#3b82f6', '#22c55e', '#ef4444', '#a855f7', '#f5f5f5'],
+  // ※「long」は承認済みボブ形状の名前（旧bobをリネーム。旧ロングは廃止）
+  hairStyles: ['long', 'short', 'twin', 'bun', 'pony'],
+  outfits: ['middle', 'long', 'short'],
+  accessories: ['none', 'kemo', 'ahoge'],
+  hairColors: COLOR14,
+  shirtColors: COLOR14,
+  eyeColors: COLOR14,
 };
 
 function pick(arr) {
@@ -24,8 +35,11 @@ export function randomConfig() {
   return {
     bodyColor: pick(AVATAR_PARTS.bodyColors),
     hairStyle: pick(AVATAR_PARTS.hairStyles),
+    outfit: pick(AVATAR_PARTS.outfits),
+    accessory: pick(AVATAR_PARTS.accessories),
     hairColor: pick(AVATAR_PARTS.hairColors),
     shirtColor: pick(AVATAR_PARTS.shirtColors),
+    eyeColor: pick(AVATAR_PARTS.eyeColors),
   };
 }
 

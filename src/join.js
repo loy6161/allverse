@@ -2,14 +2,24 @@ import * as THREE from 'three';
 import { AVATAR_PARTS, randomConfig, createAvatar } from './avatar.js';
 
 const HAIR_LABELS = {
-  bob: 'ボブ',
+  long: 'ロング',
   short: 'ショート',
   twin: 'ツインテール',
   bun: 'お団子',
-  long: 'ロング',
   pony: 'ポニーテール',
-  kemo: 'けもみみ',
   hat: 'ぼうし',
+};
+
+const OUTFIT_LABELS = {
+  long: 'ロング',
+  middle: 'ミドル',
+  short: 'ショート',
+};
+
+const ACCESSORY_LABELS = {
+  none: 'なし',
+  kemo: 'けもみみ',
+  ahoge: 'アホ毛',
 };
 
 const STYLE_ID = 'join-screen-style';
@@ -287,12 +297,24 @@ function buildCustomizeScreen({
             <div class="hairstyle-buttons" id="hairstyle-buttons"></div>
           </div>
           <div class="customize-row">
+            <div class="customize-label">服装</div>
+            <div class="hairstyle-buttons" id="outfit-buttons"></div>
+          </div>
+          <div class="customize-row">
+            <div class="customize-label">アクセサリー</div>
+            <div class="hairstyle-buttons" id="accessory-buttons"></div>
+          </div>
+          <div class="customize-row">
             <div class="customize-label">肌色</div>
             <div class="swatch-row" id="bodycolor-swatches"></div>
           </div>
           <div class="customize-row">
             <div class="customize-label">髪色</div>
             <div class="swatch-row" id="haircolor-swatches"></div>
+          </div>
+          <div class="customize-row">
+            <div class="customize-label">目の色</div>
+            <div class="swatch-row" id="eyecolor-swatches"></div>
           </div>
           <div class="customize-row">
             <div class="customize-label">服色</div>
@@ -327,6 +349,13 @@ function buildCustomizeScreen({
   }
 
   const config = { ...initialConfig };
+  // 旧保存configとの互換: 新フィールドが無ければ既定を補い、廃止した髪型はフォールバック
+  if (!AVATAR_PARTS.hairStyles.includes(config.hairStyle)) config.hairStyle = AVATAR_PARTS.hairStyles[0];
+  if (!AVATAR_PARTS.outfits.includes(config.outfit)) config.outfit = AVATAR_PARTS.outfits[0];
+  if (!AVATAR_PARTS.accessories.includes(config.accessory)) config.accessory = 'none';
+  if (!AVATAR_PARTS.hairColors.includes(config.hairColor)) config.hairColor = AVATAR_PARTS.hairColors[1];
+  if (!AVATAR_PARTS.shirtColors.includes(config.shirtColor)) config.shirtColor = AVATAR_PARTS.shirtColors[13];
+  if (!AVATAR_PARTS.eyeColors.includes(config.eyeColor)) config.eyeColor = AVATAR_PARTS.eyeColors[1];
 
   // ---- プレビュー用の小さな3Dシーン ----
   const previewCanvas = document.getElementById('avatar-preview-canvas');
@@ -388,21 +417,26 @@ function buildCustomizeScreen({
     root.classList.add('hidden');
   }
 
-  // ---- 髪型ボタン ----
-  const hairButtonsEl = document.getElementById('hairstyle-buttons');
-  AVATAR_PARTS.hairStyles.forEach((style) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'hair-btn' + (style === config.hairStyle ? ' selected' : '');
-    btn.textContent = HAIR_LABELS[style] || style;
-    btn.addEventListener('click', () => {
-      config.hairStyle = style;
-      hairButtonsEl.querySelectorAll('.hair-btn').forEach((b) => b.classList.remove('selected'));
-      btn.classList.add('selected');
-      rebuildPreviewAvatar();
+  // ---- 選択ボタン行（髪型・服装・アクセサリー共通） ----
+  function buildButtonRow(containerId, values, labels, configKey) {
+    const el = document.getElementById(containerId);
+    values.forEach((value) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hair-btn' + (value === config[configKey] ? ' selected' : '');
+      btn.textContent = labels[value] || value;
+      btn.addEventListener('click', () => {
+        config[configKey] = value;
+        el.querySelectorAll('.hair-btn').forEach((b) => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        rebuildPreviewAvatar();
+      });
+      el.appendChild(btn);
     });
-    hairButtonsEl.appendChild(btn);
-  });
+  }
+  buildButtonRow('hairstyle-buttons', AVATAR_PARTS.hairStyles, HAIR_LABELS, 'hairStyle');
+  buildButtonRow('outfit-buttons', AVATAR_PARTS.outfits, OUTFIT_LABELS, 'outfit');
+  buildButtonRow('accessory-buttons', AVATAR_PARTS.accessories, ACCESSORY_LABELS, 'accessory');
 
   // ---- 色スウォッチ ----
   function buildSwatchRow(containerId, colors, configKey) {
@@ -423,6 +457,7 @@ function buildCustomizeScreen({
   }
   buildSwatchRow('bodycolor-swatches', AVATAR_PARTS.bodyColors, 'bodyColor');
   buildSwatchRow('haircolor-swatches', AVATAR_PARTS.hairColors, 'hairColor');
+  buildSwatchRow('eyecolor-swatches', AVATAR_PARTS.eyeColors, 'eyeColor');
   buildSwatchRow('shirtcolor-swatches', AVATAR_PARTS.shirtColors, 'shirtColor');
 
   // ---- 名前入力 & 決定ボタン ----
