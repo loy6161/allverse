@@ -78,6 +78,13 @@ const LEG_R_BOTTOM = 0.074;
 const LEG_LEN = 0.44;
 const FOOT_R = 0.09;
 const HIP_Y = 0.5;
+
+/**
+ * 目の高さ（アバターの足元からの距離・メートル）。
+ * 頭は upperGroup(HIP_Y) の子で、その中の headY 分だけ上にある。
+ * 一人称視点でカメラを置く高さに使うので、体型の定数を変えたらここも見直すこと。
+ */
+export const EYE_Y = HIP_Y + 0.73;
 const SHOULDER_X = 0.185 + ARM_R_TOP * 0.55; // 肩幅ピーク半径 + 腕の食い込み量（隙間を作らない）
 const ARM_REST_X = -0.05; // 腕の自然な休止角（わずかに前へ）
 const ARM_REST_Z = 0.1; // 腕の自然な休止角（わずかに外へ＝いかり肩を防ぐ）

@@ -1,13 +1,35 @@
 import * as THREE from 'three';
+import { EYE_Y } from './avatar.js';
 
-// 三人称視点のキャラクター操作
+// キャラクター操作
 // - WASD / 矢印キー: カメラ基準で移動（アバターは進行方向を向く）
 // - ドラッグ: カメラ旋回、ホイール: ズーム
+// - 三人称の最短からさらに寄せると一人称になる（引くと三人称へ戻る）
 export function initControls(camera, avatar, domElement, { bounds, onJump } = {}) {
   const keys = new Set();
   let yaw = 0; // カメラの水平角（0 = ステージ(-z)方向を向く）
   let pitch = 0.35; // 見下ろし角
   let dist = 6;
+
+  // 一人称視点。ホイール（スマホはピンチ）を三人称の最短より内側へ回すと入る。
+  // 自分のアバターは丸ごと隠す（首から下だけ残す作りになっていないので、
+  // 中途半端に出すと頭の内側や胴体の断面が見えてしまう。2026-07-30 ユーザー了承）
+  let firstPerson = false;
+  const DIST_MIN = 2.5;
+  const DIST_MAX = 14;
+  // 最短で止まった状態から、さらにこの量だけ寄せ続けたら一人称に入る。
+  // 「最短に着いた瞬間に切り替わる」ようにすると、トラックパッドの慣性スクロールで
+  // 一気に一人称へ飛んでしまうので、ワンクッション置いている（ホイール1ノッチ ≒ 1.0）
+  const FIRST_PERSON_PUSH = 1.0;
+  let minPush = 0;
+
+  // 見上げ／見下ろし角は視点ごとに別で持つ。
+  // 三人称の既定 0.35 は「斜め後ろ上からアバターを見る」ちょうどいい角度だが、
+  // 同じ値を一人称に持ち込むと数メートル先の床を見つめる形になってしまう。
+  // 切り替えるときに互いの値を退避して、それぞれの自然な角度を保つ
+  let pitchThird = pitch;
+  let pitchFirst = 0; // 一人称の既定は水平
+
 
   const SPEED = 4.2;
 
@@ -46,6 +68,17 @@ export function initControls(camera, avatar, domElement, { bounds, onJump } = {}
     camera.lookAt(SCREEN_CENTER);
   }
 
+  // 一人称のカメラ。目の位置に置いて、三人称と同じ yaw / pitch の向きへ向ける
+  function applyFirstPersonCamera() {
+    camera.position.set(avatar.position.x, avatar.position.y + EYE_Y, avatar.position.z);
+    const cp = Math.cos(pitch);
+    camera.lookAt(
+      camera.position.x - Math.sin(yaw) * cp,
+      camera.position.y - Math.sin(pitch), // pitch 正 = 見下ろす（三人称と同じ定義）
+      camera.position.z - Math.cos(yaw) * cp
+    );
+  }
+
   function jump() {
     if (airborne) return false;
     airborne = true;
@@ -74,8 +107,40 @@ export function initControls(camera, avatar, domElement, { bounds, onJump } = {}
     pitch = THREE.MathUtils.clamp(pitch + dy * 0.004, PITCH_MIN, PITCH_MAX);
   }
 
+  function setFirstPerson(on) {
+    const next = !!on;
+    if (next !== firstPerson) {
+      // 切り替わるときだけ、いまの角度を退避して相手側の角度を復元する
+      if (next) {
+        pitchThird = pitch;
+        pitch = pitchFirst;
+      } else {
+        pitchFirst = pitch;
+        pitch = pitchThird;
+      }
+    }
+    firstPerson = next;
+    // 自分のアバター（名札も子なので一緒に消える）
+    avatar.visible = !firstPerson;
+    minPush = 0;
+    if (!firstPerson) dist = DIST_MIN;
+    return firstPerson;
+  }
+
   function zoom(delta) {
-    dist = THREE.MathUtils.clamp(dist + delta, 2.5, 14);
+    if (firstPerson) {
+      // 一人称から引いたら三人称の最短へ戻る。寄せる方向は無視する
+      if (delta > 0) setFirstPerson(false);
+      return;
+    }
+    // 最短で止まっている状態から、さらに寄せ続けたら一人称へ入る
+    if (delta < 0 && dist <= DIST_MIN + 1e-6) {
+      minPush -= delta;
+      if (minPush >= FIRST_PERSON_PUSH) setFirstPerson(true);
+      return;
+    }
+    minPush = 0;
+    dist = THREE.MathUtils.clamp(dist + delta, DIST_MIN, DIST_MAX);
   }
 
   // ドラッグ視点（ポインタIDを追跡し、ジョイスティック等の別指と混線しないようにする）
@@ -110,6 +175,13 @@ export function initControls(camera, avatar, domElement, { bounds, onJump } = {}
 
   const move = new THREE.Vector3();
 
+  /** アバターを targetRot へ滑らかに回頭させる */
+  function turnTowards(targetRot, dt) {
+    let d = targetRot - avatar.rotation.y;
+    d = Math.atan2(Math.sin(d), Math.cos(d)); // -π〜π に畳む
+    avatar.rotation.y += d * Math.min(1, dt * 12);
+  }
+
   function update(dt) {
     // 入力 → カメラ基準の移動ベクトル（キーボード＋アナログ入力を合成）
     let fw = analog.fw;
@@ -136,12 +208,13 @@ export function initControls(camera, avatar, domElement, { bounds, onJump } = {}
       avatar.position.x = THREE.MathUtils.clamp(avatar.position.x, bounds.minX, bounds.maxX);
       avatar.position.z = THREE.MathUtils.clamp(avatar.position.z, bounds.minZ, bounds.maxZ);
 
-      // 進行方向へ滑らかに回頭
-      const targetRot = Math.atan2(move.x, move.z);
-      let d = targetRot - avatar.rotation.y;
-      d = Math.atan2(Math.sin(d), Math.cos(d));
-      avatar.rotation.y += d * Math.min(1, dt * 12);
+      // 進行方向へ滑らかに回頭（一人称のときは下で視線方向に合わせるのでここでは触らない）
+      if (!firstPerson) turnTowards(Math.atan2(move.x, move.z), dt);
     }
+
+    // 一人称では、体は常に視線の向きに合わせる。
+    // 自分には見えないが、他の人の画面では「見ている方を向いている」ことが伝わる
+    if (firstPerson) turnTowards(yaw + Math.PI, dt);
     if (avatar.userData.setMoving) avatar.userData.setMoving(moving);
 
     // ジャンプ（放物線で上下し、着地したら止める）
@@ -158,6 +231,11 @@ export function initControls(camera, avatar, domElement, { bounds, onJump } = {}
     // シアターモード中はアバター追従をやめ、スクリーン正面に固定する
     if (theater) {
       applyTheaterCamera();
+      return;
+    }
+
+    if (firstPerson) {
+      applyFirstPersonCamera();
       return;
     }
 
@@ -188,6 +266,8 @@ export function initControls(camera, avatar, domElement, { bounds, onJump } = {}
     jump,
     setTheater,
     isTheater: () => theater,
+    setFirstPerson,
+    isFirstPerson: () => firstPerson,
     // バーチャルジョイスティック等からのアナログ入力（-1〜1）
     setAnalog(fw, side) {
       analog.fw = THREE.MathUtils.clamp(fw, -1, 1);
@@ -195,7 +275,9 @@ export function initControls(camera, avatar, domElement, { bounds, onJump } = {}
     },
     // アバター変更（再カスタム）時に追従対象を差し替える
     setAvatar(newAvatar) {
+      avatar.visible = true; // 差し替え前のものは元に戻しておく
       avatar = newAvatar;
+      avatar.visible = !firstPerson; // 一人称中に作り直しても隠れたままにする
     },
   };
 }
