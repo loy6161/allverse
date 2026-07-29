@@ -1,6 +1,8 @@
 // chat.js
-// VERSE CITY テキストチャットUI
+// ALLVERSE テキストチャットUI
 // index.html の #chat-root 内にチャットパネルを構築する。
+
+import { APP_NAME } from './brand.js';
 
 const STYLE_ID = 'verse-chat-style';
 
@@ -219,7 +221,8 @@ export function initChat({ onSend }) {
     }
   });
 
-  addMessage('', 'VERSE CITY #1 へようこそ！', { system: true });
+  // 具体的な会場名とルーム番号は、サーバーからwelcomeが届いた時点でヘッダーに出る
+  addMessage('', `${APP_NAME} へようこそ！`, { system: true });
 
   return { addMessage };
 }

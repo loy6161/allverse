@@ -2,6 +2,11 @@
 
 最終更新: 2026-07-29 ／ 現在地: **フェイズ1「両世界の窓」の終盤**
 
+> **サービス名を「ALLVERSE」に確定**（2026-07-29）。
+> このサービス自体がALLVERSEというプラットフォームであり、VRChatのALLVERSEとは
+> 「同じ世界に入口が増えただけ」という関係にするため。`VERSE CITY` は、その中にある
+> 街・会場の名前として残す（サーバーの常設イベント名）。表示名は `src/brand.js` の1箇所。
+
 ## 一言でいうと
 
 ブラウザ会場は**本番公開済み（https://verse-city-web.onrender.com ）**。
@@ -51,8 +56,10 @@
 
 1. ~~Renderデプロイ~~ **完了（2026-07-26）**: https://verse-city-web.onrender.com （詳細 DEPLOY_URL.md）
    - GitHub: https://github.com/loy6161/verse-city-web （private・git push で自動再デプロイ）
-2. **loyさんの設定作業**（15分・無料）: Google CloudでOAuthクライアントID、Tursoでデータベースを作り、
-   Renderの環境変数に登録する。手順は **SETUP_AUTH.md**。やるまでは権限制御が効かず、イベントも保存されない
+2. **loyさんの設定作業**（25分・無料）: ①Renderのサービス名を `allverse` に変更（URLが変わる）
+   ②Google CloudでOAuthクライアントIDを作り、新URLを承認済み生成元に登録 ③Tursoでデータベースを作る。
+   手順は **SETUP_AUTH.md**。**必ずこの順番**（先にURLを確定しないとOAuthの登録をやり直すことになる）。
+   やるまでは権限制御が効かず、イベントも保存されない
 3. **結合テスト**: Unity側がWorker環境変数にpresence.json URLを設定 → Workerモック → Render実データ の順（Unity側と合意済み）。**Unity側チャットへのURL共有が次のアクション**
 4. フェイズ1期間の機能育成（**着手には都度ユーザーOKが必要**）: VRM対応（レギュラー）、ボイチャ、テクスチャカスタム（承認制）
 5. ALLVERSE Phase 1（ポータル設計）合流時: ワールド内チャット→YouTubeクロスポスト実装、VERSE COIN資金決済法整理

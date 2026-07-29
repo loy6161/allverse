@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { APP_NAME } from './brand.js';
 
 // =====================================================================
 // VERSE CITY - ライブ会場ワールド
@@ -311,7 +312,7 @@ export function createWorld(scene, opts = {}) {
   const screenLocalZ = -18.95 - stageGroup.position.z; // = -3.95（スクリーンのワールド座標を固定するため直接計算）
 
   // 背面LEDスクリーン（位置・サイズ固定: 幅14×高さ7、ワールド(0,5.4,-18.95)）
-  const screenTex = makeScreenTexture('VERSE CITY');
+  const screenTex = makeScreenTexture(APP_NAME);
   const screenGeo = new THREE.PlaneGeometry(14, 7);
   const screenMat = new THREE.MeshBasicMaterial({
     map: screenTex,

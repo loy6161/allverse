@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { AVATAR_PARTS, randomConfig, createAvatar } from './avatar.js';
 import { fetchConfig, getConfig, renderLoginButton, getIdToken, isSignedIn } from './login.js';
+import { APP_NAME, APP_TAGLINE } from './brand.js';
 
 const HAIR_LABELS = {
   long: 'ロング',
@@ -585,8 +586,8 @@ function buildCustomizeScreen({
  */
 export function initJoinScreen(onJoin, prev = {}) {
   buildCustomizeScreen({
-    title: 'VERSE CITY',
-    subtitle: 'VERSE CITY WEB',
+    title: APP_NAME,
+    subtitle: APP_TAGLINE,
     buttonLabel: '次へ（場所を選ぶ）',
     showCancel: false,
     initialName: prev.name || '',
@@ -605,7 +606,7 @@ export function initJoinScreen(onJoin, prev = {}) {
 export function openCustomizer({ name, config, onApply, onCancel }) {
   buildCustomizeScreen({
     title: 'アバター変更',
-    subtitle: 'VERSE CITY WEB',
+    subtitle: APP_TAGLINE,
     buttonLabel: 'この姿に変更',
     showCancel: true,
     initialName: name || '',
