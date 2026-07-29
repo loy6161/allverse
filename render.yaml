@@ -1,10 +1,27 @@
-# Render (無料プラン) 用のBlueprint
-# ダッシュボードで「New +」→「Blueprint」でこのリポジトリを選ぶと自動で読み込まれる
+# Render 用の設定（記録・再作成用）
+#
+# ⚠️ 現在の本番サービスは、このファイルからは作られていません。
+# 2026-07-29 にサービス名をALLVERSEへ揃えるため作り直した際、
+# Blueprintではなく「普通の Web Service」として手動で作成しました。
+# （Blueprint管理下だと、削除の前に切り離しが必要で手間が増えるため）
+#
+# したがってこのファイルは **今の本番設定の記録** であり、変更しても本番には反映されません。
+# 設定を変えるときは Render のダッシュボードで直接行い、ここも合わせて更新してください。
+#
+# 本番の実設定（2026-07-29 時点）:
+#   Name            allverse         → https://allverse.onrender.com
+#   Region          Singapore        （日本から近い。位置を毎秒10回やり取りするため）
+#   Branch          master
+#   Root Directory  server
+#   Build Command   npm install
+#   Start Command   node server.js
+#   Instance Type   Free
 services:
   - type: web
-    name: verse-city-web
+    name: allverse
     runtime: node
     plan: free
+    region: singapore
     rootDir: server
     buildCommand: npm install
     startCommand: node server.js

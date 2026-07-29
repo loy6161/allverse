@@ -4,10 +4,11 @@ loyさんの作業ぶんだけをまとめたもの。**すべて無料**で、�
 所要時間は全部で30分ほど。
 
 **必ずこの順番でやってください。** Aで本番URLを確定しないと、Bの登録をやり直すことになります。
+**Aは2026-07-29に完了済み。本番URLは `https://allverse.onrender.com` です。**
 
 | | 内容 | 目安 |
 |---|---|---|
-| **A** | 名前をALLVERSEに揃える（GitHub改名＋Render作り直し） | 10分 |
+| **A** | 名前をALLVERSEに揃える（GitHub改名＋Render作り直し） ✅完了 | 10分 |
 | **B** | Googleログインの設定（Aで決めたURLを登録する） | 10分 |
 | **C** | Tursoの設定（イベントを保存する） | 5分 |
 | **D** | 動作確認 | 5分 |
@@ -40,7 +41,7 @@ URLも揃えるには**サービスを作り直す**しかありません。
 GitHubは旧URLから自動でリダイレクトするので、これ自体では何も壊れません。
 ローカルの参照先（git remote）はClaude側で切り替え済みです。
 
-### A-2. Renderで新しいWeb Serviceを作る
+### A-2. Renderで新しいWeb Serviceを作る ✅ 完了（2026-07-29）
 
 **Blueprintではなく、普通の Web Service として作ります。**
 既存サービスがBlueprint管理下にあり、Blueprintから作ると切り離しと削除が先に必要になるためです。
@@ -69,7 +70,7 @@ GitHubは旧URLから自動でリダイレクトするので、これ自体で�
 
 数分で `https://allverse.onrender.com` が立ち上がります。
 
-### A-3. 動作確認
+### A-3. 動作確認 ✅ 完了（2026-07-29）
 
 ```
 https://allverse.onrender.com/api/status
@@ -77,21 +78,25 @@ https://allverse.onrender.com/api/status
 
 `{"ok":true,...}` が返れば成功です。
 
-### A-4. 古いサービスを削除（急ぎではない）
+### A-4. 古いサービスとBlueprintを削除 ✅ 完了（2026-07-29）
 
-新しい方が動いてから、古い `verse-city-web`（ダッシュボード上の表示名は `allverse`）を消します。
-Blueprint管理下なので、**先にBlueprintを切り離す**必要があります。
+新しい方が動くのを確認してから、古いサービスと Blueprint を削除しました。
 
-1. サービスの Settings に出ている Blueprint のリンクを開く
-2. **Disconnect**（切り離し）
-3. サービスの Settings 最下部 **Delete or suspend** → 削除
+**消すのは2つ**です。サービスだけ消しても Blueprint が残っていると、
+次のpushで `render.yaml` の記述どおりに旧サービスが再生成されてしまいます。
+
+1. サービス（旧 `verse-city-web`）を削除
+2. **Blueprint 本体も削除**（ダッシュボード左メニューの Blueprints → Settings → Delete Blueprint）
 
 > 消えて困るデータはRenderにありません（コードはGitHub、イベントはTurso）。
+> 今回はサービスを先に消したが、Blueprintの同期が走る前に消したため再生成は起きなかった。
 
-### A-5. 終わったらClaudeに伝えてください
+### A-5. 結果
 
-`render.yaml`・`docs/DEPLOY_URL.md`・Unity側チャットへの連絡文を新URLに直します。
-（`render.yaml` は、古いBlueprintが余計な同期を起こさないよう、削除が済むまで触らずに待っています）
+- 本番URL: **https://allverse.onrender.com**
+- 旧URL `verse-city-web.onrender.com` は削除済み（404）
+- `render.yaml`・`docs/DEPLOY_URL.md` は更新済み
+- **Unity側チャットへの連絡文は `docs/DEPLOY_URL.md` にあります**（コピーして渡すだけ）
 
 ---
 
