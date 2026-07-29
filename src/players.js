@@ -1,6 +1,11 @@
 // players.js
-// VERSE CITY 疑似マルチプレイ（NPC）
-// NPCアバターを歩き回らせ、ランダムにチャット発言させる。
+// 会場の観客（NPC）
+//
+// 空席を埋めて会場が寂しく見えないようにするための「背景の観客」。
+// 実在の人と取り違えないよう、次の3点を守っている:
+//   1. 名前の頭に「NPC:」を付け、ネームプレートの色も変える
+//   2. 発言は頭上の吹き出しだけ。チャット欄には流さない（返事をしても無視されるため）
+//   3. 人数表示には数えない（数えるのは実在の人だけ）
 
 import { createAvatar, randomConfig } from './avatar.js';
 
@@ -50,21 +55,6 @@ const CHAT_LINES = [
   '誰かフレンドなってー',
 ];
 
-function pickUniqueNames(count) {
-  const pool = [...NPC_NAMES];
-  const picked = [];
-  const n = Math.min(count, pool.length);
-  for (let i = 0; i < n; i++) {
-    const idx = Math.floor(Math.random() * pool.length);
-    picked.push(pool.splice(idx, 1)[0]);
-  }
-  // count が名前数を超えたら連番で補う
-  for (let i = n; i < count; i++) {
-    picked.push(`ゲスト${i + 1}`);
-  }
-  return picked;
-}
-
 function randRange(min, max) {
   return min + Math.random() * (max - min);
 }
@@ -84,8 +74,9 @@ function pickTarget(bounds) {
   return { x: randRange(minX, maxX), z: randRange(minZ, maxZ) };
 }
 
-function createNpc(name, bounds, onChat) {
-  const avatar = createAvatar({ ...randomConfig(), name });
+function createNpc(name, bounds) {
+  // 「NPC:」を付け、ネームプレートの色も変えて、実在の人と見分けがつくようにする
+  const avatar = createAvatar({ ...randomConfig(), name: `NPC:${name}`, badge: 'npc' });
 
   const startTarget = pickTarget(bounds);
   avatar.position.set(startTarget.x, 0, startTarget.z);
@@ -150,8 +141,9 @@ function createNpc(name, bounds, onChat) {
     // 雑談
     npc.chatTimer -= dt;
     if (npc.chatTimer <= 0) {
+      // 発言は頭の上の吹き出しだけにする。チャット欄には流さない。
+      // （チャット欄に出すと会話に見えて、返事をしても無視されることになるため）
       const line = CHAT_LINES[Math.floor(Math.random() * CHAT_LINES.length)];
-      onChat(name, line);
       if (avatar.userData.say) avatar.userData.say(line);
       npc.chatTimer = randRange(15, 40);
       npc.greeted = true;
@@ -162,7 +154,7 @@ function createNpc(name, bounds, onChat) {
   return npc;
 }
 
-export function initSimPlayers(scene, { count = 0, bounds, onChat }) {
+export function initSimPlayers(scene, { count = 0, bounds }) {
   const npcs = [];
   let namesVisible = true;
   let created = 0; // 名前の重複を避けるための通し番号
@@ -171,7 +163,7 @@ export function initSimPlayers(scene, { count = 0, bounds, onChat }) {
     // 用意した名前を使い切ったら「観客12」のように連番で補う
     const name = created < NPC_NAMES.length ? NPC_NAMES[created] : `観客${created + 1}`;
     created += 1;
-    const npc = createNpc(name, bounds, onChat);
+    const npc = createNpc(name, bounds);
     if (!namesVisible && npc.group.userData.setNameVisible) npc.group.userData.setNameVisible(false);
     scene.add(npc.group);
     npcs.push(npc);

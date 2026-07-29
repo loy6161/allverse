@@ -160,6 +160,12 @@ async function main() {
     Boolean(peerUpdateAtAlice) && peerUpdateAtAlice.av.h === 'hat',
     peerUpdateAtAlice ? JSON.stringify(peerUpdateAtAlice) : 'タイムアウト',
   );
+  // 権限も一緒に送る。無いと着替えたあと👑や⭐が消えてしまう
+  record(
+    'updateで権限も一緒に届く',
+    Boolean(peerUpdateAtAlice) && typeof peerUpdateAtAlice.role === 'string',
+    peerUpdateAtAlice ? `role=${peerUpdateAtAlice.role}` : 'タイムアウト',
+  );
   record(
     'updateで名前は変えられない',
     Boolean(peerUpdateAtAlice) && peerUpdateAtAlice.n === 'Bob',

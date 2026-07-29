@@ -20,6 +20,35 @@ export const GLB_STYLES = ['long', 'bob', 'short', 'twin', 'bun', 'pony'];
 export const GLB_OUTFITS = ['middle', 'long', 'short'];
 export const GLB_ACCESSORIES = ['none', 'kemo', 'ahoge'];
 
+// ネームプレートの見た目。ひと目で「誰が運営で、誰がNPCか」が分かるようにする。
+// 色だけだと色覚の差で伝わらないことがあるので、必ず記号もセットで付ける。
+const NAME_STYLES = {
+  default: {
+    prefix: '',
+    textColor: '#eafcff',
+    bgColor: 'rgba(6, 8, 20, 0.6)',
+    borderColor: 'rgba(0, 255, 234, 0.55)',
+  },
+  admin: {
+    prefix: '👑 ', // 管理者
+    textColor: '#fff6d5',
+    bgColor: 'rgba(38, 26, 4, 0.72)',
+    borderColor: 'rgba(255, 209, 71, 0.95)',
+  },
+  vip: {
+    prefix: '⭐ ', // 全ルームに現れるメンバー
+    textColor: '#ffe9fb',
+    bgColor: 'rgba(34, 6, 30, 0.7)',
+    borderColor: 'rgba(255, 0, 229, 0.85)',
+  },
+  npc: {
+    prefix: '', // 名前側に「NPC:」が入るので記号は付けない
+    textColor: 'rgba(214, 224, 236, 0.85)',
+    bgColor: 'rgba(10, 12, 18, 0.45)',
+    borderColor: 'rgba(150, 165, 185, 0.45)', // 実在の人より一段地味にして背景側に見せる
+  },
+};
+
 const loader = new GLTFLoader();
 const templateCache = new Map(); // file key -> Promise<THREE.Group>
 
@@ -75,6 +104,7 @@ export function createGlbAvatar(config) {
     eyeColor = '',
     penlightColor = '',
     name = '',
+    badge = '', // '' | 'admin' | 'vip' | 'npc' … ネームプレートの見た目を変える
   } = config || {};
 
   const root = new THREE.Group();
@@ -172,11 +202,12 @@ export function createGlbAvatar(config) {
   let nameSprite = null;
   let namesVisible = true;
   if (name) {
-    nameSprite = createTextSprite(name, {
+    const style = NAME_STYLES[badge] || NAME_STYLES.default;
+    nameSprite = createTextSprite(style.prefix + name, {
       fontSize: 26,
-      textColor: '#eafcff',
-      bgColor: 'rgba(6, 8, 20, 0.6)',
-      borderColor: 'rgba(0, 255, 234, 0.55)',
+      textColor: style.textColor,
+      bgColor: style.bgColor,
+      borderColor: style.borderColor,
       maxTextWidth: 260,
       maxLines: 1,
     });

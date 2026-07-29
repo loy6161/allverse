@@ -36,17 +36,17 @@
 
 | 種別 | 形式 | 備考 |
 |---|---|---|
-| 入場応答 | `{"t":"welcome","id":"c12","role":"user","canControl":false,"ev":"main","event":{...},"room":1,"peers":[...],"count":5,"screen":"...","playback":{...},"events":[...],"persistent":true}` | joinへの応答。`role`は`admin`/`vip`/`user`/`guest`。**`canControl`が動画操作の可否の唯一の正**（クライアントは自分で判定しない） |
+| 入場応答 | `{"t":"welcome","id":"c12","role":"user","canControl":false,"ev":"main","event":{...},"room":1,"peers":[...],"count":5,"cap":30,"screen":"...","playback":{...},"events":[...],"persistent":true}` | joinへの応答。`role`は`admin`/`vip`/`user`/`guest`。**`canControl`が動画操作の可否の唯一の正**（クライアントは自分で判定しない）。`cap`はルームの定員で、クライアントは「`cap` − `count`」ぶんをNPCで埋める |
 | 参加通知 | `{"t":"peer-join","p":{"id":"c3","n":"...","av":{...},"x":0,"z":18,"r":0,"role":"vip"}}` | |
 | 位置 | `{"t":"pos","id":"c3","x":3.2,"z":-12.5,"r":90,"m":true}` | 発信者以外へ中継（範囲は上記「場所の構造」参照） |
-| 変更通知 | `{"t":"peer-update","id":"c3","n":"...","av":{...}}` | |
+| 変更通知 | `{"t":"peer-update","id":"c3","n":"...","av":{...},"role":"vip"}` | `role`も一緒に送る。無いと着替えたあとネームプレートの👑/⭐が消える |
 | 退出通知 | `{"t":"peer-leave","id":"c3"}` | |
 | チャット | `{"t":"chat","id":"c3","n":"...","txt":"...","sc":"local"}` | 発信者自身にも返す（クライアントは id==自分 なら無視してよい） |
 | 人数 | `{"t":"count","c":8}` | 同室人数が変わったとき |
 | エモート | `{"t":"emote","id":"c3","e":"wave"}` | 発信者以外へ中継（自分の分はローカルで即再生） |
 | スクリーン | `{"t":"screen","v":"unrobrGhlv0","by":"loy"}` | **イベントの全ルーム**へ（発信者含む）。`by`=変更した人の表示名 |
 | 再生操作 | `{"t":"playback","id":"c3","st":"play","pos":123.4}` | 発信者以外の**イベント全ルーム**へ中継 |
-| 移動完了 | `{"t":"moved","ev":"...","event":{...},"room":2,"peers":[...],"count":3,"screen":"...","playback":{...}}` | moveへの応答。受信側は周りの人を総入れ替えする |
+| 移動完了 | `{"t":"moved","ev":"...","event":{...},"room":2,"peers":[...],"count":3,"cap":30,"screen":"...","playback":{...}}` | moveへの応答。受信側は周りの人を総入れ替えする |
 | イベント一覧 | `{"t":"events","events":[{"id","name","v","count","requireLogin","permanent","rooms":[{"room","count","full"}]}]}` | 人数やイベントが変わったとき／要求時 |
 | 作成応答 | `{"t":"event-created","ev":{...}}` | event-create の成功時（作成者のみ） |
 | 拒否 | `{"t":"denied","reason":"admin-only"}` | 権限不足など。reasonは `admin-only` / `guest-no-chat` / `guest-no-emote` / `guest-no-avatar` / `login-required` / `event-not-empty` / `cannot-delete` / `too-many-events` |
@@ -73,6 +73,19 @@
 - ゲストも連番なので衝突せず、「管理者」等を騙ることもできない
 
 確定した名前は `welcome.n` で本人にも返す（自分のネームプレートに使う）。
+
+### ネームプレートの見分け
+
+`role` はサーバーだけが決める。クライアントが自称した権限は使わない。
+
+| 相手 | 表示 | 色 |
+|---|---|---|
+| admin | 👑 なまえ | 金 |
+| vip | ⭐ なまえ | マゼンタ |
+| user / guest | なまえ | シアン |
+| NPC（クライアント内だけの存在） | NPC:なまえ | 灰 |
+
+色だけだと色覚の差で伝わらないので、記号を必ずセットにする。
 
 ### 権限について
 

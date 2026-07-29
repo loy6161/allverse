@@ -80,6 +80,8 @@ async function main() {
   const adminWelcome = await waitFor(admin, (m) => m.t === 'welcome');
   check('welcomeにrole/イベント情報が入る', adminWelcome?.role === 'admin' && adminWelcome?.ev === 'main',
     `role=${adminWelcome?.role} ev=${adminWelcome?.ev}`);
+  // クライアントは「定員 − 実在人数」ぶんをNPCで埋めるので、定員を知る必要がある
+  check('welcomeにルームの定員が入る', adminWelcome?.cap === 30, `cap=${adminWelcome?.cap}`);
 
   admin.send({ t: 'event-create', name: 'テストライブ', v: 'aaaaaaaaaaa' });
   const created = await waitFor(admin, (m) => m.t === 'event-created');

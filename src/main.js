@@ -101,10 +101,13 @@ let lastServerCount = null;
 
 function updateCount(serverCount) {
   if (serverCount !== undefined) lastServerCount = serverCount;
+  autoFillNpc(); // 先に空席を埋めてから数える（表示が1回ぶん遅れないように）
   const npc = sim ? sim.count() : 0;
   const others = remote ? remote.count() : 0;
-  const total = lastServerCount != null ? lastServerCount + npc : 1 + others + npc;
-  playerCountEl.textContent = `${total} 人`;
+  // 数えるのは実在の人だけ。NPCは「+NPC 18」と別に出して、人数を水増しして見せない
+  const real = lastServerCount != null ? lastServerCount : 1 + others;
+  playerCountEl.textContent = npc > 0 ? `${real} 人（+NPC ${npc}）` : `${real} 人`;
+  if (roomUI && roomUI.refreshNpc) roomUI.refreshNpc();
 }
 
 /** ヘッダーの表示を「イベント名 ＋ ルーム番号」にする */
@@ -112,6 +115,11 @@ function updateHeader(room) {
   currentRoom = room;
   const evName = currentEvent ? currentEvent.name : 'VERSE CITY';
   roomNameEl.textContent = `${evName} #${room}`;
+}
+
+/** 権限をネームプレートの見た目に変換する（管理者=👑 / VIP=⭐） */
+function badgeForRole(role) {
+  return role === 'admin' || role === 'vip' ? role : '';
 }
 
 /** 権限に応じてUIの出し分けをする（動画操作は管理者のみ） */
@@ -123,14 +131,23 @@ function applyRoleToUi() {
 /** NPCの入れ物を用意する（人数0でも作っておき、あとから増減できるようにする） */
 function ensureSim() {
   if (!sim) {
-    sim = initSimPlayers(scene, {
-      count: 0,
-      bounds: world.bounds,
-      onChat: (n, t) => chat.addMessage(n, t),
-    });
+    sim = initSimPlayers(scene, { count: 0, bounds: world.bounds });
     if (namesHidden) sim.setNamesVisible(false);
   }
   return sim;
+}
+
+// ---- NPCの自動補充 ----
+// 空いている席をNPCで埋めて、人が少ない時間帯でも会場が寂しく見えないようにする。
+// 管理者が負荷テストで人数を指定したら自動補充は止める（指定が上書きされないように）。
+let roomCapacity = 30;
+let npcAuto = true;
+
+function autoFillNpc() {
+  if (!npcAuto || !sim) return;
+  const real = lastServerCount != null ? lastServerCount : 1 + (remote ? remote.count() : 0);
+  const want = Math.max(0, roomCapacity - real);
+  if (sim.count() !== want) sim.setCount(want);
 }
 
 // サーバーに繋がらない/切断されたときは従来のNPCデモに切り替える
@@ -139,6 +156,7 @@ function startDemoMode() {
   demoMode = true;
   if (remote) remote.clear();
   // 一人きりの画面にならないよう、デモ用のNPCを出す
+  npcAuto = false;
   ensureSim().setCount(7);
   chat.addMessage('', 'オフラインデモモード（同期サーバー未接続）', { system: true });
   updateCount(null);
@@ -199,20 +217,24 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
     eventId,
     roomNumber,
     handlers: {
-      onWelcome: ({ id, name: assignedName, room, peers, count, screen, playback, role, canControl, event, events }) => {
+      onWelcome: ({ id, name: assignedName, room, peers, count, cap, screen, playback, role, canControl, event, events }) => {
         myId = id;
         myRole = role || 'user';
+        if (cap) roomCapacity = cap;
         canControlVideo = canControl !== false;
         currentEvent = event || null;
 
-        // 表示名はサーバーが決める（ログイン名 or ゲスト連番）。
-        // 入場画面で見せていた名前と違う場合は、自分のアバターを作り直して合わせる
-        if (assignedName && assignedName !== session.name) {
-          session.name = assignedName;
+        // 表示名も権限もサーバーが決める（ログイン名 or ゲスト連番／管理者かどうか）。
+        // 入場画面の時点ではどちらも分からないので、確定した内容で作り直す。
+        // 名前が同じでも、👑や⭐を付けるためにここを通る必要がある
+        const needsRebuild =
+          (assignedName && assignedName !== session.name) || badgeForRole(myRole) !== '';
+        if (needsRebuild) {
+          if (assignedName) session.name = assignedName;
           const pos = player.position.clone();
           const rotY = player.rotation.y;
           scene.remove(player);
-          player = createAvatar({ ...session.config, name: assignedName });
+          player = createAvatar({ ...session.config, name: session.name, badge: badgeForRole(myRole) });
           player.position.copy(pos);
           player.rotation.y = rotY;
           if (namesHidden && player.userData.setNameVisible) player.userData.setNameVisible(false);
@@ -232,8 +254,9 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
         applyRoleToUi();
       },
       // 別のイベント/ルームへ移動したとき: 周りの人を総入れ替えする
-      onMoved: ({ room, peers, count, screen, playback, event }) => {
+      onMoved: ({ room, peers, count, cap, screen, playback, event }) => {
         currentEvent = event || currentEvent;
+        if (cap) roomCapacity = cap;
         remote.clear();
         peers.forEach((p) => remote.addPeer(p));
         updateHeader(room);
@@ -282,7 +305,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
   // NPCの入れ物は常に用意しておく（管理者が負荷テストで増やせるようにするため）。
   // 人数0なら何も描かないので、通常の入場では一切影響しない
   ensureSim();
-  if (WANT_NPC) sim.setCount(7);
+  if (WANT_NPC) {
+    npcAuto = false;
+    sim.setCount(7);
+  }
 
   updateCount(null);
   hud.classList.remove('hidden');
@@ -345,8 +371,11 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
     },
     // 負荷テスト用のNPC。自分の画面にだけ出るので、他の人には影響しない
     getNpcCount: () => (sim ? sim.count() : 0),
+    isNpcAuto: () => npcAuto,
     onNpcCount: (n) => {
-      ensureSim().setCount(n);
+      // n が null なら自動補充に戻す
+      npcAuto = n === null;
+      if (!npcAuto) ensureSim().setCount(n);
       updateCount(); // サーバー人数は据え置きでNPCぶんだけ数え直す
     },
   });
@@ -407,7 +436,7 @@ avatarBtn.addEventListener('click', () => {
       const pos = player.position.clone();
       const rotY = player.rotation.y;
       scene.remove(player);
-      player = createAvatar({ ...config, name });
+      player = createAvatar({ ...config, name, badge: badgeForRole(myRole) });
       player.position.copy(pos);
       player.rotation.y = rotY;
       if (namesHidden && player.userData.setNameVisible) player.userData.setNameVisible(false);

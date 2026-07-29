@@ -92,8 +92,9 @@ function injectStyle() {
  * @param {(payload:{name:string,videoId:string,requireLogin:boolean}) => void} p.onCreateEvent
  * @param {(id:string) => void} p.onDeleteEvent
  * @param {() => void} p.onRefresh
- * @param {() => number} [p.getNpcCount] 負荷テスト用NPCの現在数
- * @param {(n:number) => void} [p.onNpcCount] 負荷テスト用NPCの人数変更
+ * @param {() => number} [p.getNpcCount] NPCの現在数
+ * @param {() => boolean} [p.isNpcAuto] 自動補充中かどうか
+ * @param {(n:number|null) => void} [p.onNpcCount] NPCの人数を指定する（null で自動補充に戻す）
  */
 export function initRoomUI({
   slot,
@@ -104,6 +105,7 @@ export function initRoomUI({
   onDeleteEvent,
   onRefresh,
   getNpcCount,
+  isNpcAuto,
   onNpcCount,
 }) {
   injectStyle();
@@ -121,6 +123,7 @@ export function initRoomUI({
 
   let events = [];
   let open = false;
+  let npcNumEl = null; // NPCの人数表示（自動補充で増減するので参照を持っておく）
 
   function closePanel() {
     open = false;
@@ -245,32 +248,38 @@ export function initRoomUI({
       admin.appendChild(createBtn);
       panel.appendChild(admin);
 
-      // ---- 負荷テスト用のNPC ----
+      // ---- NPC（賑やかし・負荷テスト） ----
       // 自分の画面にだけ出る。他の人には見えないので、いつ試しても迷惑にならない
       const test = document.createElement('div');
       test.className = 'vc-room-admin';
 
       const testLabel = document.createElement('div');
       testLabel.className = 'vc-room-title';
-      testLabel.textContent = '負荷テスト（NPC）';
+      testLabel.textContent = 'NPC（賑やかし・負荷テスト）';
       test.appendChild(testLabel);
 
       const testHint = document.createElement('div');
       testHint.className = 'vc-room-hint';
-      testHint.textContent = '自分の画面にだけ人を増やして、描画が重くならないか確かめられます。他の人には見えません。';
+      testHint.textContent =
+        'ふだんは定員の空きぶんを自動で埋めています。ここで人数を指定すると自動補充は止まり、描画が重くならないか確かめられます。NPCは自分の画面にだけ出ます。';
       test.appendChild(testHint);
 
+      const auto = isNpcAuto ? isNpcAuto() : false;
+      const now = getNpcCount ? getNpcCount() : 0;
+
       const row = document.createElement('div');
+      npcNumEl = null; // 前回の描画で持っていた参照を捨てる
       row.className = 'vc-npc-row';
       const range = document.createElement('input');
       range.type = 'range';
       range.min = '0';
       range.max = '100';
       range.step = '5';
-      range.value = String(getNpcCount ? getNpcCount() : 0);
+      range.value = String(now);
       const num = document.createElement('span');
       num.className = 'vc-npc-num';
-      num.textContent = `${range.value} 体`;
+      num.textContent = auto ? `自動 ${now}体` : `${now} 体`;
+      npcNumEl = num; // 自動補充で人数が動いたら refreshNpc() で書き換える
       const apply = (v) => {
         num.textContent = `${v} 体`;
         if (onNpcCount) onNpcCount(Number(v));
@@ -281,6 +290,14 @@ export function initRoomUI({
 
       const presets = document.createElement('div');
       presets.className = 'vc-room-list';
+      const autoBtn = document.createElement('button');
+      autoBtn.className = 'vc-room-chip' + (auto ? ' here' : '');
+      autoBtn.textContent = '自動';
+      autoBtn.addEventListener('click', () => {
+        if (onNpcCount) onNpcCount(null); // 空きぶんを埋める動きに戻す
+        render();
+      });
+      presets.appendChild(autoBtn);
       for (const n of [0, 10, 30, 60, 100]) {
         const b = document.createElement('button');
         b.className = 'vc-room-chip';
@@ -313,6 +330,13 @@ export function initRoomUI({
     setEvents(list) {
       events = Array.isArray(list) ? list : [];
       if (open) render();
+    },
+    /** 自動補充でNPCが増減したときに、開いているパネルの人数表示を合わせる */
+    refreshNpc() {
+      if (!open || !npcNumEl) return;
+      const auto = isNpcAuto ? isNpcAuto() : false;
+      const now = getNpcCount ? getNpcCount() : 0;
+      npcNumEl.textContent = auto ? `自動 ${now}体` : `${now} 体`;
     },
     close: closePanel,
   };

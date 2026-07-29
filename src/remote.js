@@ -15,18 +15,25 @@ function shortestAngleDelta(target, current) {
   return d;
 }
 
+/**
+ * 相手が退場したときの後始末。
+ * ジオメトリは触らない。GLBアバターは1つのテンプレートを全員で使い回しているので、
+ * ここで dispose すると残っている人のアバターまで消える。
+ * マテリアルは1人ぶんずつ作り直しているので破棄してよい。
+ */
 function disposeObject3D(obj) {
   obj.traverse((child) => {
-    // THREE.Sprite のジオメトリはモジュール内で共有される静的インスタンスなので破棄しない
-    if (child.geometry && !child.isSprite) {
-      child.geometry.dispose();
-    }
     const mats = Array.isArray(child.material) ? child.material : child.material ? [child.material] : [];
     mats.forEach((m) => {
       if (m.map) m.map.dispose();
       m.dispose();
     });
   });
+}
+
+/** 権限をネームプレートの見た目に変換する（管理者=👑 / VIP=⭐） */
+function badgeForRole(role) {
+  return role === 'admin' || role === 'vip' ? role : '';
 }
 
 export function initRemotePlayers(scene) {
@@ -37,7 +44,7 @@ export function initRemotePlayers(scene) {
     if (peers.has(p.id)) return; // 二重追加防止
 
     const config = avToConfig(p.av);
-    const root = createAvatar({ ...config, name: p.n });
+    const root = createAvatar({ ...config, name: p.n, badge: badgeForRole(p.role) });
     root.position.set(p.x || 0, 0, p.z || 0);
     root.rotation.y = THREE.MathUtils.degToRad(p.r || 0);
     if (!namesVisible && root.userData.setNameVisible) root.userData.setNameVisible(false);
@@ -47,6 +54,7 @@ export function initRemotePlayers(scene) {
       root,
       name: p.n,
       av: p.av,
+      role: p.role || 'user',
       target: { x: p.x || 0, z: p.z || 0, r: p.r || 0 },
       moving: false,
     });
@@ -74,14 +82,17 @@ export function initRemotePlayers(scene) {
     disposeObject3D(peer.root);
 
     const config = avToConfig(msg.av);
-    const newRoot = createAvatar({ ...config, name: msg.n });
+    const role = msg.role || peer.role;
+    const newRoot = createAvatar({ ...config, name: msg.n, badge: badgeForRole(role) });
     newRoot.position.copy(pos);
     newRoot.rotation.y = rotY;
+    if (!namesVisible && newRoot.userData.setNameVisible) newRoot.userData.setNameVisible(false);
     scene.add(newRoot);
 
     peer.root = newRoot;
     peer.name = msg.n;
     peer.av = msg.av;
+    peer.role = role;
   }
 
   function removePeer(id) {

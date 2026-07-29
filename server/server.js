@@ -440,6 +440,7 @@ async function handleJoin(client, msg) {
     room: roomNumber,
     peers,
     count: room.size,
+    cap: MAX_PER_ROOM, // クライアントは「定員 − 実在人数」ぶんをNPCで埋める
     screen: ev.videoId,
     playback: currentPlayback(ev.id),
     events: buildEventList(),
@@ -509,7 +510,7 @@ async function handleUpdate(client, msg) {
   // 名前は入場時にサーバーが確定させたものを使い続ける。msg.n は無視する
   client.av = sanitizeAv(msg.av);
 
-  broadcastFrom(client, { t: 'peer-update', id: client.id, n: client.n, av: client.av });
+  broadcastFrom(client, { t: 'peer-update', id: client.id, n: client.n, av: client.av, role: client.role });
 
   // 変更後の姿を次回に持ち越す
   if (client.email) await saveProfile(client.email, client.n, client.av);
@@ -660,6 +661,7 @@ function handleMove(client, msg) {
     room: targetRoom,
     peers,
     count: room.size,
+    cap: MAX_PER_ROOM,
     screen: ev.videoId,
     playback: currentPlayback(ev.id),
   });
