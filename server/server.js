@@ -14,7 +14,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 
-import { initStore, isPersistent, loadEvents, saveEvent, updateEventVideo, deleteEvent } from './store.js';
+import {
+  initStore,
+  isPersistent,
+  getStoreStatus,
+  loadEvents,
+  saveEvent,
+  updateEventVideo,
+  deleteEvent,
+} from './store.js';
 import {
   verifyIdToken,
   roleForEmail,
@@ -701,6 +709,8 @@ function buildStatusJson() {
     events: buildEventList(),
     persistent: isPersistent(),
     login: isLoginEnabled(),
+    // 設定ミスを画面から特定できるようにする（トークンは含めない）
+    store: getStoreStatus(),
     uptime: Math.floor((Date.now() - startedAt) / 1000),
   };
 }

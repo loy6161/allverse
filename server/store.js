@@ -16,10 +16,33 @@ const TOKEN_ENV = process.env.TURSO_AUTH_TOKEN || '';
 
 let db = null;
 let ready = false;
+let lastError = ''; // 繋がらなかった理由（設定を直すときの手がかり）
 
 /** 永続化が有効かどうか（UIに「保存されます/されません」を出すのに使う） */
 export function isPersistent() {
   return ready;
+}
+
+/**
+ * 設定状況の要約。/api/status に出して、設定ミスを画面から特定できるようにする。
+ * トークンそのものは絶対に出さない。URLはホスト名だけを出す。
+ */
+export function getStoreStatus() {
+  let urlHint = '';
+  if (URL_ENV) {
+    try {
+      urlHint = new URL(URL_ENV).host || '(解析できない形式)';
+    } catch {
+      urlHint = '(URLの形式が不正)';
+    }
+  }
+  return {
+    urlSet: Boolean(URL_ENV),
+    tokenSet: Boolean(TOKEN_ENV),
+    urlHost: urlHint,
+    ready,
+    error: lastError,
+  };
 }
 
 /**
@@ -28,8 +51,13 @@ export function isPersistent() {
  */
 export async function initStore() {
   if (!URL_ENV) {
+    lastError = 'TURSO_DATABASE_URL が設定されていません';
     console.log('[store] TURSO_DATABASE_URL 未設定 → イベントはメモリのみ（再起動で消えます）');
     return false;
+  }
+  if (!TOKEN_ENV) {
+    // URLだけ設定してトークンを入れ忘れるミスが起きやすいので、先に明示する
+    console.warn('[store] TURSO_AUTH_TOKEN が未設定です。認証エラーになる可能性があります');
   }
   try {
     db = createClient({ url: URL_ENV, authToken: TOKEN_ENV || undefined });
@@ -43,12 +71,15 @@ export async function initStore() {
       )
     `);
     ready = true;
+    lastError = '';
     console.log('[store] Turso に接続しました（イベントは永続化されます）');
     return true;
   } catch (e) {
     db = null;
     ready = false;
-    console.warn('[store] Turso 接続に失敗 → メモリのみで続行します:', e.message);
+    // トークンが混ざらないよう、メッセージだけを短く保持する
+    lastError = String(e && e.message ? e.message : e).slice(0, 200);
+    console.warn('[store] Turso 接続に失敗 → メモリのみで続行します:', lastError);
     return false;
   }
 }
