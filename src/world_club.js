@@ -147,14 +147,17 @@ const MATERIAL_RULES = [
   },
 
   // --- 発光まわり ---
-  // VRChat では AudioLink / LTCGI で音に反応して光る部分。ここでは音を拾っていないので
-  // 一定の明るさで置く。白のまま出すと会場が白く飛ぶので、暖色ネオンに寄せる。
+  // VRChat では AudioLink で音に反応して光る部分。ここでは音を拾っていないので
+  // 一定の明るさで置く。色はネオンのライトブルー（2026-07-30 指定）。
+  //
+  // clubVERSE_black_LTCGI はここに入れないこと。名前は LTCGI（VRChat側の発光の仕組み）だが
+  // 実体は2階BackStageの床で、光らせると床が黄色く見える。下の clubVERSE_black で黒く塗る。
   {
-    test: (n) => n.includes('AudioLink') || n.includes('LTCGI'),
+    test: (n) => n.includes('AudioLink'),
     apply: (m) => {
-      m.color.setHex(0x120a08);
-      m.emissive.setHex(0xff9d4d);
-      m.emissiveIntensity = 0.55;
+      m.color.setHex(0x08131c);
+      m.emissive.setHex(0x5ccfff);
+      m.emissiveIntensity = 0.7;
       m.roughness = 0.6;
       m.metalness = 0.0;
       m.envMapIntensity = 0.1;
@@ -164,9 +167,9 @@ const MATERIAL_RULES = [
     // LED パネル（LED_4_WH / LED_4_WH_1）
     test: (n) => n.startsWith('LED'),
     apply: (m) => {
-      m.color.setHex(0x0d0c12);
-      m.emissive.setHex(0xffd7a8);
-      m.emissiveIntensity = 0.45;
+      m.color.setHex(0x08131c);
+      m.emissive.setHex(0x8ae4ff);
+      m.emissiveIntensity = 0.6;
       m.roughness = 0.5;
       m.metalness = 0.0;
       m.envMapIntensity = 0.1;
@@ -197,7 +200,8 @@ const MATERIAL_RULES = [
     },
   },
   {
-    // 躯体（壁・天井・柱）。名前は black だが FBX 経由で灰色まで持ち上がっていて、
+    // 躯体（壁・天井・柱）と2階BackStageの床（clubVERSE_black_LTCGI）。
+    // 名前は black だが FBX 経由で灰色まで持ち上がっていて、
     // そのまま出すとステージ背面の壁が白っぽく浮く（「白すぎる」の主因のひとつ）
     test: (n) => n.startsWith('clubVERSE_black'),
     apply: (m) => {
@@ -254,18 +258,19 @@ function makeClubEnvironment() {
   // 囲いの箱（内側を向いた暗い面）
   const box = new THREE.Mesh(
     new THREE.BoxGeometry(60, 26, 70),
-    new THREE.MeshBasicMaterial({ color: 0x080a12, side: THREE.BackSide }),
+    new THREE.MeshBasicMaterial({ color: 0x111624, side: THREE.BackSide }),
   );
   env.add(box);
 
   // 天井側だけ夜空の色。天井ガラスと磨いた床がここを拾う
-  panel(0x121a2e, 60, 70, [0, 12.9, 0], [Math.PI / 2, 0, 0]);
+  panel(0x1a2440, 60, 70, [0, 12.9, 0], [Math.PI / 2, 0, 0]);
 
-  // ステージ方向のマゼンタと、両脇の暖色ネオン。金属に映る光はこの3つで作る。
-  // 彩度を上げすぎると壁一面がマゼンタに染まるので、色は原色より一段落としてある
-  panel(0x7a2456, 26, 12, [0, 6, -34], null);
-  panel(0x8a5228, 8, 18, [-29.5, 7, -6], [0, Math.PI / 2, 0]);
-  panel(0x8a5228, 8, 18, [29.5, 7, -6], [0, -Math.PI / 2, 0]);
+  // 金属に映る光。室内のネオンがライトブルーなので、両脇もそれに合わせる。
+  // ステージ方向だけマゼンタを残して奥行きを出す。
+  // 彩度を上げすぎると壁一面がその色に染まるので、原色より一段落としてある
+  panel(0x6e2450, 26, 12, [0, 6, -34], null);
+  panel(0x2e6e8c, 8, 18, [-29.5, 7, -6], [0, Math.PI / 2, 0]);
+  panel(0x2e6e8c, 8, 18, [29.5, 7, -6], [0, -Math.PI / 2, 0]);
   panel(0x1d3c5c, 20, 6, [0, 2, 34], null);
 
   return env;
@@ -305,24 +310,25 @@ export function createClubWorld(scene, { renderer } = {}) {
   // VRChat側は焼いた光（Bakery）で見せているが、それは持ってきていない。
   // ブラウザ側は素直にライトを置いて雰囲気を寄せる。影は落とさない（負荷とフラットな見た目のため）。
   // 白飛びの指摘（2026-07-30）を受けて全体的に落とし、色を夜寄りに振っている。
-  scene.add(new THREE.HemisphereLight(0x5566a8, 0x0a0610, 0.8));
+  scene.add(new THREE.HemisphereLight(0x9a9cb4, 0x1a1220, 2.3));
 
-  const key = new THREE.DirectionalLight(0xffe6c8, 0.6);
+  const key = new THREE.DirectionalLight(0xffe6c8, 1.5);
   key.position.set(12, 26, 10);
   scene.add(key);
 
-  const back = new THREE.DirectionalLight(0x6688cc, 0.22);
+  const back = new THREE.DirectionalLight(0x6688cc, 0.7);
   back.position.set(-14, 18, -24);
   scene.add(back);
 
   // ステージ側からの照り返し。会場の奥が真っ暗にならないように
-  const stageGlow = new THREE.PointLight(0xff66dd, 12, 40, 2);
+  const stageGlow = new THREE.PointLight(0xff66dd, 22, 40, 2);
   stageGlow.position.set(CLUB_SCREEN.x, 5, -24);
   scene.add(stageGlow);
 
-  // 客席側の足元を拾う暖色。低い位置に置くと真下の床だけ白く飛ぶので、
-  // 高めから広く落として「床がうっすら艶を返す」程度に留める
-  const floorGlow = new THREE.PointLight(0xffb066, 16, 46, 2);
+  // 客席側の足元を拾う光。低い位置に置くと真下の床だけ白く飛ぶので、
+  // 高めから広く落として「床がうっすら艶を返す」程度に留める。
+  // 色を付けると床のゴールドのロゴがその色に染まるので、ほぼ白（やや寒色）にしてある
+  const floorGlow = new THREE.PointLight(0xdfe8ff, 40, 46, 2);
   floorGlow.position.set(CLUB_SCREEN.x, 8, -6);
   scene.add(floorGlow);
 
