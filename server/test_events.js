@@ -152,6 +152,15 @@ async function main() {
   // ---------- 9. チャットの既定スコープは local ----------
   check('チャットの既定スコープはlocal', heardSelf?.sc === 'local', `sc=${heardSelf?.sc}`);
 
+  // 配信への転送がOFFのときに stream を指定しても、勝手に配信へ出さない。
+  // 「出たつもり」で会話が進まないよう、本人には理由を返す
+  a1.inbox.length = 0;
+  a1.send({ t: 'chat', txt: '配信に出したい', sc: 'stream' });
+  const forced = await waitFor(a1, (m) => m.t === 'chat' && m.txt === '配信に出したい');
+  check('転送OFFならstream指定でもlocalに落ちる', forced?.sc === 'local', `sc=${forced?.sc}`);
+  const offNotice = await waitFor(a1, (m) => m.t === 'denied' && m.reason === 'stream-off');
+  check('落としたことを本人に伝える', Boolean(offNotice));
+
   // ---------- 10. ゲストの制限 ----------
   const guest = await connect('ゲスト', { ev: 'main', rm: 1, devRole: 'guest' });
   const gw = await waitFor(guest, (m) => m.t === 'welcome');

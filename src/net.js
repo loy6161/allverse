@@ -155,6 +155,7 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
               events: msg.events,
               persistent: msg.persistent,
               blocked: msg.blocked,
+              stream: msg.stream,
             });
           }
           break;
@@ -201,6 +202,13 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
           break;
         case 'bans':
           if (h.onBans) h.onBans(msg.list || []);
+          break;
+        // ---- 配信のコメント欄への転送 ----
+        case 'stream-state':
+          if (h.onStreamState) h.onStreamState(Boolean(msg.on));
+          break;
+        case 'stream-result':
+          if (h.onStreamResult) h.onStreamResult({ ok: Boolean(msg.ok), why: msg.why || '' });
           break;
         case 'peer-join':
           if (h.onPeerJoin) h.onPeerJoin(msg.p);

@@ -42,6 +42,17 @@ import {
   isLoginEnabled,
   getClientId,
 } from './auth.js';
+import {
+  initCrossPost,
+  isCrossPostConfigured,
+  getCrossPostStatus,
+  buildAuthUrl,
+  handleAuthCallback,
+  disconnect as ytDisconnect,
+  setEnabled as ytSetEnabled,
+  isEnabled as ytIsEnabled,
+  enqueue as ytEnqueue,
+} from './youtube.js';
 
 // 静的ファイル配信のルート（= クライアント一式があるプロジェクト直下）
 const CLIENT_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -505,6 +516,7 @@ async function handleJoin(client, msg) {
     events: buildEventList(),
     persistent: isPersistent(),
     blocked: blockedListFor(client), // 「ブロック中の人」を画面から解除できるようにする
+    stream: ytIsEnabled(), // 配信のコメント欄への転送がONかどうか（📺ボタンの出し分け）
   });
 
   // 管理者・VIPはイベント全体に、一般は自室にだけ現れる
@@ -536,8 +548,10 @@ function handlePos(client, msg) {
 
 /**
  * chat: チャット中継
- * sc（scope）: 'local' … ワールド内だけ（既定）／'stream' … 配信にも流す想定の発言
- * ※ YouTubeへの送信そのものは未実装。ここではscopeを保持して中継するだけ。
+ * sc（scope）: 'local' … ワールド内だけ（既定）／'stream' … YouTubeの配信チャットにも流す
+ *
+ * 既定を local にしているのは、配信に出た発言は**取り消せない**から。
+ * 不可逆な方をうっかり既定にしない。
  */
 function handleChat(client, msg) {
   if (!client.joined) return;
@@ -549,14 +563,53 @@ function handleChat(client, msg) {
   const txt = clampString(msg.txt, MAX_TXT_LEN);
   if (!txt) return;
 
-  // 配信送信は管理者のみ（誤爆すると配信のコメント欄から消せないため既定は local）
   let scope = msg.sc === 'stream' ? 'stream' : 'local';
-  if (scope === 'stream' && !canControlVideo(client.role)) scope = 'local';
+  // 管理者が転送をONにしていなければ、ワールド内だけの発言に落とす
+  if (scope === 'stream' && !ytIsEnabled()) {
+    scope = 'local';
+    send(client.ws, { t: 'denied', reason: 'stream-off' });
+  }
 
   client.lastChat = { txt, ts: Date.now() };
 
   // 発信者自身にも返す（クライアント側で自分のidなら無視する仕様）
   broadcastFrom(client, { t: 'chat', id: client.id, n: client.n, txt, sc: scope }, false);
+
+  if (scope === 'stream') relayToStream(client, txt);
+}
+
+/**
+ * 配信のチャット欄へ送る。
+ * 送れなかったときは必ず本人に理由を返す。黙って捨てると
+ * 「配信に出たつもり」で会話が進んでしまうため。
+ */
+function relayToStream(client, txt) {
+  const ev = events.get(client.eventId);
+  const videoId = ev ? ev.videoId : '';
+  const res = ytEnqueue({
+    name: client.n,
+    txt,
+    videoId,
+    onResult: ({ kind, detail }) => {
+      if (kind === 'sent') return;
+      const why =
+        kind === 'quota'
+          ? '今日の配信への送信上限に達しました。以降はワールド内だけの発言になります'
+          : kind === 'not-live'
+            ? '配信中ではないため、コメント欄には送れませんでした'
+            : `配信への送信に失敗しました（${detail}）`;
+      send(client.ws, { t: 'stream-result', ok: false, why });
+    },
+  });
+  if (!res.queued) {
+    const why =
+      res.why === 'quota'
+        ? '今日の配信への送信上限に達しました'
+        : res.why === 'no-video'
+          ? 'このイベントに動画が設定されていません'
+          : '配信への転送はいまOFFです';
+    send(client.ws, { t: 'stream-result', ok: false, why });
+  }
 }
 
 /** update: アバターの再カスタム（名前は変えられない） */
@@ -932,6 +985,13 @@ const HANDLERS = {
   bans: handleBansRequest,
 };
 
+/** 今つないでいる全員へ配る（配信転送のON/OFFのように、全体に関わる知らせだけに使う） */
+function broadcastAll(obj) {
+  for (const members of rooms.values()) {
+    for (const client of members.values()) send(client.ws, obj);
+  }
+}
+
 /** 全員にイベント一覧を配る（人数が変わったとき・イベントが増減したとき） */
 function broadcastAllEvents() {
   const payload = { t: 'events', events: buildEventList() };
@@ -989,6 +1049,7 @@ function buildStatusJson() {
     events: buildEventList(),
     persistent: isPersistent(),
     login: isLoginEnabled(),
+    youtube: getCrossPostStatus(),
     // 設定ミスを画面から特定できるようにする（トークンは含めない）
     store: getStoreStatus(),
     uptime: Math.floor((Date.now() - startedAt) / 1000),
@@ -1121,6 +1182,84 @@ async function handleProfileRequest(req, res) {
   });
 }
 
+/**
+ * 管理者かどうかをHTTPで確かめる。WebSocketと違い、こちらは毎回IDトークンで判定する。
+ * クロスポストの認可は「配信者アカウントの権限を預かる」操作なので、管理者だけに許す。
+ */
+async function requireAdmin(req) {
+  const body = await readJsonBody(req);
+  const info = body && body.idt ? await verifyIdToken(body.idt) : null;
+  // ログイン未設定のローカル開発では、そもそも権限の仕組みが動いていないので通す
+  if (!isLoginEnabled()) return { ok: true, body, email: '' };
+  if (!info || roleForEmail(info.email) !== 'admin') return { ok: false, body, email: '' };
+  return { ok: true, body, email: info.email };
+}
+
+/** YouTubeクロスポストのHTTP窓口 */
+async function handleYouTubeApi(req, res, url) {
+  const reply = (code, obj) => {
+    res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(obj));
+  };
+
+  // 認可からの戻り。Googleがブラウザをここへ返してくるのでGET
+  if (req.method === 'GET' && url === '/api/yt/callback') {
+    const q = new URL(req.url, 'http://localhost').searchParams;
+    const result = await handleAuthCallback(req, q.get('code') || '', q.get('state') || '');
+    const msg = result.ok
+      ? `YouTubeに接続しました（チャンネル: ${result.channel || '取得できませんでした'}）。このタブは閉じて大丈夫です。`
+      : `接続できませんでした: ${result.error}`;
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(
+      `<!doctype html><meta charset="utf-8"><title>ALLVERSE</title>` +
+        `<body style="background:#0b0c18;color:#eaf6ff;font-family:sans-serif;padding:40px;line-height:1.8">` +
+        `<h1 style="font-size:18px">${result.ok ? '✅' : '⚠️'} ${msg}</h1></body>`,
+    );
+    return;
+  }
+
+  if (req.method !== 'POST') {
+    reply(405, { ok: false, error: 'method' });
+    return;
+  }
+
+  const auth = await requireAdmin(req);
+  if (!auth.ok) {
+    reply(403, { ok: false, error: 'admin-only' });
+    return;
+  }
+
+  if (url === '/api/yt/status') {
+    reply(200, { ok: true, ...getCrossPostStatus(), persistent: isPersistent() });
+    return;
+  }
+
+  if (url === '/api/yt/auth') {
+    if (!isCrossPostConfigured()) {
+      reply(400, { ok: false, error: 'GOOGLE_CLIENT_SECRET が設定されていません' });
+      return;
+    }
+    reply(200, { ok: true, url: buildAuthUrl(req) });
+    return;
+  }
+
+  if (url === '/api/yt/enable') {
+    const on = ytSetEnabled(auth.body && auth.body.on);
+    // 全員の📺ボタンを出し入れする。ONになったことは全参加者に伝わるべき情報
+    broadcastAll({ t: 'stream-state', on });
+    reply(200, { ok: true, enabled: on });
+    return;
+  }
+
+  if (url === '/api/yt/disconnect') {
+    await ytDisconnect();
+    reply(200, { ok: true });
+    return;
+  }
+
+  reply(404, { ok: false, error: 'not-found' });
+}
+
 const httpServer = http.createServer(async (req, res) => {
   const url = (req.url || '/').split('?')[0];
 
@@ -1154,6 +1293,11 @@ const httpServer = http.createServer(async (req, res) => {
     });
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(body);
+    return;
+  }
+
+  if (url.startsWith('/api/yt/')) {
+    await handleYouTubeApi(req, res, url);
     return;
   }
 
@@ -1302,6 +1446,8 @@ async function boot() {
 
   // BANはメモリに載せておく。入場のたびにDBを叩かずに済ませるため
   for (const b of await loadBans()) bans.set(b.email, b);
+
+  await initCrossPost();
 
   httpServer.listen(PORT, () => {
     console.log(`[VERSE CITY Web Server] listening on port ${PORT} (ws path: ${WS_PATH})`);

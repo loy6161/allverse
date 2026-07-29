@@ -74,6 +74,28 @@
 
 確定した名前は `welcome.n` で本人にも返す（自分のネームプレートに使う）。
 
+## 配信のコメント欄への転送（2026-07-30追加）
+
+`chat` の `sc` が `stream` のとき、YouTubeのライブチャットにも流す。
+
+| 種別 | 例 | 備考 |
+|---|---|---|
+| 転送のON/OFF | `{"t":"stream-state","on":true}` | 管理者が切り替えたとき**全員**に配る。📺ボタンの出し分けに使う |
+| 送信結果 | `{"t":"stream-result","ok":false,"why":"..."}` | **送れなかったときだけ**本人に返す。黙って捨てると「配信に出たつもり」で会話が進むため |
+| 転送OFF時 | `{"t":"denied","reason":"stream-off"}` | `sc:"stream"` を指定されたが転送がOFF。発言は `local` に落として中継する |
+
+`welcome` に `stream: true|false` が入る。
+
+管理者用のHTTP窓口（IDトークンで本人確認する）:
+
+| メソッド | パス | 用途 |
+|---|---|---|
+| POST | `/api/yt/status` | 接続状況・残り送信回数 |
+| POST | `/api/yt/auth` | 認可画面のURLを作る |
+| GET | `/api/yt/callback` | Googleからの戻り（ブラウザが来る） |
+| POST | `/api/yt/enable` | 転送のON/OFF |
+| POST | `/api/yt/disconnect` | 接続の解除 |
+
 ## 迷惑行為への対処（2026-07-30追加）
 
 強さが違うので、使える人と効き方を分けている。
