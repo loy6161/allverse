@@ -18,7 +18,11 @@ function injectStyle() {
       right: 16px;
       bottom: 16px;
       z-index: 10;
-      width: 300px;
+      /* 中身（再生・ミュート・音量・数値・ボタン4つ）に必要な幅は約330px。
+         300pxにしていたため右端のボタンがパネルの外へ突き抜けていた（2026-07-30 修正）。
+         下の flex-wrap と音量つまみの縮みで、幅が足りなくても切れないようにもしてある */
+      width: 360px;
+      max-width: calc(100vw - 32px);
       display: flex;
       flex-direction: column;
       gap: 7px;
@@ -53,6 +57,9 @@ function injectStyle() {
       display: flex;
       align-items: center;
       gap: 7px;
+      /* 入りきらないときは折り返す。ボタンを足しても外へ突き抜けない */
+      flex-wrap: wrap;
+      row-gap: 8px;
     }
     .vc-vp-slot {
       display: flex;
@@ -114,7 +121,8 @@ function injectStyle() {
     .vc-vp-range:disabled { opacity: 0.35; cursor: default; }
 
     .vc-vp-seek { flex: 1 1 auto; }
-    .vc-vp-vol { width: 72px; flex: 0 0 auto; }
+    /* 折り返すより先に音量つまみが縮むようにする（1段のまま収まる方が読みやすい） */
+    .vc-vp-vol { flex: 1 1 72px; width: auto; min-width: 40px; }
     .vc-vp-vollabel {
       font-size: 10px;
       color: rgba(255, 255, 255, 0.5);
@@ -138,20 +146,8 @@ function injectStyle() {
       body.vc-mobile .vc-video-panel { display: none; }
       body.vc-mobile.vc-m-video-open .vc-video-panel { display: flex; }
 
-      /* 横はみ出し対策（2026-07-30）。
-         中身は 再生・ミュート・音量・数値・ボタン4つ で固定幅の合計が約330pxあり、
-         375px幅でも余りが1pxしかなかった。360px幅の端末では右端のボタンが切れる。
-         まず音量つまみを縮ませ、それでも足りなければ折り返して2段にする。
-         こうすると端末の幅に関係なく切れない */
-      .vc-vp-row {
-        flex-wrap: wrap;
-        row-gap: 8px;
-      }
-      .vc-vp-vol {
-        flex: 1 1 40px;
-        width: auto;
-        min-width: 32px;
-      }
+      /* 狭い画面では音量つまみをもっと縮めて、1段に収まる余地を広げる */
+      .vc-vp-vol { flex: 1 1 40px; min-width: 32px; }
     }
   `;
   document.head.appendChild(style);

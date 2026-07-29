@@ -8,7 +8,10 @@ import { EYE_Y } from './avatar.js';
 export function initControls(camera, avatar, domElement, { bounds, onJump, screen } = {}) {
   const keys = new Set();
   let yaw = 0; // カメラの水平角（0 = ステージ(-z)方向を向く）
-  let pitch = 0.35; // 見下ろし角
+  // 見下ろし角。0.35 だと視線が下を向きすぎて、スクリーンの上側が画面外へ切れていた
+  // （clubVERSEのスクリーンは高さ9m・中心 y=6.6 と大きいため。2026-07-30 修正）。
+  // 0.15 にすると、PCでも縦画面でもスクリーン全体が入る
+  let pitch = 0.15;
   let dist = 6;
 
   // 一人称視点。ホイール（スマホはピンチ）を三人称の最短より内側へ回すと入る。
