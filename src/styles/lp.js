@@ -2,47 +2,37 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // =====================================================================
-// ローポリ・アバター生成器（参考モデルの構造分析にもとづく作り直し）
+// ローポリ・アバター生成器 v2（参考モデル10体の接写観察にもとづく作り直し）
 //
-// 参考モデルの計測結果（docs/AVATAR_REFERENCE_ANALYSIS.md）:
-//   - 全身が1メッシュ、三角形は約300枚、テクスチャは256pxを1枚
-//   - 髪は「細かい房の集合」ではなく **大きな三角の塊が数枚**
-//   - 頭は角ばった多面体
-// これまでの「球や円柱を数十個並べる」方式を捨て、
-//   角ばった塊を少数で構成し、マテリアルごとに1メッシュへ統合する。
+// 観察で判明した構造（docs/AVATAR_REFERENCE_ANALYSIS.md 追記分）:
+//   1. 頭は「ほぼ髪のボール」。顔は下前方に開いた小さな窓だけ
+//   2. 前髪の大きな三角が窓の上から目の高さまで垂れ、その間に目が覗く
+//   3. 頭（髪込み）は全身の約41% ＝ 2.4頭身。頭は幅0.52×奥行0.5のほぼ球
+//   4. 体は小さく、脚は先細り。腕は体の脇に小さく
 // =====================================================================
 
 const OUTLINE = 0x14101a;
 
-// ---------------------------------------------------------------------
-// ジオメトリの部品（すべて角ばった低分割）
-// ---------------------------------------------------------------------
+function flat(color) {
+  return new THREE.MeshLambertMaterial({ color, flatShading: true });
+}
 
-// 三角柱（髪の房・スカートの切れ込みなど、平たい塊に使う）
+// 三角柱（髪の房に使う平たい塊）
 function wedge(w, h, d) {
-  const g = new THREE.CylinderGeometry(w, w * 0.06, h, 3, 1);
+  const g = new THREE.CylinderGeometry(w, w * 0.05, h, 3, 1);
   g.scale(1, 1, d / w);
   return g;
 }
 
-// 角ばった球（頭）
-function polyBall(r, detail = 0) {
-  return new THREE.IcosahedronGeometry(r, detail);
+function frustum(rTop, rBottom, h, sides = 7) {
+  return new THREE.CylinderGeometry(rTop, rBottom, h, sides, 1);
 }
 
 function box(w, h, d) {
   return new THREE.BoxGeometry(w, h, d);
 }
 
-// 角錐台（スカート・胴体）
-function frustum(rTop, rBottom, h, sides = 7) {
-  return new THREE.CylinderGeometry(rTop, rBottom, h, sides, 1);
-}
-
 function place(geo, pos = [0, 0, 0], rot = [0, 0, 0], scale = [1, 1, 1]) {
-  // mergeGeometries は「インデックスの有無」が混ざると失敗して null を返す。
-  // IcosahedronGeometry は非インデックス、Cylinder/Box はインデックス付きなので、
-  // ここで必ず非インデックスに揃えておく（これを忘れて頭と髪が消えた）
   const src = geo.index ? geo.toNonIndexed() : geo;
   const g = src.clone();
   const m = new THREE.Matrix4();
@@ -53,26 +43,66 @@ function place(geo, pos = [0, 0, 0], rot = [0, 0, 0], scale = [1, 1, 1]) {
 }
 
 // ---------------------------------------------------------------------
-// 顔テクスチャ（1枚に目・口・頬をまとめる）
+// 頭のボールを「髪」と「顔の窓」に切り分ける
+//   - 丸い多面体（icosahedron detail=1 → 80面）を使い、輪郭を丸くする
+//   - 前方下部の三角形だけを肌（顔の窓）に分類する
+// ---------------------------------------------------------------------
+function carvedHead(R) {
+  const ball = new THREE.IcosahedronGeometry(R, 1); // 非インデックス・80三角形
+  const pos = ball.getAttribute('position');
+  const hairTris = [];
+  const skinTris = [];
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i += 3) {
+    a.fromBufferAttribute(pos, i);
+    b.fromBufferAttribute(pos, i + 1);
+    c.fromBufferAttribute(pos, i + 2);
+    const cz = (a.z + b.z + c.z) / 3;
+    const cy = (a.y + b.y + c.y) / 3;
+    const cx = (a.x + b.x + c.x) / 3;
+    // 顔の窓: 前方(z)・下寄り(y)・中央(x)。広げすぎると側面まで肌になる
+    const isFace = cz > R * 0.5 && Math.abs(cx) < R * 0.56 && cy < R * 0.56 && cy > -R * 0.74;
+    (isFace ? skinTris : hairTris).push(i);
+  }
+  const build = (indices) => {
+    const arr = new Float32Array(indices.length * 9);
+    let k = 0;
+    for (const i of indices) {
+      for (let j = 0; j < 3; j++) {
+        arr[k++] = pos.getX(i + j);
+        arr[k++] = pos.getY(i + j);
+        arr[k++] = pos.getZ(i + j);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+    return g;
+  };
+  return { hair: build(hairTris), skin: build(skinTris) };
+}
+
+// ---------------------------------------------------------------------
+// 顔テクスチャ（窓のサイズに合わせて、目は窓の上端寄りに置く）
 // ---------------------------------------------------------------------
 function makeFaceTexture(o, expression = 'default') {
-  const S = 256; // 参考モデルに合わせて小さめ
+  const S = 256;
   const cv = document.createElement('canvas');
   cv.width = S;
   cv.height = S;
   const c = cv.getContext('2d');
   const cx = S / 2;
-  const ey = S * (o.eyeY ?? 0.56);
-  const dx = S * (o.eyeDX ?? 0.2);
-  const w = S * (o.eyeW ?? 0.13);
-  const h = S * (o.eyeH ?? 0.19);
+  const ey = S * (o.eyeY ?? 0.6); // 前髪の毛先より必ず下（参考: 目は毛先の下に離れて見える）
+  const dx = S * (o.eyeDX ?? 0.21);
+  const w = S * (o.eyeW ?? 0.125);
+  const h = S * (o.eyeH ?? 0.26);
   const ink = '#191219';
 
-  // 頬
-  c.fillStyle = 'rgba(255,138,150,0.42)';
+  c.fillStyle = 'rgba(255,138,150,0.4)';
   for (const sx of [-1, 1]) {
     c.beginPath();
-    c.ellipse(cx + sx * (dx + S * 0.085), ey + S * 0.045, S * 0.05, S * 0.028, 0, 0, Math.PI * 2);
+    c.ellipse(cx + sx * (dx + S * 0.1), ey + S * 0.1, S * 0.055, S * 0.032, 0, 0, Math.PI * 2);
     c.fill();
   }
 
@@ -81,22 +111,26 @@ function makeFaceTexture(o, expression = 'default') {
     const ex = cx + sx * dx;
     if (closed) {
       c.strokeStyle = ink;
-      c.lineWidth = S * 0.032;
+      c.lineWidth = S * 0.03;
       c.beginPath();
-      c.moveTo(ex - w * 0.5, ey + h * 0.06);
-      c.lineTo(ex, ey - h * 0.2);
-      c.lineTo(ex + w * 0.5, ey + h * 0.06);
+      c.moveTo(ex - w * 0.5, ey + h * 0.05);
+      c.lineTo(ex, ey - h * 0.15);
+      c.lineTo(ex + w * 0.5, ey + h * 0.05);
       c.stroke();
       continue;
     }
+    // 縦長の黒い矩形＋下部に色（参考モデルの目の構造そのまま）
     const g = c.createLinearGradient(0, ey - h / 2, 0, ey + h / 2);
-    g.addColorStop(0, '#151015');
-    g.addColorStop(0.58, '#191219');
-    g.addColorStop(0.59, o.eyeColor || '#a63a46');
+    g.addColorStop(0, '#141014');
+    g.addColorStop(0.55, '#191219');
+    g.addColorStop(0.56, o.eyeColor || '#8f2f38');
     g.addColorStop(1, o.eyeColor2 || '#d8737d');
     c.fillStyle = g;
-
-    if (o.eyeType === 'diamond') {
+    if (o.eyeType === 'round') {
+      c.beginPath();
+      c.ellipse(ex, ey, w * 0.52, h * 0.5, 0, 0, Math.PI * 2);
+      c.fill();
+    } else if (o.eyeType === 'diamond') {
       c.beginPath();
       c.moveTo(ex, ey - h / 2);
       c.lineTo(ex + w / 2, ey);
@@ -104,28 +138,23 @@ function makeFaceTexture(o, expression = 'default') {
       c.lineTo(ex - w / 2, ey);
       c.closePath();
       c.fill();
-    } else if (o.eyeType === 'round') {
-      c.beginPath();
-      c.ellipse(ex, ey, w * 0.52, h * 0.5, 0, 0, Math.PI * 2);
-      c.fill();
     } else {
       c.fillRect(ex - w / 2, ey - h / 2, w, h);
     }
     c.fillStyle = 'rgba(255,255,255,0.92)';
-    c.fillRect(ex - w * 0.32, ey - h * 0.36, w * 0.2, h * 0.15);
+    c.fillRect(ex - w * 0.3, ey - h * 0.36, w * 0.2, h * 0.13);
   }
 
-  // 口
   c.fillStyle = '#dd5f69';
   if (expression === 'happy') {
     c.beginPath();
-    c.moveTo(cx - S * 0.03, ey + S * 0.1);
-    c.lineTo(cx + S * 0.03, ey + S * 0.1);
-    c.lineTo(cx, ey + S * 0.145);
+    c.moveTo(cx - S * 0.03, ey + S * 0.15);
+    c.lineTo(cx + S * 0.03, ey + S * 0.15);
+    c.lineTo(cx, ey + S * 0.19);
     c.closePath();
     c.fill();
   } else {
-    c.fillRect(cx - S * 0.016, ey + S * 0.1, S * 0.032, S * 0.018);
+    c.fillRect(cx - S * 0.015, ey + S * 0.155, S * 0.03, S * 0.017);
   }
 
   const t = new THREE.CanvasTexture(cv);
@@ -135,132 +164,134 @@ function makeFaceTexture(o, expression = 'default') {
 }
 
 // ---------------------------------------------------------------------
-// 髪の型（大きな三角の塊で構成する）
+// 前髪（顔の窓の上端から垂れる大きな三角。目の間に落ちる）
 // ---------------------------------------------------------------------
-// 髪を置いてよい領域のルール（これを破ると顔が隠れて台無しになる）
-//   - 顔の前方下部（z > 0.3R かつ y < 0.12R）には何も置かない
-//   - 頭頂の塊は「潰した半球を上に持ち上げる」ことで目より下に来ないようにする
-const HAIR_BUILDERS = {
-  // 頭頂＋後頭部の共通ベース
-  base(R, opts = {}) {
-    const { crownY = 0.55, crownFlat = 0.52, backDepth = 0.6 } = opts;
-    const parts = [];
-    // 頭頂（持ち上げた扁平の塊 → 目より下に来ない）
-    parts.push(place(polyBall(R * 1.07, 0), [0, R * crownY, -R * 0.03], [0, 0, 0], [1, crownFlat, 1]));
-    // 後頭部（前には出さない）
-    parts.push(place(polyBall(R * 1.04, 0), [0, R * 0.02, -R * 0.48], [0, 0, 0], [1, 1, backDepth]));
-    // もみあげ（顔の横を締める。頬にはかからない）
-    for (const sx of [-1, 1]) {
-      parts.push(place(wedge(R * 0.32, R * 1.0, R * 0.3), [sx * R * 0.82, -R * 0.2, R * 0.1], [Math.PI, 0, sx * 0.05]));
-    }
-    return parts;
-  },
-  // 短め・毛先が跳ねる
+function bangs(R, opts = {}) {
+  // 参考モデルの前髪は「大きな三角」が目の高さまで垂れ、その間から目が覗く。
+  // 小さくすると生え際の点にしか見えず台無しになる（v2aで確認）
+  // 参考(shinonome接写)の要点: 毛先は「目の上」で止まり、目は毛先の下に離れて見える。
+  // v2dは房が長すぎて目を覆った。毛先の最下端 > 目の上端 を必ず守る。
+  const defs = [
+    { x: 0, len: 0.56, w: 0.34 },
+    { x: -0.5, len: 0.5, w: 0.34 },
+    { x: 0.5, len: 0.5, w: 0.34 },
+    { x: -0.88, len: 0.4, w: 0.3 },
+    { x: 0.88, len: 0.4, w: 0.3 },
+  ];
+  const parts = [];
+  for (const d of defs) {
+    parts.push(
+      place(wedge(R * d.w, R * d.len, R * 0.24), [d.x * R, R * 0.66 - R * d.len * 0.5, R * 1.0 - Math.abs(d.x) * R * 0.2], [Math.PI, 0, 0], [1, 1, 0.4]),
+    );
+  }
+  return parts;
+}
+
+// ---------------------------------------------------------------------
+// 髪型（ベースのボールに足す差分だけを定義する）
+// ---------------------------------------------------------------------
+const HAIR_EXTRA = {
   short(R) {
-    const parts = HAIR_BUILDERS.base(R);
-    // 前髪（目より上で終わる）
-    for (let i = -2; i <= 2; i++) {
-      parts.push(
-        place(wedge(R * 0.3, R * 0.62, R * 0.26), [i * R * 0.3, R * 0.42, R * 0.72 - Math.abs(i) * R * 0.14], [Math.PI, 0, 0]),
-      );
-    }
-    return parts;
+    // 襟足を少しだけ
+    return [place(wedge(R * 0.4, R * 0.7, R * 0.3), [0, -R * 0.55, -R * 0.72], [Math.PI, 0, 0], [1, 1, 0.6])];
   },
-  // ボブ（顎まで・横が長い）
   bob(R) {
-    const parts = HAIR_BUILDERS.base(R, { backDepth: 0.7 });
-    for (let i = -2; i <= 2; i++) {
-      parts.push(
-        place(wedge(R * 0.3, R * 0.6, R * 0.26), [i * R * 0.3, R * 0.44, R * 0.72 - Math.abs(i) * R * 0.14], [Math.PI, 0, 0]),
-      );
+    const parts = [];
+    // 顔の横に垂れる大きめの房（頬を挟む）
+    for (const sx of [-1, 1]) {
+      parts.push(place(wedge(R * 0.42, R * 1.15, R * 0.4), [sx * R * 0.78, -R * 0.42, R * 0.3], [Math.PI, 0, sx * 0.06], [1, 1, 0.62]));
     }
-    // 横〜後ろに垂らす房（顔の前には出さない）
-    for (let i = 0; i < 6; i++) {
-      const a = 1.15 + (i / 5) * (Math.PI * 2 - 2.3);
-      parts.push(
-        place(wedge(R * 0.36, R * 1.5, R * 0.32), [Math.sin(a) * R * 0.85, -R * 0.5, Math.cos(a) * R * 0.85], [Math.PI, a, 0]),
-      );
-    }
+    parts.push(place(wedge(R * 0.5, R * 0.9, R * 0.4), [0, -R * 0.6, -R * 0.66], [Math.PI, 0, 0], [1, 1, 0.7]));
     return parts;
   },
-  // ロング
   long(R) {
-    const parts = HAIR_BUILDERS.bob(R);
-    parts.push(place(frustum(R * 0.78, R * 0.34, R * 2.2, 5), [0, -R * 1.35, -R * 0.5], [0, Math.PI / 5, 0], [1, 1, 0.55]));
+    const parts = HAIR_EXTRA.bob(R);
+    // 背中に流れる大きな塊（1つの角錐台で表現）
+    parts.push(place(frustum(R * 0.62, R * 0.22, R * 2.1, 5), [0, -R * 1.15, -R * 0.52], [0.06, Math.PI / 5, 0], [1, 1, 0.55]));
     return parts;
   },
-  // ツインテール
   twin(R) {
-    const parts = HAIR_BUILDERS.short(R);
+    const parts = HAIR_EXTRA.short(R);
     for (const sx of [-1, 1]) {
-      parts.push(place(box(R * 0.34, R * 0.26, R * 0.34), [sx * R * 0.86, R * 0.5, -R * 0.1]));
-      parts.push(
-        place(frustum(R * 0.36, R * 0.12, R * 1.7, 4), [sx * R * 1.18, -R * 0.35, -R * 0.15], [0, Math.PI / 4, sx * 0.5], [1, 1, 0.62]),
-      );
+      // 高い位置から外へ跳ねて下に落ちるツインテール
+      parts.push(place(box(R * 0.26, R * 0.2, R * 0.26), [sx * R * 0.8, R * 0.52, -R * 0.12]));
+      parts.push(place(frustum(R * 0.3, R * 0.08, R * 1.6, 4), [sx * R * 1.05, -R * 0.3, -R * 0.18], [0.08, Math.PI / 4, sx * 0.42], [1, 1, 0.62]));
     }
     return parts;
   },
-  // 逆立った尖髪（上向きなので顔にはかからない）
   spiky(R) {
-    const parts = HAIR_BUILDERS.base(R, { crownY: 0.5, crownFlat: 0.46 });
-    for (let i = 0; i < 7; i++) {
-      const a = -1.5 + i * 0.5;
-      const len = 0.85 + (i % 3) * 0.35;
+    // 頭頂〜後ろ寄りに上向きのトゲを並べる。前に出すと前髪と重なって崩れる(v2eで確認)
+    const parts = [];
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI + (i + 0.5) * ((Math.PI * 2) / 5);
+      const len = 0.55 + (i % 2) * 0.25;
       parts.push(
-        place(wedge(R * 0.28, R * len, R * 0.28), [Math.sin(a) * R * 0.55, R * (0.85 + len * 0.3), Math.cos(a) * R * 0.55], [0.42 * Math.cos(a), a, -0.4 * Math.sin(a)]),
+        place(
+          wedge(R * 0.34, R * len, R * 0.3),
+          [Math.sin(a) * R * 0.4, R * (0.74 + len * 0.4), Math.cos(a) * R * 0.3 - R * 0.42],
+          [-0.24, a, -0.3 * Math.sin(a)],
+          [1, 1, 0.5],
+        ),
       );
     }
     return parts;
   },
-  // ポニーテール
   ponytail(R) {
-    const parts = HAIR_BUILDERS.short(R);
-    parts.push(place(box(R * 0.3, R * 0.24, R * 0.3), [0, R * 0.42, -R * 0.95]));
-    parts.push(place(frustum(R * 0.4, R * 0.1, R * 2.0, 4), [0, -R * 0.4, -R * 1.25], [0.42, Math.PI / 4, 0], [1, 1, 0.7]));
+    const parts = HAIR_EXTRA.short(R);
+    parts.push(place(box(R * 0.24, R * 0.2, R * 0.24), [0, R * 0.5, -R * 0.88]));
+    parts.push(place(frustum(R * 0.34, R * 0.08, R * 1.9, 4), [0, -R * 0.35, -R * 1.12], [0.34, Math.PI / 4, 0], [1, 1, 0.66]));
     return parts;
   },
-  // お団子
   bun(R) {
-    const parts = HAIR_BUILDERS.bob(R);
+    const parts = HAIR_EXTRA.bob(R);
     for (const sx of [-1, 1]) {
-      parts.push(place(polyBall(R * 0.38, 0), [sx * R * 0.66, R * 0.92, -R * 0.15]));
+      parts.push(place(new THREE.IcosahedronGeometry(R * 0.3, 0), [sx * R * 0.6, R * 0.86, -R * 0.2]));
     }
     return parts;
   },
-  // ぱっつん（前髪が重い）
   hime(R) {
-    const parts = HAIR_BUILDERS.long(R);
+    const parts = HAIR_EXTRA.long(R);
     for (const sx of [-1, 1]) {
-      parts.push(place(frustum(R * 0.3, R * 0.22, R * 1.8, 4), [sx * R * 0.8, -R * 0.55, R * 0.35], [0, Math.PI / 4, 0], [0.7, 1, 0.5]));
+      // 顔の横の直線的な束（姫カット）
+      parts.push(place(box(R * 0.24, R * 1.3, R * 0.26), [sx * R * 0.84, -R * 0.5, R * 0.4]));
     }
     return parts;
   },
 };
 
+// 動物耳（参考モデルの定番。オンオフできる差分）
+function animalEars(R) {
+  const parts = [];
+  for (const sx of [-1, 1]) {
+    parts.push(place(wedge(R * 0.34, R * 0.6, R * 0.22), [sx * R * 0.52, R * 0.95, -R * 0.05], [0, 0, sx * -0.25], [1, 1, 0.55]));
+  }
+  return parts;
+}
+
 // ---------------------------------------------------------------------
-// 服の型
+// 服（体は小さい。参考モデル: 体全体で全身の約60%、幅は頭より狭い）
 // ---------------------------------------------------------------------
 const OUTFIT_BUILDERS = {
-  // ワンピース（裾が広がる）
   dress(B) {
-    return [place(frustum(B.chest, B.hem, B.len, 7), [0, B.y, 0])];
+    return { cloth: [place(frustum(B.r * 0.8, B.r * 1.35, B.h, 7), [0, B.y, 0])], hem: B.r * 1.35 };
   },
-  // パーカー（真っ直ぐ・少しゆったり）
   hoodie(B) {
-    const parts = [place(frustum(B.chest * 1.05, B.hem * 0.82, B.len, 8), [0, B.y, 0])];
-    parts.push(place(box(B.chest * 0.5, B.len * 0.1, B.chest * 1.6), [0, B.y - B.len * 0.42, 0]));
-    return parts;
+    return {
+      cloth: [
+        place(frustum(B.r * 0.95, B.r * 1.05, B.h, 8), [0, B.y, 0]),
+        place(box(B.r * 1.1, B.h * 0.16, B.r * 1.5), [0, B.y + B.h * 0.42, -B.r * 0.3]),
+      ],
+      hem: B.r * 1.05,
+    };
   },
-  // コート（丈が長い）
   coat(B) {
-    return [
-      place(frustum(B.chest, B.hem * 0.95, B.len * 1.35, 8), [0, B.y - B.len * 0.15, 0]),
-      place(box(B.chest * 1.4, B.len * 0.14, B.chest * 1.5), [0, B.y + B.len * 0.42, 0]),
-    ];
+    return {
+      cloth: [place(frustum(B.r * 0.85, B.r * 1.2, B.h * 1.28, 8), [0, B.y - B.h * 0.12, 0])],
+      hem: B.r * 1.2,
+    };
   },
-  // Tシャツ＋ズボン（裾が短い）
   tee(B) {
-    return [place(frustum(B.chest, B.hem * 0.72, B.len * 0.78, 8), [0, B.y + B.len * 0.1, 0])];
+    return { cloth: [place(frustum(B.r * 0.9, B.r * 0.95, B.h * 0.72, 8), [0, B.y + B.h * 0.14, 0])], hem: B.r * 0.95 };
   },
 };
 
@@ -268,18 +299,18 @@ const OUTFIT_BUILDERS = {
 // 案の定義
 // ---------------------------------------------------------------------
 export const LP_VARIANTS = {
-  v01: { name: '01 ボブ×ワンピ', hair: 'bob', outfit: 'dress', eyeType: 'rect', head: 1.0 },
-  v02: { name: '02 ショート×パーカー', hair: 'short', outfit: 'hoodie', eyeType: 'rect', head: 1.0 },
-  v03: { name: '03 ツイン×ワンピ', hair: 'twin', outfit: 'dress', eyeType: 'round', head: 1.02 },
-  v04: { name: '04 ロング×コート', hair: 'long', outfit: 'coat', eyeType: 'rect', head: 0.98 },
-  v05: { name: '05 尖髪×Tシャツ', hair: 'spiky', outfit: 'tee', eyeType: 'diamond', head: 1.0 },
-  v06: { name: '06 ポニー×パーカー', hair: 'ponytail', outfit: 'hoodie', eyeType: 'rect', head: 1.0 },
-  v07: { name: '07 お団子×ワンピ', hair: 'bun', outfit: 'dress', eyeType: 'round', head: 1.02 },
-  v08: { name: '08 姫カット×コート', hair: 'hime', outfit: 'coat', eyeType: 'rect', head: 0.98 },
-  v09: { name: '09 ボブ×Tシャツ', hair: 'bob', outfit: 'tee', eyeType: 'diamond', head: 1.0 },
-  v10: { name: '10 尖髪×コート', hair: 'spiky', outfit: 'coat', eyeType: 'rect', head: 1.0 },
-  v11: { name: '11 ツイン×パーカー', hair: 'twin', outfit: 'hoodie', eyeType: 'rect', head: 1.04 },
-  v12: { name: '12 ロング×ワンピ', hair: 'long', outfit: 'dress', eyeType: 'round', head: 1.0 },
+  v01: { name: '01 ボブ×ワンピ', hair: 'bob', outfit: 'dress', eyeType: 'rect', ears: false },
+  v02: { name: '02 ショート×パーカー', hair: 'short', outfit: 'hoodie', eyeType: 'rect', ears: false },
+  v03: { name: '03 ツイン×ワンピ', hair: 'twin', outfit: 'dress', eyeType: 'round', ears: false },
+  v04: { name: '04 ロング×コート', hair: 'long', outfit: 'coat', eyeType: 'rect', ears: false },
+  v05: { name: '05 尖髪×Tシャツ', hair: 'spiky', outfit: 'tee', eyeType: 'diamond', ears: false },
+  v06: { name: '06 ポニー×パーカー', hair: 'ponytail', outfit: 'hoodie', eyeType: 'rect', ears: false },
+  v07: { name: '07 お団子×ワンピ', hair: 'bun', outfit: 'dress', eyeType: 'round', ears: false },
+  v08: { name: '08 姫カット×コート', hair: 'hime', outfit: 'coat', eyeType: 'rect', ears: false },
+  v09: { name: '09 けもみみ×ワンピ', hair: 'short', outfit: 'dress', eyeType: 'rect', ears: true },
+  v10: { name: '10 けもみみ×パーカー', hair: 'bob', outfit: 'hoodie', eyeType: 'round', ears: true },
+  v11: { name: '11 ツイン×パーカー', hair: 'twin', outfit: 'hoodie', eyeType: 'rect', ears: false },
+  v12: { name: '12 尖髪×コート', hair: 'spiky', outfit: 'coat', eyeType: 'rect', ears: false },
 };
 
 // ---------------------------------------------------------------------
@@ -299,43 +330,71 @@ export function createLowPoly(variantId, config = {}) {
   const upper = new THREE.Group();
   root.add(upper);
 
-  const R = 0.3 * V.head; // 頭の半径（参考モデルの比率: 身長1.21で頭が大きい）
+  // ---- 比率（参考実測は2.4頭身。要望によりさらに頭を大きく＝2頭身寄りへ） ----
+  const H = 1.21;
+  const R = 0.29; // 頭の球半径（頭+髪で全身の約48%）
+  const bodyTop = H - R * 2.08; // 頭の下端
+  const headCY = bodyTop + R * 0.92; // 球の中心（少し埋めて首をなくす）
 
-  // ---- 収集用 ----
   const skin = [];
   const hair = [];
   const cloth = [];
   const dark = [];
   const acc = [];
 
-  // 脚
+  // ---- 体 ----
+  const B = { r: 0.16, h: bodyTop * 0.62, y: bodyTop * 0.66 };
+  const fit = OUTFIT_BUILDERS[V.outfit](B);
+  cloth.push(...fit.cloth);
+
+  // 腕（肩から生やした先細りの小さな腕。体に密着させて浮かせない）
   for (const sx of [-1, 1]) {
-    dark.push(place(frustum(0.055, 0.045, 0.34, 5), [sx * 0.07, 0.28, 0]));
-    dark.push(place(box(0.115, 0.1, 0.17), [sx * 0.07, 0.06, 0.02]));
-    acc.push(place(box(0.12, 0.03, 0.18), [sx * 0.07, 0.005, 0.02]));
+    const shoulderY = B.y + B.h * 0.34;
+    cloth.push(
+      place(frustum(0.052, 0.018, B.h * 0.62, 5), [sx * (B.r * 0.98), shoulderY - B.h * 0.3, 0.01], [0, 0, sx * 0.3]),
+    );
   }
 
-  // 服
-  const B = { chest: 0.16, hem: 0.235, len: 0.4, y: 0.62 };
-  for (const g of OUTFIT_BUILDERS[V.outfit](B)) cloth.push(g);
-
-  // 腕（服の外側に出す。内側だと裾に埋もれて見えない）
+  // 脚（先細り。参考モデルはほぼ足先が点になる）
   for (const sx of [-1, 1]) {
-    cloth.push(place(frustum(0.05, 0.042, 0.3, 5), [sx * 0.215, 0.68, 0], [0, 0, sx * 0.1]));
-    skin.push(place(box(0.062, 0.075, 0.05), [sx * 0.235, 0.5, 0]));
+    dark.push(place(frustum(0.05, 0.022, bodyTop * 0.42, 5), [sx * 0.062, bodyTop * 0.21, 0]));
+    dark.push(place(box(0.075, 0.045, 0.11), [sx * 0.062, 0.024, 0.015]));
   }
 
-  // 頭
-  const headY = 0.62 + B.len * 0.5 + R * 0.82;
-  skin.push(place(polyBall(R, 0), [0, headY, 0], [0, 0, 0], [1, 1.02, 0.94]));
+  // ---- 頭（丸いボールを髪と顔の窓に切り分け） ----
+  const head = carvedHead(R);
+  const hg = head.hair;
+  hg.translate(0, headCY, 0);
+  hair.push(hg);
+  const sg = head.skin;
+  sg.translate(0, headCY, 0);
+  skin.push(sg);
 
-  // 髪
-  for (const g of HAIR_BUILDERS[V.hair](R)) {
-    g.translate(0, headY, 0);
+  // 前髪
+  for (const g of bangs(R)) {
+    g.translate(0, headCY, 0);
     hair.push(g);
   }
+  // 髪型差分
+  for (const g of HAIR_EXTRA[V.hair](R)) {
+    g.translate(0, headCY, 0);
+    hair.push(g);
+  }
+  if (V.ears) {
+    for (const g of animalEars(R)) {
+      g.translate(0, headCY, 0);
+      hair.push(g);
+    }
+  }
 
-  // ---- マテリアルごとに1メッシュへ統合 ----
+  // ---- 統合 ----
+  function normalize(g) {
+    const src = g.index ? g.toNonIndexed() : g;
+    const out = new THREE.BufferGeometry();
+    out.setAttribute('position', src.getAttribute('position').clone());
+    return out;
+  }
+
   const groups = [
     { geos: skin, color: bodyColor },
     { geos: hair, color: hairColor },
@@ -344,77 +403,47 @@ export function createLowPoly(variantId, config = {}) {
     { geos: acc, color: accentColor },
   ];
 
-  // mergeGeometries は属性の構成が1つでも違うと失敗するので、
-  // position/normal/uv だけに揃えてから統合する（groupsも消す）
-  function normalize(g) {
-    const src = g.index ? g.toNonIndexed() : g;
-    const out = new THREE.BufferGeometry();
-    out.setAttribute('position', src.getAttribute('position').clone());
-    const n = src.getAttribute('normal');
-    out.setAttribute(
-      'normal',
-      n ? n.clone() : new THREE.BufferAttribute(new Float32Array(src.getAttribute('position').count * 3), 3),
-    );
-    const uv = src.getAttribute('uv');
-    out.setAttribute(
-      'uv',
-      uv ? uv.clone() : new THREE.BufferAttribute(new Float32Array(src.getAttribute('position').count * 2), 2),
-    );
-    return out;
-  }
-
   let triCount = 0;
   for (const grp of groups) {
     if (!grp.geos.length) continue;
-    const mat = new THREE.MeshLambertMaterial({ color: grp.color, flatShading: true });
+    const mat = flat(grp.color);
     const outlineMat = new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide });
     const normalized = grp.geos.map(normalize);
-    const merged = mergeGeometries(normalized, false);
-    if (merged) {
-      merged.computeVertexNormals();
-      triCount += merged.attributes.position.count / 3;
-      upper.add(new THREE.Mesh(merged, mat));
-      const o = new THREE.Mesh(merged, outlineMat);
-      o.scale.setScalar(1.035);
+    const merged = mergeGeometries(normalized, false) || null;
+    const geosToAdd = merged ? [merged] : normalized;
+    for (const g of geosToAdd) {
+      g.computeVertexNormals();
+      triCount += g.attributes.position.count / 3;
+      upper.add(new THREE.Mesh(g, mat));
+      const o = new THREE.Mesh(g, outlineMat);
+      o.scale.setScalar(1.03);
       upper.add(o);
-    } else {
-      // 統合できなくても表示は保つ（パーツごとに追加）
-      for (const g of normalized) {
-        g.computeVertexNormals();
-        triCount += g.attributes.position.count / 3;
-        upper.add(new THREE.Mesh(g, mat));
-        const o = new THREE.Mesh(g, outlineMat);
-        o.scale.setScalar(1.035);
-        upper.add(o);
-      }
     }
   }
 
-  // 顔（頭の前面に貼る板）
-  const faceOpts = { eyeType: V.eyeType, eyeY: 0.56, eyeDX: 0.2, eyeW: 0.13, eyeH: 0.19 };
+  // ---- 顔（窓の上に貼る） ----
+  const faceOpts = { eyeType: V.eyeType };
   const faces = {
     default: makeFaceTexture(faceOpts, 'default'),
     happy: makeFaceTexture(faceOpts, 'happy'),
     closed: makeFaceTexture(faceOpts, 'closed'),
   };
   const faceMat = new THREE.MeshBasicMaterial({ map: faces.default, transparent: true, depthWrite: false });
-  const face = new THREE.Mesh(new THREE.PlaneGeometry(R * 1.5, R * 1.5), faceMat);
-  // 髪より確実に前へ出す（頭の表面すれすれだと髪に埋もれる）
-  face.position.set(0, headY - R * 0.06, R * 0.97);
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(R * 1.3, R * 1.34), faceMat);
+  // ボールの面より前・前髪より後ろ（前髪が目の間に落ちて見える順序）
+  face.position.set(0, headCY - R * 0.06, R * 0.98);
   face.renderOrder = 3;
   upper.add(face);
 
-  // 正規化（参考モデルに合わせて身長1.21m）
+  // ---- 接地 ----
   root.updateMatrixWorld(true);
   const box3 = new THREE.Box3().setFromObject(upper);
-  const s = 1.21 / Math.max(0.01, box3.max.y - box3.min.y);
-  upper.scale.setScalar(s);
-  upper.position.y = -box3.min.y * s;
+  upper.position.y = -box3.min.y;
   const baseY = upper.position.y;
 
   root.userData.triangles = Math.round(triCount);
 
-  // アニメーション
+  // ---- アニメーション ----
   let t = 0;
   let blink = 2 + Math.random() * 3;
   let moving = false;
