@@ -70,6 +70,15 @@ export async function initStore() {
         created_at    INTEGER NOT NULL
       )
     `);
+    // ログイン済みユーザーの入場設定。別の端末でも同じ姿で入れるようにするため
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS profiles (
+        email      TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        av         TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
     ready = true;
     lastError = '';
     console.log('[store] Turso に接続しました（イベントは永続化されます）');
@@ -130,6 +139,57 @@ export async function updateEventVideo(id, videoId) {
     return true;
   } catch (e) {
     console.warn('[store] 動画IDの更新に失敗:', e.message);
+    return false;
+  }
+}
+
+// ------------------------------------------------------------
+// ユーザーの入場設定（名前・アバター）
+// ------------------------------------------------------------
+
+/**
+ * 保存されている設定を読む。無ければ null。
+ * @param {string} email
+ * @returns {Promise<{name:string, av:object}|null>}
+ */
+export async function loadProfile(email) {
+  if (!ready || !email) return null;
+  try {
+    const rs = await db.execute({
+      sql: 'SELECT name, av FROM profiles WHERE email = ?',
+      args: [email],
+    });
+    if (!rs.rows.length) return null;
+    const row = rs.rows[0];
+    let av = {};
+    try {
+      av = JSON.parse(String(row.av));
+    } catch {
+      av = {};
+    }
+    return { name: String(row.name), av };
+  } catch (e) {
+    console.warn('[store] プロフィール読み込みに失敗:', e.message);
+    return null;
+  }
+}
+
+/** 設定を保存（同じメールなら上書き） */
+export async function saveProfile(email, name, av) {
+  if (!ready || !email) return false;
+  try {
+    await db.execute({
+      sql: `INSERT INTO profiles (email, name, av, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(email) DO UPDATE SET
+              name = excluded.name,
+              av = excluded.av,
+              updated_at = excluded.updated_at`,
+      args: [email, String(name || ''), JSON.stringify(av || {}), Date.now()],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] プロフィール保存に失敗:', e.message);
     return false;
   }
 }

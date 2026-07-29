@@ -3,3 +3,8 @@ node_modules/
 .DS_Store
 
 _shots/
+
+# ローカル検証用のSQLiteファイル（Turso接続を file: で試すときに出る）
+*.db
+*.db-shm
+*.db-wal

@@ -4,6 +4,7 @@ import { createAvatar } from './avatar.js';
 import { preloadAvatars } from './avatar_glb.js';
 import { initJoinScreen, openCustomizer } from './join.js';
 import { openPlacePicker } from './placepick.js';
+import { saveLocalPrefs } from './prefs.js';
 import { initMobile } from './mobile.js';
 import { initChat } from './chat.js';
 import { initSimPlayers } from './players.js';
@@ -369,6 +370,8 @@ avatarBtn.addEventListener('click', () => {
     onApply: ({ name, config }) => {
       session.name = name;
       session.config = { ...config };
+      // 入場後に変えた姿も次回に持ち越す（サーバー側は update を受けて保存する）
+      saveLocalPrefs({ name, config });
 
       // 位置と向きを保ったままアバターを作り直す
       const pos = player.position.clone();

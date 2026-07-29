@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { AVATAR_PARTS, randomConfig, createAvatar } from './avatar.js';
 import { fetchConfig, getConfig, renderLoginButton, getIdToken, isSignedIn } from './login.js';
 import { APP_NAME, APP_TAGLINE } from './brand.js';
+import { loadLocalPrefs, saveLocalPrefs, fetchServerPrefs } from './prefs.js';
 
 const HAIR_LABELS = {
   long: 'ロング',
@@ -459,11 +460,16 @@ function buildCustomizeScreen({
   }
 
   // ---- 選択ボタン行（髪型・服装・アクセサリー共通） ----
+  // 保存済み設定を読み込んだあとに選択状態を貼り直すため、行と項目を覚えておく
+  const selectableRows = [];
+
   function buildButtonRow(containerId, values, labels, configKey) {
     const el = document.getElementById(containerId);
+    selectableRows.push({ containerId, configKey, itemClass: 'hair-btn' });
     values.forEach((value) => {
       const btn = document.createElement('button');
       btn.type = 'button';
+      btn.dataset.value = value;
       btn.className = 'hair-btn' + (value === config[configKey] ? ' selected' : '');
       btn.textContent = labels[value] || value;
       btn.addEventListener('click', () => {
@@ -482,8 +488,10 @@ function buildCustomizeScreen({
   // ---- 色スウォッチ ----
   function buildSwatchRow(containerId, colors, configKey) {
     const el = document.getElementById(containerId);
+    selectableRows.push({ containerId, configKey, itemClass: 'swatch' });
     colors.forEach((color) => {
       const sw = document.createElement('div');
+      sw.dataset.value = color;
       sw.className = 'swatch' + (color === config[configKey] ? ' selected' : '');
       sw.style.background = color;
       sw.title = color;
@@ -496,6 +504,17 @@ function buildCustomizeScreen({
       el.appendChild(sw);
     });
   }
+  /** config が外から書き換わったとき（保存済み設定の復元）に選択表示を合わせる */
+  function refreshSelections() {
+    for (const row of selectableRows) {
+      const el = document.getElementById(row.containerId);
+      if (!el) continue;
+      el.querySelectorAll('.' + row.itemClass).forEach((item) => {
+        item.classList.toggle('selected', item.dataset.value === config[row.configKey]);
+      });
+    }
+  }
+
   buildSwatchRow('bodycolor-swatches', AVATAR_PARTS.bodyColors, 'bodyColor');
   buildSwatchRow('haircolor-swatches', AVATAR_PARTS.hairColors, 'hairColor');
   buildSwatchRow('eyecolor-swatches', AVATAR_PARTS.eyeColors, 'eyeColor');
@@ -537,12 +556,28 @@ function buildCustomizeScreen({
       const note = document.getElementById('login-note');
       if (row) row.style.display = '';
       if (note) note.textContent = 'ログインしなくても入れます（見た目の変更・コメント・エモートはログインが必要）';
-      await renderLoginButton(document.getElementById('login-button'), (p) => {
+      await renderLoginButton(document.getElementById('login-button'), async (p) => {
         if (note) {
           note.textContent = p ? `${p.name || p.email} としてログイン中` : 'ログインしていません';
           note.classList.toggle('signed', Boolean(p));
         }
         applyGuestLock();
+
+        // ログインしたら、サーバーに保存してある前回の姿を取りに行く。
+        // 別の端末でも同じ姿で入れるようにするため（ブラウザ保存では端末をまたげない）
+        if (!p) return;
+        const server = await fetchServerPrefs(getIdToken());
+        if (!server) return;
+        if (server.config) {
+          Object.assign(config, server.config);
+          rebuildPreviewAvatar();
+          refreshSelections();
+        }
+        // 名前は「保存済み → Googleの表示名 → 空」の順で埋める。
+        // Googleの名前は本名のことがあるので、初期値として入れるだけで固定はしない
+        if (!nameInput.value.trim()) {
+          nameInput.value = (server.name || server.googleName || '').slice(0, 12);
+        }
       });
       applyGuestLock();
     }
@@ -555,6 +590,10 @@ function buildCustomizeScreen({
   function handleSubmit() {
     const typed = nameInput.value.trim().slice(0, 12);
     const name = typed.length > 0 ? typed : fallbackName();
+
+    // 次回そのまま入れるようにブラウザへ保存する。
+    // ログイン済みならサーバー側にも保存されるが、そちらは join を受けたサーバーが行う
+    saveLocalPrefs({ name, config });
 
     closeScreen();
     onSubmit({
@@ -585,13 +624,15 @@ function buildCustomizeScreen({
  * @param {{name?:string, config?:object}} [prev] 「← アバター」で戻ってきたときの復元用
  */
 export function initJoinScreen(onJoin, prev = {}) {
+  // 優先順位: 「← アバター」で戻ってきた内容 → 前回の保存 → ランダム
+  const saved = loadLocalPrefs();
   buildCustomizeScreen({
     title: APP_NAME,
     subtitle: APP_TAGLINE,
     buttonLabel: '次へ（場所を選ぶ）',
     showCancel: false,
-    initialName: prev.name || '',
-    initialConfig: prev.config ? { ...prev.config } : randomConfig(),
+    initialName: prev.name || (saved && saved.name) || '',
+    initialConfig: prev.config ? { ...prev.config } : saved && saved.config ? { ...saved.config } : randomConfig(),
     fallbackName: randomGuestName,
     onSubmit: onJoin,
     onCancel: null,

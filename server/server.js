@@ -22,6 +22,8 @@ import {
   saveEvent,
   updateEventVideo,
   deleteEvent,
+  loadProfile,
+  saveProfile,
 } from './store.js';
 import {
   verifyIdToken,
@@ -354,10 +356,13 @@ async function handleJoin(client, msg) {
       role = roleForEmail(email);
     }
   }
-  // 開発用の権限指定。Render上では絶対に効かない（RENDER環境変数で封じる）うえ、
-  // OAuthを設定した時点でも無効になる。VIP・ゲストの挙動をローカルで試すためのもの。
+  // 開発用の権限指定。Render上では絶対に効かない（RENDER環境変数で封じる）。
+  // VIP・ゲストの挙動や、設定の保存/復元をローカルで試すためのもの。
   if (ALLOW_DEV_ROLE && typeof msg.devRole === 'string' && DEV_ROLES.has(msg.devRole)) {
     role = msg.devRole;
+    if (typeof msg.devEmail === 'string' && msg.devEmail) {
+      email = clampString(msg.devEmail, 120).toLowerCase();
+    }
   }
   client.role = role;
   client.email = email;
@@ -419,6 +424,9 @@ async function handleJoin(client, msg) {
   // 管理者・VIPはイベント全体に、一般は自室にだけ現れる
   broadcastFrom(client, { t: 'peer-join', p: toPeerInfo(client) });
   broadcastCount(ev.id, roomNumber);
+
+  // 次回そのまま入れるように、ログイン済みなら名前と姿を覚えておく
+  if (client.email) await saveProfile(client.email, client.n, client.av);
 }
 
 /** pos: 位置更新の中継 */
@@ -466,7 +474,7 @@ function handleChat(client, msg) {
 }
 
 /** update: アバター/名前の再カスタム */
-function handleUpdate(client, msg) {
+async function handleUpdate(client, msg) {
   if (!client.joined) return;
   if (!canInteract(client.role)) {
     send(client.ws, { t: 'denied', reason: 'guest-no-avatar' });
@@ -477,6 +485,9 @@ function handleUpdate(client, msg) {
   client.av = sanitizeAv(msg.av);
 
   broadcastFrom(client, { t: 'peer-update', id: client.id, n: client.n, av: client.av });
+
+  // 変更後の姿を次回に持ち越す
+  if (client.email) await saveProfile(client.email, client.n, client.av);
 }
 
 /** emote: エモート中継（既定リスト以外は破棄・連打は間引く） */
@@ -798,6 +809,49 @@ async function handleShot(req, res) {
   }
 }
 
+/** リクエストのJSON本文を読む（上限つき） */
+async function readJsonBody(req, maxBytes = 64 * 1024) {
+  let body = '';
+  req.on('data', (c) => {
+    body += c;
+    if (body.length > maxBytes) req.destroy();
+  });
+  await new Promise((resolve) => req.on('end', resolve));
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST /api/profile — 保存済みの名前とアバターを返す。
+ * IDトークンを検証して本人のぶんだけ返すので、他人の設定は取れない。
+ */
+async function handleProfileRequest(req, res) {
+  const send = (code, obj) => {
+    res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(obj));
+  };
+
+  const body = await readJsonBody(req);
+  const info = body && body.idt ? await verifyIdToken(body.idt) : null;
+  if (!info) {
+    send(401, { ok: false, error: 'not-signed-in' });
+    return;
+  }
+
+  const saved = await loadProfile(info.email);
+  send(200, {
+    ok: true,
+    name: saved ? saved.name : '',
+    av: saved ? saved.av : null,
+    // 保存が無いときの初期値として使ってもらう（本名の可能性があるので強制はしない）
+    googleName: info.name || '',
+    role: roleForEmail(info.email),
+  });
+}
+
 const httpServer = http.createServer(async (req, res) => {
   const url = (req.url || '/').split('?')[0];
 
@@ -810,6 +864,13 @@ const httpServer = http.createServer(async (req, res) => {
     const body = JSON.stringify(buildStatusJson());
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(body);
+    return;
+  }
+
+  // 入場画面が「前回の名前とアバター」を取りに来る。
+  // GETではなくPOSTなのは、IDトークンをURLに載せない（履歴やログに残さない）ため。
+  if (req.method === 'POST' && url === '/api/profile') {
+    await handleProfileRequest(req, res);
     return;
   }
 
