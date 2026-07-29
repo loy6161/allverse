@@ -96,10 +96,14 @@ const avatarBtn = document.getElementById('avatar-btn');
 // ?npc=1 でNPC（賑やかし）をネットワークモードでも追加できる
 const WANT_NPC = new URLSearchParams(location.search).get('npc') === '1';
 
+// サーバーが伝えてきた最新の人数。NPCだけ増減したときの再計算に使う
+let lastServerCount = null;
+
 function updateCount(serverCount) {
-  const npc = sim ? sim.players.length : 0;
+  if (serverCount !== undefined) lastServerCount = serverCount;
+  const npc = sim ? sim.count() : 0;
   const others = remote ? remote.count() : 0;
-  const total = serverCount != null ? serverCount + npc : 1 + others + npc;
+  const total = lastServerCount != null ? lastServerCount + npc : 1 + others + npc;
   playerCountEl.textContent = `${total} 人`;
 }
 
@@ -116,18 +120,26 @@ function applyRoleToUi() {
   if (screenUI) screenUI.setVisible(canControlVideo);
 }
 
+/** NPCの入れ物を用意する（人数0でも作っておき、あとから増減できるようにする） */
+function ensureSim() {
+  if (!sim) {
+    sim = initSimPlayers(scene, {
+      count: 0,
+      bounds: world.bounds,
+      onChat: (n, t) => chat.addMessage(n, t),
+    });
+    if (namesHidden) sim.setNamesVisible(false);
+  }
+  return sim;
+}
+
 // サーバーに繋がらない/切断されたときは従来のNPCデモに切り替える
 function startDemoMode() {
   if (demoMode) return;
   demoMode = true;
   if (remote) remote.clear();
-  if (!sim) {
-    sim = initSimPlayers(scene, {
-      count: 7,
-      bounds: world.bounds,
-      onChat: (n, t) => chat.addMessage(n, t),
-    });
-  }
+  // 一人きりの画面にならないよう、デモ用のNPCを出す
+  ensureSim().setCount(7);
   chat.addMessage('', 'オフラインデモモード（同期サーバー未接続）', { system: true });
   updateCount(null);
 }
@@ -267,13 +279,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
     },
   });
 
-  if (WANT_NPC) {
-    sim = initSimPlayers(scene, {
-      count: 7,
-      bounds: world.bounds,
-      onChat: (n, t) => chat.addMessage(n, t),
-    });
-  }
+  // NPCの入れ物は常に用意しておく（管理者が負荷テストで増やせるようにするため）。
+  // 人数0なら何も描かないので、通常の入場では一切影響しない
+  ensureSim();
+  if (WANT_NPC) sim.setCount(7);
 
   updateCount(null);
   hud.classList.remove('hidden');
@@ -333,6 +342,12 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
     },
     onRefresh: () => {
       if (net && !demoMode) net.requestEvents();
+    },
+    // 負荷テスト用のNPC。自分の画面にだけ出るので、他の人には影響しない
+    getNpcCount: () => (sim ? sim.count() : 0),
+    onNpcCount: (n) => {
+      ensureSim().setCount(n);
+      updateCount(); // サーバー人数は据え置きでNPCぶんだけ数え直す
     },
   });
   roomUI.setEvents(knownEvents);

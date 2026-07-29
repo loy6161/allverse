@@ -162,11 +162,47 @@ function createNpc(name, bounds, onChat) {
   return npc;
 }
 
-export function initSimPlayers(scene, { count, bounds, onChat }) {
-  const names = pickUniqueNames(count);
-  const npcs = names.map((name) => createNpc(name, bounds, onChat));
+export function initSimPlayers(scene, { count = 0, bounds, onChat }) {
+  const npcs = [];
+  let namesVisible = true;
+  let created = 0; // 名前の重複を避けるための通し番号
 
-  npcs.forEach((npc) => scene.add(npc.group));
+  function addOne() {
+    // 用意した名前を使い切ったら「観客12」のように連番で補う
+    const name = created < NPC_NAMES.length ? NPC_NAMES[created] : `観客${created + 1}`;
+    created += 1;
+    const npc = createNpc(name, bounds, onChat);
+    if (!namesVisible && npc.group.userData.setNameVisible) npc.group.userData.setNameVisible(false);
+    scene.add(npc.group);
+    npcs.push(npc);
+  }
+
+  function removeOne() {
+    const npc = npcs.pop();
+    if (!npc) return;
+    scene.remove(npc.group);
+    // 後始末はアバター固有のものだけにする。
+    // ジオメトリはGLBのテンプレートを全アバターで共有しているので、
+    // ここで dispose すると他のアバターの描画まで壊してしまう。
+    npc.group.traverse((o) => {
+      if (o.isSprite && o.userData.dispose) {
+        o.userData.dispose(); // ネームプレートのテクスチャは1体につき1枚
+        return;
+      }
+      if (o.isMesh && o.material && !Array.isArray(o.material)) o.material.dispose();
+    });
+    created = Math.max(0, created - 1);
+  }
+
+  /** 人数を指定の数に合わせる（負荷テスト用に増減できる） */
+  function setCount(n) {
+    const target = Math.max(0, Math.min(200, Math.floor(Number(n) || 0)));
+    while (npcs.length < target) addOne();
+    while (npcs.length > target) removeOne();
+    return npcs.length;
+  }
+
+  setCount(count);
 
   function update(dt) {
     for (const npc of npcs) {
@@ -176,11 +212,13 @@ export function initSimPlayers(scene, { count, bounds, onChat }) {
 
   return {
     update,
-    players: npcs.map((npc) => npc.group),
+    setCount,
+    count: () => npcs.length,
     // UI非表示のときはNPCの名前・吹き出しも消す
     setNamesVisible(v) {
+      namesVisible = Boolean(v);
       for (const npc of npcs) {
-        if (npc.group.userData.setNameVisible) npc.group.userData.setNameVisible(Boolean(v));
+        if (npc.group.userData.setNameVisible) npc.group.userData.setNameVisible(namesVisible);
       }
     },
   };
