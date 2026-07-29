@@ -298,3 +298,7 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+// 開発用の覗き口。見た目の不具合を「パーツを消して切り分ける」ために使う。
+// 参照を渡すだけで挙動は変えない。
+window.__vc = { scene, camera, renderer, world };

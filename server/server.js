@@ -1,7 +1,11 @@
 // ============================================================
 // VERSE CITY Web — リアルタイム同期サーバー
 // 仕様: docs/PROTOCOL.md（通信）/ docs/PRESENCE_SPEC.md §2.2（presence.json）
-// 依存: ws のみ。それ以外は Node.js 標準ライブラリのみで完結させる。
+// 依存: ws / @libsql/client / google-auth-library
+//
+// 2026-07-29 構造変更: 「イベント ＞ ルーム」の二層になった。
+//   イベント … 動画と再生位置の持ち主。管理者が作る。常設の main は消えない
+//   ルーム   … イベント内の分割（定員30人）。同じイベントなら全ルームが同じ動画・同じ再生位置
 // ============================================================
 
 import http from 'node:http';
@@ -9,6 +13,18 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
+
+import { initStore, isPersistent, loadEvents, saveEvent, updateEventVideo, deleteEvent } from './store.js';
+import {
+  verifyIdToken,
+  roleForEmail,
+  defaultRole,
+  isGlobalRole,
+  canControlVideo,
+  canInteract,
+  isLoginEnabled,
+  getClientId,
+} from './auth.js';
 
 // 静的ファイル配信のルート（= クライアント一式があるプロジェクト直下）
 const CLIENT_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,39 +59,41 @@ const MAX_COORD_ABS = 100;        // 座標の絶対値上限（これを超え�
 const EMOTE_IDS = new Set(['wave', 'clap', 'jump', 'dance', 'heart', 'penlight']);
 const EMOTE_MIN_INTERVAL_MS = 500; // 1クライアントあたりのエモート最小間隔（連打防止）
 
-// スクリーン（ルーム共有状態）
-const DEFAULT_VIDEO_ID = 'unrobrGhlv0';       // 誰も変更していないルームの初期動画
+// スクリーン
+const DEFAULT_VIDEO_ID = 'unrobrGhlv0';       // 常設イベントの初期動画
 const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;    // YouTube動画IDの形式
+
+// イベント
+const MAIN_EVENT_ID = 'main';                 // 常設イベント（削除不可・必ず存在する）
+const MAIN_EVENT_NAME = 'VERSE CITY';
+const MAX_EVENTS = 20;
+const MAX_EVENT_NAME_LEN = 24;
+const EVENT_ID_RE = /^[a-z0-9_-]{1,24}$/;
+
+// ゲスト（未ログイン）の固定アバター。見た目は後で確定させる（2026-07-29 時点の暫定）
+const GUEST_AV = { h: 'short', o: 'middle', ac: 'none', hc: 12, sc: 12, bc: 0, ec: 0 };
+
+// 開発用の権限指定を許すか。ローカル（Render以外）かつログイン未設定のときだけ。
+const DEV_ROLES = new Set(['admin', 'vip', 'user', 'guest']);
+const ALLOW_DEV_ROLE = !process.env.RENDER && !isLoginEnabled();
 
 // PRESENCE_SPEC §2.2 向けの出力上限
 const PRESENCE_MAX_WEB = 60;      // web[] の最大人数
-const PRESENCE_MAX_YT = 100;      // yt[] の最大人数（現段階では常に空配列なので未使用）
 const PRESENCE_CHAT_WINDOW_MS = 30 * 1000; // c を付与する直近発言の有効期間
 const PRESENCE_CHAT_TXT_MAX = 40; // c[0] の最大文字数（30KB制約対応）
 
 // 「直近チャット」フィールド(c)は実装済みだが、運用判断が済むまで既定は無効。
-// true にすればそのまま動く。
 const ENABLE_CHAT_FIELD = false;
 
 // ------------------------------------------------------------
 // サーバー状態
 // ------------------------------------------------------------
-// rooms: Map<roomNumber, Map<clientId, ClientState>>
+// events: Map<eventId, Event>
+//   Event = { id, name, videoId, playback:{playing,pos,at}, requireLogin, permanent, createdAt }
+const events = new Map();
+
+// rooms: Map<roomKey, Map<clientId, ClientState>>   roomKey = `${eventId}#${roomNumber}`
 const rooms = new Map();
-
-// roomScreens: Map<roomNumber, videoId> ルームごとの共有スクリーン状態
-const roomScreens = new Map();
-
-// roomPlayback: Map<roomNumber, {playing, pos, at}> ルームごとの再生状態
-// pos = at の時点の再生位置(秒)。現在位置は playing なら経過時間を足して求める
-const roomPlayback = new Map();
-
-function currentPlayback(roomNumber) {
-  const pb = roomPlayback.get(roomNumber);
-  if (!pb) return { st: 'play', pos: 0 };
-  const elapsed = pb.playing ? (Date.now() - pb.at) / 1000 : 0;
-  return { st: pb.playing ? 'play' : 'pause', pos: Math.max(0, pb.pos + elapsed) };
-}
 
 let nextClientSeq = 1; // "c1", "c2", ... を払い出す連番
 const startedAt = Date.now();
@@ -85,8 +103,11 @@ const startedAt = Date.now();
  * @typedef {Object} ClientState
  * @property {string} id
  * @property {import('ws').WebSocket} ws
+ * @property {string|null} eventId
  * @property {number|null} room
  * @property {boolean} joined
+ * @property {string} role   'admin' | 'vip' | 'user' | 'guest'
+ * @property {string} email
  * @property {string} n
  * @property {Object} av
  * @property {number} x
@@ -94,14 +115,118 @@ const startedAt = Date.now();
  * @property {number} r
  * @property {boolean} m
  * @property {{txt:string, ts:number}|null} lastChat
- * @property {number[]} msgTimes  レート制限用の直近送信タイムスタンプ
+ * @property {number[]} msgTimes
  */
+
+// ------------------------------------------------------------
+// イベント
+// ------------------------------------------------------------
+
+function makeEvent({ id, name, videoId, requireLogin = false, permanent = false, createdAt = Date.now() }) {
+  return {
+    id,
+    name,
+    videoId,
+    requireLogin,
+    permanent,
+    createdAt,
+    playback: { playing: true, pos: 0, at: Date.now() },
+  };
+}
+
+/** 常設イベントを必ず1つ用意する（Tursoが無くても・落ちていても存在する） */
+function ensureMainEvent() {
+  if (!events.has(MAIN_EVENT_ID)) {
+    events.set(
+      MAIN_EVENT_ID,
+      makeEvent({ id: MAIN_EVENT_ID, name: MAIN_EVENT_NAME, videoId: DEFAULT_VIDEO_ID, permanent: true }),
+    );
+  }
+}
+
+/** 現在の再生位置を求める（pos は at 時点の位置なので、再生中なら経過分を足す） */
+function currentPlayback(eventId) {
+  const ev = events.get(eventId);
+  if (!ev) return { st: 'play', pos: 0 };
+  const pb = ev.playback;
+  const elapsed = pb.playing ? (Date.now() - pb.at) / 1000 : 0;
+  return { st: pb.playing ? 'play' : 'pause', pos: Math.max(0, pb.pos + elapsed) };
+}
+
+/** クライアントに渡すイベント情報（内部の at などは出さない） */
+function toEventInfo(ev) {
+  return {
+    id: ev.id,
+    name: ev.name,
+    v: ev.videoId,
+    requireLogin: ev.requireLogin,
+    permanent: ev.permanent,
+    count: countInEvent(ev.id),
+  };
+}
+
+function countInEvent(eventId) {
+  let n = 0;
+  for (const [key, members] of rooms) {
+    if (keyEventId(key) === eventId) n += members.size;
+  }
+  return n;
+}
+
+/** イベント一覧＋各ルームの人数（入場画面とルーム移動で使う） */
+function buildEventList() {
+  return Array.from(events.values())
+    .sort((a, b) => (a.permanent === b.permanent ? a.createdAt - b.createdAt : a.permanent ? -1 : 1))
+    .map((ev) => ({ ...toEventInfo(ev), rooms: buildRoomList(ev.id) }));
+}
+
+/** そのイベントのルーム一覧。空きのある最小番号を必ず1つは含める */
+function buildRoomList(eventId) {
+  const list = [];
+  for (const [key, members] of rooms) {
+    if (keyEventId(key) !== eventId) continue;
+    list.push({ room: keyRoomNumber(key), count: members.size, full: members.size >= MAX_PER_ROOM });
+  }
+  list.sort((a, b) => a.room - b.room);
+  const next = assignRoom(eventId);
+  if (!list.some((r) => r.room === next)) list.push({ room: next, count: 0, full: false });
+  return list;
+}
+
+// ------------------------------------------------------------
+// ルームキーのユーティリティ
+// ------------------------------------------------------------
+function roomKey(eventId, roomNumber) {
+  return `${eventId}#${roomNumber}`;
+}
+function keyEventId(key) {
+  return key.slice(0, key.lastIndexOf('#'));
+}
+function keyRoomNumber(key) {
+  return Number(key.slice(key.lastIndexOf('#') + 1));
+}
+
+/** 指定ルームが定員未満か */
+function roomHasSpace(eventId, roomNumber) {
+  const room = rooms.get(roomKey(eventId, roomNumber));
+  if (!room) return true;
+  return room.size < MAX_PER_ROOM;
+}
+
+/** そのイベントで「空きのある最小番号ルーム」 */
+function assignRoom(eventId) {
+  let n = 1;
+  for (;;) {
+    if (roomHasSpace(eventId, n)) return n;
+    n += 1;
+  }
+}
 
 // ------------------------------------------------------------
 // ユーティリティ
 // ------------------------------------------------------------
 
-/** 文字列を強制トリム（サロゲートペア考慮せず単純な文字数カット。仕様上は簡易実装で十分） */
+/** 文字列を強制トリム */
 function clampString(value, maxLen, fallback = '') {
   if (typeof value !== 'string') return fallback;
   return value.slice(0, maxLen);
@@ -120,23 +245,6 @@ function sanitizeAv(av) {
   return {};
 }
 
-/** 指定ルームの空き（定員未満）かどうか */
-function roomHasSpace(roomNumber) {
-  const room = rooms.get(roomNumber);
-  if (!room) return true;
-  return room.size < MAX_PER_ROOM;
-}
-
-/** 「空きのある最小番号ルーム」を探して番号を返す（#1から順に走査） */
-function assignRoom() {
-  let roomNumber = 1;
-  // 既存ルームの中で最小の空きを探す
-  for (;;) {
-    if (roomHasSpace(roomNumber)) return roomNumber;
-    roomNumber += 1;
-  }
-}
-
 /** JSON文字列として安全にwsへ送信する（送信失敗は無視） */
 function send(ws, obj) {
   if (ws.readyState !== ws.OPEN) return;
@@ -148,8 +256,8 @@ function send(ws, obj) {
 }
 
 /** 同室の全員（フィルタ可）にブロードキャスト */
-function broadcastToRoom(roomNumber, obj, excludeId = null) {
-  const room = rooms.get(roomNumber);
+function broadcastToRoom(eventId, roomNumber, obj, excludeId = null) {
+  const room = rooms.get(roomKey(eventId, roomNumber));
   if (!room) return;
   for (const client of room.values()) {
     if (excludeId && client.id === excludeId) continue;
@@ -157,11 +265,35 @@ function broadcastToRoom(roomNumber, obj, excludeId = null) {
   }
 }
 
+/** 同じイベントの全ルームへブロードキャスト（管理者・VIPの姿と発言はこちらを使う） */
+function broadcastToEvent(eventId, obj, excludeId = null) {
+  for (const [key, members] of rooms) {
+    if (keyEventId(key) !== eventId) continue;
+    for (const client of members.values()) {
+      if (excludeId && client.id === excludeId) continue;
+      send(client.ws, obj);
+    }
+  }
+}
+
+/**
+ * そのクライアントの発信をどこまで届けるか。
+ * 管理者・VIPはイベント全体、それ以外は自室のみ。
+ */
+function broadcastFrom(client, obj, excludeSelf = true) {
+  const exclude = excludeSelf ? client.id : null;
+  if (isGlobalRole(client.role)) {
+    broadcastToEvent(client.eventId, obj, exclude);
+  } else {
+    broadcastToRoom(client.eventId, client.room, obj, exclude);
+  }
+}
+
 /** 同室に人数変化を通知 */
-function broadcastCount(roomNumber) {
-  const room = rooms.get(roomNumber);
+function broadcastCount(eventId, roomNumber) {
+  const room = rooms.get(roomKey(eventId, roomNumber));
   if (!room) return;
-  broadcastToRoom(roomNumber, { t: 'count', c: room.size });
+  broadcastToRoom(eventId, roomNumber, { t: 'count', c: room.size });
 }
 
 /** peer-join/welcome用に「相手から見えるべき情報」だけを抜き出す */
@@ -173,52 +305,108 @@ function toPeerInfo(client) {
     x: client.x,
     z: client.z,
     r: client.r,
+    role: client.role,
   };
+}
+
+/**
+ * 自分から見えるべき相手の一覧。
+ * 自室の全員＋（同じイベントの他ルームにいる）管理者・VIP。
+ */
+function visiblePeersFor(client) {
+  const out = [];
+  const myKey = roomKey(client.eventId, client.room);
+  for (const [key, members] of rooms) {
+    if (keyEventId(key) !== client.eventId) continue;
+    const sameRoom = key === myKey;
+    for (const other of members.values()) {
+      if (other.id === client.id) continue;
+      if (sameRoom || isGlobalRole(other.role)) out.push(toPeerInfo(other));
+    }
+  }
+  return out;
 }
 
 // ------------------------------------------------------------
 // メッセージハンドラ（種別ごと）
 // ------------------------------------------------------------
 
-/** join: 入場処理 */
-function handleJoin(client, msg) {
-  // 既にjoin済みなら二重join扱い(無視)。念のため。
-  if (client.joined) return;
+/** join: 入場処理。idt があればGoogleのIDトークンとして検証して権限を決める */
+async function handleJoin(client, msg) {
+  if (client.joined) return; // 二重join無視
+
+  // ---- 認証（任意）----
+  let role = defaultRole();
+  let email = '';
+  if (msg.idt) {
+    const info = await verifyIdToken(msg.idt);
+    if (info) {
+      email = info.email;
+      role = roleForEmail(email);
+    }
+  }
+  // 開発用の権限指定。Render上では絶対に効かない（RENDER環境変数で封じる）うえ、
+  // OAuthを設定した時点でも無効になる。VIP・ゲストの挙動をローカルで試すためのもの。
+  if (ALLOW_DEV_ROLE && typeof msg.devRole === 'string' && DEV_ROLES.has(msg.devRole)) {
+    role = msg.devRole;
+  }
+  client.role = role;
+  client.email = email;
+
+  // ---- イベントの決定 ----
+  ensureMainEvent();
+  const wantEvent = typeof msg.ev === 'string' && events.has(msg.ev) ? msg.ev : MAIN_EVENT_ID;
+  const ev = events.get(wantEvent);
+
+  // ログイン必須イベントにゲストは入れない
+  if (ev.requireLogin && role === 'guest') {
+    send(client.ws, { t: 'denied', reason: 'login-required', ev: ev.id });
+    return;
+  }
+
+  // ---- ルームの決定（指定があり空いていればそこ、無ければ自動割当）----
+  const wantRoom = Number.isInteger(msg.rm) && msg.rm >= 1 && msg.rm <= 999 ? msg.rm : null;
+  const roomNumber = wantRoom && roomHasSpace(ev.id, wantRoom) ? wantRoom : assignRoom(ev.id);
 
   client.n = clampString(msg.n, MAX_NAME_LEN, '名無し');
-  client.av = sanitizeAv(msg.av);
+  // ゲストは見た目を固定（自由度を下げる方針。2026-07-29 確定）
+  client.av = role === 'guest' ? { ...GUEST_AV } : sanitizeAv(msg.av);
   client.x = 0;
   client.z = 0;
   client.r = 0;
   client.m = false;
+  client.eventId = ev.id;
+  client.room = roomNumber;
 
-  const roomNumber = assignRoom();
-  let room = rooms.get(roomNumber);
+  const key = roomKey(ev.id, roomNumber);
+  let room = rooms.get(key);
   if (!room) {
     room = new Map();
-    rooms.set(roomNumber, room);
+    rooms.set(key, room);
   }
 
-  // welcomeに載せる「既存メンバー」は自分を追加する前に集める
-  const peers = Array.from(room.values()).map(toPeerInfo);
-
-  room.set(client.id, client);
-  client.room = roomNumber;
   client.joined = true;
+  const peers = visiblePeersFor(client); // 自分を入れる前に集める
+  room.set(client.id, client);
 
   send(client.ws, {
     t: 'welcome',
     id: client.id,
+    role: client.role,
+    ev: ev.id,
+    event: toEventInfo(ev),
     room: roomNumber,
     peers,
     count: room.size,
-    screen: roomScreens.get(roomNumber) || DEFAULT_VIDEO_ID, // 途中入場でも今の動画に追従できる
-    playback: currentPlayback(roomNumber), // 再生位置・再生中かどうかも揃える
+    screen: ev.videoId,
+    playback: currentPlayback(ev.id),
+    events: buildEventList(),
+    persistent: isPersistent(),
   });
 
-  // 他の同室メンバーへ参加通知
-  broadcastToRoom(roomNumber, { t: 'peer-join', p: toPeerInfo(client) }, client.id);
-  broadcastCount(roomNumber);
+  // 管理者・VIPはイベント全体に、一般は自室にだけ現れる
+  broadcastFrom(client, { t: 'peer-join', p: toPeerInfo(client) });
+  broadcastCount(ev.id, roomNumber);
 }
 
 /** pos: 位置更新の中継 */
@@ -237,83 +425,205 @@ function handlePos(client, msg) {
   client.r = r;
   client.m = m;
 
-  broadcastToRoom(
-    client.room,
-    { t: 'pos', id: client.id, x, z, r, m },
-    client.id, // 自分には送らない
-  );
+  broadcastFrom(client, { t: 'pos', id: client.id, x, z, r, m });
 }
 
-/** chat: チャット中継 */
+/**
+ * chat: チャット中継
+ * sc（scope）: 'local' … ワールド内だけ（既定）／'stream' … 配信にも流す想定の発言
+ * ※ YouTubeへの送信そのものは未実装。ここではscopeを保持して中継するだけ。
+ */
 function handleChat(client, msg) {
   if (!client.joined) return;
+  if (!canInteract(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'guest-no-chat' });
+    return;
+  }
 
   const txt = clampString(msg.txt, MAX_TXT_LEN);
-  if (!txt) return; // 空文字は無視
+  if (!txt) return;
+
+  // 配信送信は管理者のみ（誤爆すると配信のコメント欄から消せないため既定は local）
+  let scope = msg.sc === 'stream' ? 'stream' : 'local';
+  if (scope === 'stream' && !canControlVideo(client.role)) scope = 'local';
 
   client.lastChat = { txt, ts: Date.now() };
 
   // 発信者自身にも返す（クライアント側で自分のidなら無視する仕様）
-  broadcastToRoom(client.room, { t: 'chat', id: client.id, n: client.n, txt });
+  broadcastFrom(client, { t: 'chat', id: client.id, n: client.n, txt, sc: scope }, false);
 }
 
 /** update: アバター/名前の再カスタム */
 function handleUpdate(client, msg) {
   if (!client.joined) return;
+  if (!canInteract(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'guest-no-avatar' });
+    return;
+  }
 
   client.n = clampString(msg.n, MAX_NAME_LEN, client.n);
   client.av = sanitizeAv(msg.av);
 
-  broadcastToRoom(
-    client.room,
-    { t: 'peer-update', id: client.id, n: client.n, av: client.av },
-    client.id,
-  );
+  broadcastFrom(client, { t: 'peer-update', id: client.id, n: client.n, av: client.av });
 }
 
 /** emote: エモート中継（既定リスト以外は破棄・連打は間引く） */
 function handleEmote(client, msg) {
   if (!client.joined) return;
+  if (!canInteract(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'guest-no-emote' });
+    return;
+  }
   if (typeof msg.e !== 'string' || !EMOTE_IDS.has(msg.e)) return;
 
   const now = Date.now();
   if (client.lastEmoteAt && now - client.lastEmoteAt < EMOTE_MIN_INTERVAL_MS) return;
   client.lastEmoteAt = now;
 
-  broadcastToRoom(
-    client.room,
-    { t: 'emote', id: client.id, e: msg.e },
-    client.id, // 自分の分はローカルで即再生済み
-  );
+  broadcastFrom(client, { t: 'emote', id: client.id, e: msg.e });
 }
 
-/** screen: ルーム共有のスクリーン動画を変更 */
-function handleScreen(client, msg) {
+/** screen: イベントの動画を変更（管理者のみ）。同じイベントの全ルームに反映される */
+async function handleScreen(client, msg) {
   if (!client.joined) return;
+  if (!canControlVideo(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'admin-only' });
+    return;
+  }
   if (typeof msg.v !== 'string' || !VIDEO_ID_RE.test(msg.v)) return;
 
-  roomScreens.set(client.room, msg.v);
-  // 動画が変わったら再生状態は先頭・再生中に戻す
-  roomPlayback.set(client.room, { playing: true, pos: 0, at: Date.now() });
+  const ev = events.get(client.eventId);
+  if (!ev) return;
 
-  // 発信者にも返す（「変更されました」の表示と再生開始を全員同じ経路で行う）
-  broadcastToRoom(client.room, { t: 'screen', v: msg.v, by: client.n });
+  ev.videoId = msg.v;
+  ev.playback = { playing: true, pos: 0, at: Date.now() }; // 動画が変われば先頭から
+
+  broadcastToEvent(client.eventId, { t: 'screen', v: msg.v, by: client.n });
+  broadcastToEvent(client.eventId, { t: 'events', events: buildEventList() });
+  await updateEventVideo(ev.id, msg.v);
 }
 
-/** playback: 再生/一時停止/シークをルーム全員へ揃える */
+/** playback: 再生/一時停止/シーク（管理者のみ）。同じイベントの全ルームで揃える */
 function handlePlayback(client, msg) {
   if (!client.joined) return;
+  if (!canControlVideo(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'admin-only' });
+    return;
+  }
   if (msg.st !== 'play' && msg.st !== 'pause') return;
   const pos = typeof msg.pos === 'number' && Number.isFinite(msg.pos) ? Math.max(0, msg.pos) : 0;
   if (pos > 24 * 3600) return; // 異常値は破棄
 
-  roomPlayback.set(client.room, { playing: msg.st === 'play', pos, at: Date.now() });
+  const ev = events.get(client.eventId);
+  if (!ev) return;
+  ev.playback = { playing: msg.st === 'play', pos, at: Date.now() };
 
-  broadcastToRoom(
-    client.room,
-    { t: 'playback', id: client.id, st: msg.st, pos },
-    client.id, // 発信者は自分で操作済み
-  );
+  broadcastToEvent(client.eventId, { t: 'playback', id: client.id, st: msg.st, pos }, client.id);
+}
+
+/** event-create: イベント作成（管理者のみ） */
+async function handleEventCreate(client, msg) {
+  if (!client.joined) return;
+  if (!canControlVideo(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'admin-only' });
+    return;
+  }
+  if (events.size >= MAX_EVENTS) {
+    send(client.ws, { t: 'denied', reason: 'too-many-events' });
+    return;
+  }
+
+  const name = clampString(msg.name, MAX_EVENT_NAME_LEN).trim();
+  if (!name) return;
+  const videoId = typeof msg.v === 'string' && VIDEO_ID_RE.test(msg.v) ? msg.v : DEFAULT_VIDEO_ID;
+
+  // idは名前から作らず衝突しない連番にする（日本語名でも安全）
+  let id = `ev${Date.now().toString(36)}`;
+  if (!EVENT_ID_RE.test(id)) id = `ev${events.size + 1}`;
+
+  const ev = makeEvent({ id, name, videoId, requireLogin: Boolean(msg.requireLogin) });
+  events.set(id, ev);
+  await saveEvent(ev);
+
+  send(client.ws, { t: 'event-created', ev: toEventInfo(ev) });
+  broadcastAllEvents();
+}
+
+/** event-delete: イベント削除（管理者のみ・常設は消せない・人がいる間は消せない） */
+async function handleEventDelete(client, msg) {
+  if (!client.joined) return;
+  if (!canControlVideo(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'admin-only' });
+    return;
+  }
+  const ev = events.get(msg.id);
+  if (!ev || ev.permanent) {
+    send(client.ws, { t: 'denied', reason: 'cannot-delete' });
+    return;
+  }
+  if (countInEvent(ev.id) > 0) {
+    send(client.ws, { t: 'denied', reason: 'event-not-empty' });
+    return;
+  }
+
+  events.delete(ev.id);
+  await deleteEvent(ev.id);
+  broadcastAllEvents();
+}
+
+/** move: 別のイベント/ルームへ移動する */
+function handleMove(client, msg) {
+  if (!client.joined) return;
+
+  ensureMainEvent();
+  const targetEventId = typeof msg.ev === 'string' && events.has(msg.ev) ? msg.ev : client.eventId;
+  const ev = events.get(targetEventId);
+  if (!ev) return;
+  if (ev.requireLogin && client.role === 'guest') {
+    send(client.ws, { t: 'denied', reason: 'login-required', ev: ev.id });
+    return;
+  }
+
+  const wantRoom = Number.isInteger(msg.rm) && msg.rm >= 1 && msg.rm <= 999 ? msg.rm : null;
+  const targetRoom = wantRoom && roomHasSpace(ev.id, wantRoom) ? wantRoom : assignRoom(ev.id);
+  if (targetEventId === client.eventId && targetRoom === client.room) return; // 同じ場所なら何もしない
+
+  // 元の場所から抜ける
+  leaveCurrentRoom(client);
+
+  client.eventId = ev.id;
+  client.room = targetRoom;
+  client.x = 0;
+  client.z = 0;
+
+  const key = roomKey(ev.id, targetRoom);
+  let room = rooms.get(key);
+  if (!room) {
+    room = new Map();
+    rooms.set(key, room);
+  }
+  const peers = visiblePeersFor(client);
+  room.set(client.id, client);
+
+  send(client.ws, {
+    t: 'moved',
+    ev: ev.id,
+    event: toEventInfo(ev),
+    room: targetRoom,
+    peers,
+    count: room.size,
+    screen: ev.videoId,
+    playback: currentPlayback(ev.id),
+  });
+
+  broadcastFrom(client, { t: 'peer-join', p: toPeerInfo(client) });
+  broadcastCount(ev.id, targetRoom);
+  broadcastAllEvents();
+}
+
+/** events: 一覧の要求 */
+function handleEventsRequest(client) {
+  send(client.ws, { t: 'events', events: buildEventList() });
 }
 
 const HANDLERS = {
@@ -324,66 +634,96 @@ const HANDLERS = {
   emote: handleEmote,
   screen: handleScreen,
   playback: handlePlayback,
+  'event-create': handleEventCreate,
+  'event-delete': handleEventDelete,
+  move: handleMove,
+  events: handleEventsRequest,
 };
 
-/** 切断時処理: ルームから外し、peer-leave/countを通知 */
-function handleDisconnect(client) {
-  if (!client.joined || client.room === null) return;
-
-  const roomNumber = client.room;
-  const room = rooms.get(roomNumber);
-  if (room) {
-    room.delete(client.id);
-    broadcastToRoom(roomNumber, { t: 'peer-leave', id: client.id });
-    if (room.size === 0) {
-      rooms.delete(roomNumber); // 空ルームは破棄（番号の穴あきはassignRoomが埋める）
-      roomScreens.delete(roomNumber); // スクリーン状態も初期化
-      roomPlayback.delete(roomNumber);
-    } else {
-      broadcastCount(roomNumber);
-    }
+/** 全員にイベント一覧を配る（人数が変わったとき・イベントが増減したとき） */
+function broadcastAllEvents() {
+  const payload = { t: 'events', events: buildEventList() };
+  for (const members of rooms.values()) {
+    for (const client of members.values()) send(client.ws, payload);
   }
+}
+
+/** 今いるルームから抜ける（切断・移動の共通処理） */
+function leaveCurrentRoom(client) {
+  if (client.eventId === null || client.room === null) return;
+  const key = roomKey(client.eventId, client.room);
+  const room = rooms.get(key);
+  if (!room) return;
+
+  room.delete(client.id);
+  broadcastFrom(client, { t: 'peer-leave', id: client.id });
+
+  if (room.size === 0) {
+    rooms.delete(key); // 空ルームは破棄（番号の穴あきは assignRoom が埋める）
+  } else {
+    broadcastCount(client.eventId, client.room);
+  }
+}
+
+/** 切断時処理 */
+function handleDisconnect(client) {
+  if (!client.joined) return;
+  leaveCurrentRoom(client);
   client.joined = false;
+  client.eventId = null;
   client.room = null;
 }
 
 /** レート制限チェック: 直近1秒間の送信回数が上限を超えていないか */
 function isRateLimited(client) {
   const now = Date.now();
-  // 直近1秒より古い記録は捨てる
   client.msgTimes = client.msgTimes.filter((t) => now - t < 1000);
   client.msgTimes.push(now);
   return client.msgTimes.length > RATE_LIMIT_PER_SEC;
 }
 
 // ------------------------------------------------------------
-// HTTP: ステータスJSON / presence.json
+// HTTP: ステータスJSON / presence.json / イベント一覧
 // ------------------------------------------------------------
 
 function buildStatusJson() {
   const roomList = Array.from(rooms.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([room, members]) => ({ room, count: members.size }));
+    .map(([key, members]) => ({ event: keyEventId(key), room: keyRoomNumber(key), count: members.size }))
+    .sort((a, b) => (a.event === b.event ? a.room - b.room : a.event < b.event ? -1 : 1));
 
   return {
     ok: true,
     rooms: roomList,
+    events: buildEventList(),
+    persistent: isPersistent(),
+    login: isLoginEnabled(),
     uptime: Math.floor((Date.now() - startedAt) / 1000),
   };
 }
 
+/**
+ * presence.json（PRESENCE_SPEC v=1 は凍結。フィールドを増やさない）
+ *
+ * rm はルーム番号なので、イベントをまたぐと番号が衝突して
+ * 「別のイベントにいる人が同じ部屋にいる」ように見えてしまう。
+ * v=1 のまま正しさを保つため、VRC側へ出すのは常設イベント(main)だけにしている。
+ * 特別イベントも流したくなったら、Unity側と v=2 の相談が必要。
+ */
 function buildPresenceJson() {
   const nowMs = Date.now();
   const web = [];
 
-  const sortedRoomNumbers = Array.from(rooms.keys()).sort((a, b) => a - b);
-  outer: for (const roomNumber of sortedRoomNumbers) {
-    const room = rooms.get(roomNumber);
+  const keys = Array.from(rooms.keys())
+    .filter((k) => keyEventId(k) === MAIN_EVENT_ID)
+    .sort((a, b) => keyRoomNumber(a) - keyRoomNumber(b));
+
+  outer: for (const key of keys) {
+    const room = rooms.get(key);
     for (const client of room.values()) {
       if (web.length >= PRESENCE_MAX_WEB) break outer;
 
       const entry = {
-        rm: roomNumber,
+        rm: keyRoomNumber(key),
         n: client.n,
         x: client.x,
         z: client.z,
@@ -416,7 +756,6 @@ function buildPresenceJson() {
 
 // 開発用: ブラウザで描いた絵をファイルに保存する（見た目を確認しながら直すため）。
 // ALLOW_SHOTS=1、またはローカル起動（Render以外）のループバック接続のみ有効。
-// 本番(Render)は RENDER 環境変数が必ず立つので常に無効になる。
 const ALLOW_SHOTS = process.env.ALLOW_SHOTS === '1' || !process.env.RENDER;
 function isLoopback(req) {
   const a = req.socket.remoteAddress || '';
@@ -460,6 +799,20 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // 入場画面がログインボタンの出し分けとイベント一覧に使う
+  if (req.method === 'GET' && url === '/api/config') {
+    const body = JSON.stringify({
+      ok: true,
+      login: isLoginEnabled(),
+      clientId: getClientId(),
+      persistent: isPersistent(),
+      events: buildEventList(),
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(body);
+    return;
+  }
+
   if (req.method === 'GET' && url === '/api/presence.json') {
     const body = JSON.stringify(buildPresenceJson());
     res.writeHead(200, {
@@ -498,7 +851,7 @@ const httpServer = http.createServer(async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// WebSocketサーバー（/ws のみ受け付け。それ以外のパスへのupgradeは拒否）
+// WebSocketサーバー（/ws のみ受け付け）
 // ------------------------------------------------------------
 
 const wss = new WebSocketServer({ noServer: true });
@@ -515,9 +868,6 @@ httpServer.on('upgrade', (req, socket, head) => {
 });
 
 // ---- 死活監視 ----
-// タブが強制終了した・回線が切れた等で切断イベントが届かないと、
-// 存在しない人が会場に残り続ける（人数表示やpresence.jsonが狂う）。
-// 定期的にpingを送り、応答が無い接続を掃除する。
 const HEARTBEAT_MS = 30000;
 setInterval(() => {
   for (const ws of wss.clients) {
@@ -543,8 +893,11 @@ wss.on('connection', (ws) => {
   const client = {
     id: `c${nextClientSeq++}`,
     ws,
+    eventId: null,
     room: null,
     joined: false,
+    role: 'guest',
+    email: '',
     n: '',
     av: {},
     x: 0,
@@ -556,7 +909,6 @@ wss.on('connection', (ws) => {
   };
 
   ws.on('message', (raw) => {
-    // 毎秒20メッセージ超は破棄（構文解析より先にレート制限を切る）
     if (isRateLimited(client)) return;
 
     let msg;
@@ -574,7 +926,8 @@ wss.on('connection', (ws) => {
     const handler = HANDLERS[msg.t];
     if (!handler) return; // 想定外のtは無視（切断まではしない）
 
-    handler(client, msg);
+    // handleJoin/handleScreen は非同期（トークン検証・DB書き込み）
+    Promise.resolve(handler(client, msg)).catch(() => {});
   });
 
   ws.on('close', () => {
@@ -590,6 +943,22 @@ wss.on('connection', (ws) => {
 // 起動
 // ------------------------------------------------------------
 
-httpServer.listen(PORT, () => {
-  console.log(`[VERSE CITY Web Server] listening on port ${PORT} (ws path: ${WS_PATH})`);
-});
+async function boot() {
+  await initStore();
+  ensureMainEvent();
+
+  // 保存済みイベントを復元（常設は上書きしない）
+  for (const row of await loadEvents()) {
+    if (row.id === MAIN_EVENT_ID) continue;
+    events.set(row.id, makeEvent(row));
+  }
+
+  httpServer.listen(PORT, () => {
+    console.log(`[VERSE CITY Web Server] listening on port ${PORT} (ws path: ${WS_PATH})`);
+    console.log(`  ログイン: ${isLoginEnabled() ? '有効' : '無効（GOOGLE_CLIENT_ID 未設定）'}`);
+    console.log(`  イベント永続化: ${isPersistent() ? '有効（Turso）' : '無効（メモリのみ）'}`);
+    console.log(`  イベント数: ${events.size}`);
+  });
+}
+
+boot();

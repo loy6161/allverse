@@ -251,8 +251,10 @@ export function createWorld(scene, opts = {}) {
   const floorGeo = new THREE.CircleGeometry(40, 48);
   let floor;
   if (!lowSpec) {
+    // color は反射像の明るさそのもの。明るくするとスポットライトの反射が白飛びして
+    // 浅い角度から見たときに画面が眩しくなる（2026-07-29 実機で確認）
     floor = new Reflector(floorGeo, {
-      color: 0x0c0c14,
+      color: 0x05050a,
       textureWidth: 512,
       textureHeight: 512,
       clipBias: 0.003,
@@ -271,10 +273,11 @@ export function createWorld(scene, opts = {}) {
 
   // 床の質感ディテール（タイル目地＋中央の暖色グラデーション）を反射面の上に重ねる
   const floorDetailTex = makeFloorTexture();
+  // 加算合成は反射像の上に重なるので、強いと白飛びを増幅する。控えめに乗せる
   const floorDetailMat = new THREE.MeshBasicMaterial({
     map: floorDetailTex,
     transparent: true,
-    opacity: 0.55,
+    opacity: 0.3,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
