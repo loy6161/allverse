@@ -62,8 +62,10 @@ function carvedHead(R) {
     const cz = (a.z + b.z + c.z) / 3;
     const cy = (a.y + b.y + c.y) / 3;
     const cx = (a.x + b.x + c.x) / 3;
-    // 顔の窓: 前方(z)・下寄り(y)・中央(x)。広げすぎると側面まで肌になる
-    const isFace = cz > R * 0.5 && Math.abs(cx) < R * 0.56 && cy < R * 0.56 && cy > -R * 0.74;
+    // 顔の窓: 前方(z)・下寄り(y)・中央(x)。
+    // v3で前髪が一枚の塊になったので窓は小さくてよい。広げると斜めから頭頂・こめかみの肌が
+    // 見えて「はげ」になる（v3で発生）。上限は前髪のM字の内側に収める
+    const isFace = cz > R * 0.55 && Math.abs(cx) < R * 0.5 && cy < R * 0.3 && cy > -R * 0.74;
     (isFace ? skinTris : hairTris).push(i);
   }
   const build = (indices) => {
@@ -249,49 +251,52 @@ const HAIR_EXTRA = {
     return parts;
   },
   twin(R) {
+    // 参考画像の方針: 正面から読める大きな塊。結び目＋太い房が外に跳ねて先端は点
     const parts = HAIR_EXTRA.short(R);
     for (const sx of [-1, 1]) {
-      // 高い位置から外へ跳ねて下に落ちるツインテール
-      parts.push(place(box(R * 0.26, R * 0.2, R * 0.26), [sx * R * 0.8, R * 0.52, -R * 0.12]));
-      parts.push(place(frustum(R * 0.3, R * 0.08, R * 1.6, 4), [sx * R * 1.05, -R * 0.3, -R * 0.18], [0.08, Math.PI / 4, sx * 0.42], [1, 1, 0.62]));
+      // 結び目のすぐ下からまっすぐ落として、先端だけ少し外へ（交差させない）
+      parts.push(place(new THREE.IcosahedronGeometry(R * 0.22, 0), [sx * R * 0.8, R * 0.52, -R * 0.15]));
+      parts.push(place(frustum(R * 0.26, R * 0.03, R * 1.45, 5), [sx * R * 0.98, -R * 0.25, -R * 0.22], [0.1, 0, sx * 0.15], [1, 1, 0.75]));
     }
     return parts;
   },
   spiky(R) {
-    // 頭頂〜後ろ寄りに上向きのトゲを並べる。前に出すと前髪と重なって崩れる(v2eで確認)
+    // 太いトゲ3本だけを頭頂の後ろ寄りに、後ろへ流す（本数を増やすと正面がゴチャつく）
     const parts = [];
-    for (let i = 0; i < 5; i++) {
-      const a = -Math.PI + (i + 0.5) * ((Math.PI * 2) / 5);
-      const len = 0.55 + (i % 2) * 0.25;
+    const defs = [
+      { x: 0, z: -0.5, len: 1.0, tx: -0.7, tz: 0 },
+      { x: 0.55, z: -0.32, len: 0.85, tx: -0.55, tz: -0.5 },
+      { x: -0.55, z: -0.32, len: 0.85, tx: -0.55, tz: 0.5 },
+    ];
+    for (const d of defs) {
       parts.push(
-        place(
-          wedge(R * 0.34, R * len, R * 0.3),
-          [Math.sin(a) * R * 0.4, R * (0.74 + len * 0.4), Math.cos(a) * R * 0.3 - R * 0.42],
-          [-0.24, a, -0.3 * Math.sin(a)],
-          [1, 1, 0.5],
-        ),
+        place(wedge(R * 0.5, R * d.len, R * 0.4), [d.x * R, R * 0.84, d.z * R], [d.tx, 0, d.tz], [1, 1, 0.55]),
       );
     }
     return parts;
   },
   ponytail(R) {
+    // 結び目＋太い一本を背に流す。先端は点
     const parts = HAIR_EXTRA.short(R);
-    parts.push(place(box(R * 0.24, R * 0.2, R * 0.24), [0, R * 0.5, -R * 0.88]));
-    parts.push(place(frustum(R * 0.34, R * 0.08, R * 1.9, 4), [0, -R * 0.35, -R * 1.12], [0.34, Math.PI / 4, 0], [1, 1, 0.66]));
+    parts.push(place(new THREE.IcosahedronGeometry(R * 0.24, 0), [0, R * 0.6, -R * 0.84]));
+    parts.push(place(frustum(R * 0.38, R * 0.05, R * 2.0, 5), [0, -R * 0.42, -R * 1.02], [0.32, 0, 0], [1, 1, 0.7]));
     return parts;
   },
   bun(R) {
-    const parts = HAIR_EXTRA.bob(R);
+    // 参考画像(緑の子)のクマ耳型お団子: 大きく・上外側・正面から見える
+    const parts = HAIR_EXTRA.short(R);
     for (const sx of [-1, 1]) {
-      parts.push(place(new THREE.IcosahedronGeometry(R * 0.3, 0), [sx * R * 0.6, R * 0.86, -R * 0.2]));
+      parts.push(
+        place(new THREE.IcosahedronGeometry(R * 0.42, 0), [sx * R * 0.66, R * 0.8, -R * 0.06], [0, sx * 0.4, 0], [1, 0.92, 0.85]),
+      );
     }
     return parts;
   },
   hime(R) {
     const parts = HAIR_EXTRA.long(R);
     for (const sx of [-1, 1]) {
-      // 顔の横の直線的な束（姫カット）
-      parts.push(place(box(R * 0.24, R * 1.3, R * 0.26), [sx * R * 0.84, -R * 0.5, R * 0.4]));
+      // 顔の横の直線的な束（姫カット）。頭に寄せて浮かせない
+      parts.push(place(box(R * 0.26, R * 1.25, R * 0.32), [sx * R * 0.78, -R * 0.45, R * 0.3], [0, sx * 0.12, 0]));
     }
     return parts;
   },
@@ -299,9 +304,10 @@ const HAIR_EXTRA = {
 
 // 動物耳（参考モデルの定番。オンオフできる差分）
 function animalEars(R) {
+  // 太い三角をしっかり立てる（細いトゲだと貧相に見える）
   const parts = [];
   for (const sx of [-1, 1]) {
-    parts.push(place(wedge(R * 0.34, R * 0.6, R * 0.22), [sx * R * 0.52, R * 0.95, -R * 0.05], [0, 0, sx * -0.25], [1, 1, 0.55]));
+    parts.push(place(wedge(R * 0.46, R * 0.62, R * 0.3), [sx * R * 0.5, R * 1.0, -R * 0.05], [0, 0, sx * -0.3], [1, 1, 0.6]));
   }
   return parts;
 }
