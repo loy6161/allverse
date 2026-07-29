@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { APP_NAME } from './brand.js';
+import { addMoon, makeGlowTexture } from './night_sky.js';
 
 // =====================================================================
 // VERSE CITY - ライブ会場ワールド
@@ -72,74 +73,8 @@ function makeScreenTexture(text) {
   return tex;
 }
 
-// 汎用ソフトグロー（放射グラデーション）。ムーンのハロー・ネオンの光芒・
-// パーティクルの粒に共用する。post-processingのブルームが無いための代替表現。
-function makeGlowTexture(innerColor, outerColor) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d');
-  const grad = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
-  grad.addColorStop(0, innerColor);
-  grad.addColorStop(0.4, outerColor);
-  grad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
+// makeGlowTexture / makeMoonTexture は clubVERSE 側でも使うので night_sky.js へ移した。
 
-// 月面のクレーター模様を手続き的に描く
-function makeMoonTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 512;
-  const ctx = canvas.getContext('2d');
-
-  // ベースの地色（温白〜淡いグレー）
-  const base = ctx.createRadialGradient(200, 190, 20, 256, 256, 300);
-  base.addColorStop(0, '#fdf3e2');
-  base.addColorStop(0.55, '#e9dcc6');
-  base.addColorStop(1, '#c9b99e');
-  ctx.fillStyle = base;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // 簡易乱数（固定シードで再現性を持たせる）
-  let s = 918273;
-  function rand() {
-    s = (s * 9301 + 49297) % 233280;
-    return s / 233280;
-  }
-
-  // クレーターを陰影付きで描く
-  const craterCount = 46;
-  for (let i = 0; i < craterCount; i++) {
-    const cx = rand() * canvas.width;
-    const cy = rand() * canvas.height;
-    const r = 8 + rand() * 42;
-
-    const shade = ctx.createRadialGradient(cx - r * 0.25, cy - r * 0.25, 0, cx, cy, r);
-    shade.addColorStop(0, 'rgba(120, 100, 80, 0.35)');
-    shade.addColorStop(0.7, 'rgba(150, 130, 105, 0.18)');
-    shade.addColorStop(1, 'rgba(150, 130, 105, 0)');
-    ctx.fillStyle = shade;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fill();
-
-    // クレーター縁のハイライト
-    ctx.strokeStyle = 'rgba(255, 250, 235, 0.25)';
-    ctx.lineWidth = Math.max(1, r * 0.06);
-    ctx.beginPath();
-    ctx.arc(cx + r * 0.12, cy + r * 0.12, r * 0.85, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
 
 function makeFloorTexture() {
   const canvas = document.createElement('canvas');
@@ -222,30 +157,7 @@ export function createWorld(scene, opts = {}) {
   // =====================================================================
   // 巨大な月
   // =====================================================================
-  const moonTex = makeMoonTexture();
-  const moonGeo = new THREE.SphereGeometry(24, 48, 32);
-  const moonMat = new THREE.MeshBasicMaterial({
-    map: moonTex,
-    fog: false, // 遠景でも霧に埋もれず存在感を保つ
-    toneMapped: false,
-  });
-  const moon = new THREE.Mesh(moonGeo, moonMat);
-  moon.position.set(18, 68, -210);
-  group.add(moon);
-
-  // 月のハロー（ビルボードのソフトグロー。ブルーム代替）
-  const moonGlowTex = makeGlowTexture('rgba(255,244,224,0.9)', 'rgba(255,220,170,0.35)');
-  const moonGlowMat = new THREE.SpriteMaterial({
-    map: moonGlowTex,
-    transparent: true,
-    depthWrite: false,
-    fog: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const moonGlow = new THREE.Sprite(moonGlowMat);
-  moonGlow.scale.set(90, 90, 1);
-  moonGlow.position.copy(moon.position);
-  group.add(moonGlow);
+  addMoon(group, { position: [18, 68, -210], radius: 24, glowScale: 90 });
 
   // ---- 地面（暗く艶のある床） ----
   // 鏡面反射（Reflector）は 2026-07-29 に廃止した。
