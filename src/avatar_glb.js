@@ -73,6 +73,7 @@ export function createGlbAvatar(config) {
     hairColor = '#3a2a1e',
     shirtColor = '#f2f2f4',
     eyeColor = '',
+    penlightColor = '',
     name = '',
   } = config || {};
 
@@ -87,8 +88,12 @@ export function createGlbAvatar(config) {
   const eyeIrisColor = eyeColor
     ? new THREE.Color(eyeColor)
     : new THREE.Color(hairColor).lerp(new THREE.Color('#93242e'), 0.55);
-  // ペンライトの色は服の色から作る（人それぞれ違う色になり、客席が賑やかに見える）
-  const accentColorForPenlight = new THREE.Color(shirtColor).lerp(new THREE.Color('#ffffff'), 0.35);
+  // ペンライトの色は本人が選んだ色。未指定の設定（古いクライアント等）では服の色から作る。
+  // 光って見せたいので、選んだ色を少し白に寄せて明るくする
+  const accentColorForPenlight = new THREE.Color(penlightColor || shirtColor).lerp(
+    new THREE.Color('#ffffff'),
+    0.3,
+  );
   const MAT_BUILDERS = {
     MatHair: () => toon(hairColor),
     MatSkin: () => toon(bodyColor),
@@ -320,19 +325,21 @@ export function createGlbAvatar(config) {
       opacity: 1,
     });
     const sp = new THREE.Sprite(mat);
-    const size = 0.12 + Math.random() * 0.09;
-    sp.scale.set(size, size, 1);
+    // 遠目でも「ハートを出している」と分かるよう大きめに。膨らんでから浮き上がる
+    const size = 0.26 + Math.random() * 0.2;
+    sp.scale.set(0.01, 0.01, 1);
     // 胸の前あたりから出す。顔にかぶらないよう、少し下・少し左右に散らす
     const side = Math.random() < 0.5 ? -1 : 1;
-    sp.position.set(side * (0.1 + Math.random() * 0.24), 0.5 + Math.random() * 0.12, 0.34);
+    sp.position.set(side * (0.12 + Math.random() * 0.3), 0.46 + Math.random() * 0.16, 0.36);
     sp.renderOrder = 900;
     body.add(sp);
     hearts.push({
       sprite: sp,
+      size,
       life: 0,
-      ttl: 1.5 + Math.random() * 0.6,
-      vy: 0.34 + Math.random() * 0.2,
-      sway: (Math.random() - 0.5) * 0.5,
+      ttl: 1.9 + Math.random() * 0.7,
+      vy: 0.5 + Math.random() * 0.3,
+      sway: (Math.random() - 0.5) * 0.8,
       phase: Math.random() * Math.PI * 2,
     });
   }
@@ -349,9 +356,12 @@ export function createGlbAvatar(config) {
       }
       h.sprite.position.y += h.vy * dt;
       h.sprite.position.x += Math.sin(h.life * 3 + h.phase) * h.sway * dt;
-      // 出たては少し大きくなり、最後にふっと消える
-      const pop = k < 0.15 ? k / 0.15 : 1;
-      h.sprite.material.opacity = (1 - k * k) * pop;
+      // 出たては勢いよく膨らみ（少し行き過ぎてから戻る）、最後にふっと消える
+      const popT = Math.min(1, k / 0.18);
+      const overshoot = 1 + Math.sin(popT * Math.PI) * 0.35;
+      const s = h.size * popT * overshoot;
+      h.sprite.scale.set(s, s, 1);
+      h.sprite.material.opacity = 1 - k * k;
     }
   }
   function clearHearts() {
@@ -500,7 +510,7 @@ export function createGlbAvatar(config) {
         body.position.y = Math.sin(t * 2.6) * 0.012 * env;
 
         // 一定間隔でハートを足す（終わりぎわは出さず、余韻で消えていくようにする）
-        const spawnEvery = 0.2;
+        const spawnEvery = 0.13;
         const shouldHave = Math.floor(Math.min(t, dur - 0.7) / spawnEvery);
         if (shouldHave > heartCount) {
           heartCount = shouldHave;

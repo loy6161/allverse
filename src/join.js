@@ -353,6 +353,10 @@ function buildCustomizeScreen({
             <div class="swatch-row" id="shirtcolor-swatches"></div>
           </div>
           <div class="customize-row">
+            <div class="customize-label">ペンライトの色</div>
+            <div class="swatch-row" id="penlightcolor-swatches"></div>
+          </div>
+          <div class="customize-row">
             <div class="customize-label">なまえ</div>
             <input type="text" id="name-input" maxlength="12" placeholder="なまえ" autocomplete="off" />
           </div>
@@ -388,6 +392,9 @@ function buildCustomizeScreen({
   if (!AVATAR_PARTS.hairColors.includes(config.hairColor)) config.hairColor = AVATAR_PARTS.hairColors[1];
   if (!AVATAR_PARTS.shirtColors.includes(config.shirtColor)) config.shirtColor = AVATAR_PARTS.shirtColors[13];
   if (!AVATAR_PARTS.eyeColors.includes(config.eyeColor)) config.eyeColor = AVATAR_PARTS.eyeColors[1];
+  if (!AVATAR_PARTS.penlightColors.includes(config.penlightColor)) {
+    config.penlightColor = AVATAR_PARTS.penlightColors[9]; // 既定は水色
+  }
 
   // ---- プレビュー用の小さな3Dシーン ----
   const previewCanvas = document.getElementById('avatar-preview-canvas');
@@ -492,6 +499,7 @@ function buildCustomizeScreen({
   buildSwatchRow('haircolor-swatches', AVATAR_PARTS.hairColors, 'hairColor');
   buildSwatchRow('eyecolor-swatches', AVATAR_PARTS.eyeColors, 'eyeColor');
   buildSwatchRow('shirtcolor-swatches', AVATAR_PARTS.shirtColors, 'shirtColor');
+  buildSwatchRow('penlightcolor-swatches', AVATAR_PARTS.penlightColors, 'penlightColor');
 
   // ---- ログイン（入場画面のときだけ出す。イベント/ルームの選択は次の画面 placepick.js） ----
   // ログインしていないゲストは見た目を変えられないので、選択UIを触れなくする
@@ -505,7 +513,14 @@ function buildCustomizeScreen({
       el.querySelectorAll('.hair-btn').forEach((b) => b.classList.toggle('locked', locked));
       el.style.pointerEvents = locked ? 'none' : '';
     }
-    for (const id of ['bodycolor-swatches', 'haircolor-swatches', 'eyecolor-swatches', 'shirtcolor-swatches']) {
+    const swatchRows = [
+      'bodycolor-swatches',
+      'haircolor-swatches',
+      'eyecolor-swatches',
+      'shirtcolor-swatches',
+      'penlightcolor-swatches',
+    ];
+    for (const id of swatchRows) {
       const el = document.getElementById(id);
       if (!el) continue;
       el.style.opacity = locked ? '0.45' : '';

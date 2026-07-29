@@ -26,6 +26,8 @@ export const AVATAR_PARTS = {
   hairColors: COLOR14,
   shirtColors: COLOR14,
   eyeColors: COLOR14,
+  // ペンライトの色。一度選ぶと変えるまでその色で光る（2026-07-29 追加）
+  penlightColors: COLOR14,
 };
 
 function pick(arr) {
@@ -41,6 +43,7 @@ export function randomConfig() {
     hairColor: pick(AVATAR_PARTS.hairColors),
     shirtColor: pick(AVATAR_PARTS.shirtColors),
     eyeColor: pick(AVATAR_PARTS.eyeColors),
+    penlightColor: pick(AVATAR_PARTS.penlightColors),
   };
 }
 

@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { Reflector } from 'three/addons/objects/Reflector.js';
 
 // =====================================================================
 // VERSE CITY - ライブ会場ワールド
@@ -247,37 +246,28 @@ export function createWorld(scene, opts = {}) {
   moonGlow.position.copy(moon.position);
   group.add(moonGlow);
 
-  // ---- 地面（暗く艶のある床。lowSpec以外は簡易鏡面反射） ----
+  // ---- 地面（暗く艶のある床） ----
+  // 鏡面反射（Reflector）は 2026-07-29 に廃止した。
+  // 反射像は見る角度によって照明やネオンをそのまま映し返すため、浅い角度で必ず眩しくなる。
+  // 明るさを下げても角度次第で再発するので、機能ごと外している（ユーザー判断: 反射は不要）。
+  // 描画も1パス減るので負荷も下がる。
   const floorGeo = new THREE.CircleGeometry(40, 48);
-  let floor;
-  if (!lowSpec) {
-    // color は反射像の明るさそのもの。明るくするとスポットライトの反射が白飛びして
-    // 浅い角度から見たときに画面が眩しくなる（2026-07-29 実機で確認）
-    floor = new Reflector(floorGeo, {
-      color: 0x05050a,
-      textureWidth: 512,
-      textureHeight: 512,
-      clipBias: 0.003,
-    });
-  } else {
-    const floorMat = new THREE.MeshStandardMaterial({
-      color: 0x0a0a10,
-      roughness: 0.6,
-      metalness: 0.35,
-    });
-    floor = new THREE.Mesh(floorGeo, floorMat);
-  }
+  const floorMat = new THREE.MeshStandardMaterial({
+    color: 0x0a0a10,
+    roughness: 0.62,
+    metalness: 0.3,
+  });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = !lowSpec;
   group.add(floor);
 
-  // 床の質感ディテール（タイル目地＋中央の暖色グラデーション）を反射面の上に重ねる
+  // 床の質感ディテール（タイル目地＋中央の暖色グラデーション）
   const floorDetailTex = makeFloorTexture();
-  // 加算合成は反射像の上に重なるので、強いと白飛びを増幅する。控えめに乗せる
   const floorDetailMat = new THREE.MeshBasicMaterial({
     map: floorDetailTex,
     transparent: true,
-    opacity: 0.3,
+    opacity: 0.34,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
