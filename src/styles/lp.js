@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // =====================================================================
 // ローポリ・アバター生成器 v2（参考モデル10体の接写観察にもとづく作り直し）
@@ -93,16 +93,17 @@ function makeFaceTexture(o, expression = 'default') {
   cv.height = S;
   const c = cv.getContext('2d');
   const cx = S / 2;
-  const ey = S * (o.eyeY ?? 0.6); // 前髪の毛先より必ず下（参考: 目は毛先の下に離れて見える）
-  const dx = S * (o.eyeDX ?? 0.21);
-  const w = S * (o.eyeW ?? 0.125);
-  const h = S * (o.eyeH ?? 0.26);
+  // 参考画像の一貫性: 目は「低く・左右に離して」。中央Vの両脇の窪みに置く
+  const ey = S * (o.eyeY ?? 0.62);
+  const dx = S * (o.eyeDX ?? 0.28);
+  const w = S * (o.eyeW ?? 0.115);
+  const h = S * (o.eyeH ?? 0.23);
   const ink = '#191219';
 
   c.fillStyle = 'rgba(255,138,150,0.4)';
   for (const sx of [-1, 1]) {
     c.beginPath();
-    c.ellipse(cx + sx * (dx + S * 0.1), ey + S * 0.1, S * 0.055, S * 0.032, 0, 0, Math.PI * 2);
+    c.ellipse(cx + sx * (dx + S * 0.04), ey + S * 0.11, S * 0.05, S * 0.028, 0, 0, Math.PI * 2);
     c.fill();
   }
 
@@ -164,27 +165,64 @@ function makeFaceTexture(o, expression = 'default') {
 }
 
 // ---------------------------------------------------------------------
-// 前髪（顔の窓の上端から垂れる大きな三角。目の間に落ちる）
+// 前髪（v3: 一枚の塊。参考画像の「M字の生え際」を1ポリゴンで作る）
+//   - 隙間のある房の集合(v2)は正解ではなかった。かわいいローポリの一貫性:
+//     サイドが低く下がり、中央にVが1本、目の間まで降りる。目はその両脇の窪みに置く
 // ---------------------------------------------------------------------
-function bangs(R, opts = {}) {
-  // 参考モデルの前髪は「大きな三角」が目の高さまで垂れ、その間から目が覗く。
-  // 小さくすると生え際の点にしか見えず台無しになる（v2aで確認）
-  // 参考(shinonome接写)の要点: 毛先は「目の上」で止まり、目は毛先の下に離れて見える。
-  // v2dは房が長すぎて目を覆った。毛先の最下端 > 目の上端 を必ず守る。
-  const defs = [
-    { x: 0, len: 0.56, w: 0.34 },
-    { x: -0.5, len: 0.5, w: 0.34 },
-    { x: 0.5, len: 0.5, w: 0.34 },
-    { x: -0.88, len: 0.4, w: 0.3 },
-    { x: 0.88, len: 0.4, w: 0.3 },
+function bangs(R) {
+  // 前面図の輪郭（単位: R）。右→上→左→下の反時計回り
+  const pts = [
+    [0.95, 0.2],
+    [0.8, 0.55],
+    [0.4, 0.8],
+    [0, 0.88],
+    [-0.4, 0.8],
+    [-0.8, 0.55],
+    [-0.95, 0.2],
+    [-0.68, -0.5], // 左サイドの毛先（頬の横まで下がる）
+    [-0.42, 0.38], // 左の窪み（この下に目）
+    [0, -0.24], // 中央のVの毛先（目の間の高さ）
+    [0.42, 0.38],
+    [0.68, -0.5],
   ];
-  const parts = [];
-  for (const d of defs) {
-    parts.push(
-      place(wedge(R * d.w, R * d.len, R * 0.24), [d.x * R, R * 0.66 - R * d.len * 0.5, R * 1.0 - Math.abs(d.x) * R * 0.2], [Math.PI, 0, 0], [1, 1, 0.4]),
-    );
+  const shape = new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x * R, y * R)));
+  let g = new THREE.ShapeGeometry(shape).toNonIndexed();
+  // 大きな三角形のままだと面の中央が球にめり込む（弦のたわみ）ので、2回細分化してから球面に沿わせる
+  for (let s = 0; s < 2; s++) g = subdivide4(g);
+  const pos = g.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) / R;
+    const y = pos.getY(i) / R;
+    pos.setZ(i, R * Math.sqrt(Math.max(0.02, 1.15 - x * x - y * y)));
   }
-  return parts;
+  return [g];
+}
+
+// 非インデックス形状の各三角形を4分割する（中点分割）
+function subdivide4(g) {
+  const p = g.getAttribute('position');
+  const out = [];
+  const v = (i) => [p.getX(i), p.getY(i), p.getZ(i)];
+  const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+  for (let i = 0; i < p.count; i += 3) {
+    const a = v(i);
+    const b = v(i + 1);
+    const c = v(i + 2);
+    const ab = mid(a, b);
+    const bc = mid(b, c);
+    const ca = mid(c, a);
+    out.push(a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca);
+  }
+  const arr = new Float32Array(out.length * 3);
+  out.forEach((pt, i) => arr.set(pt, i * 3));
+  const ng = new THREE.BufferGeometry();
+  ng.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+  return ng;
+}
+
+// アホ毛（頭頂の1本。参考画像の定番シルエット）
+function ahoge(R) {
+  return [place(wedge(R * 0.18, R * 0.55, R * 0.16), [R * 0.04, R * 1.16, R * 0.08], [0.3, 0, -0.25], [1, 1, 0.5])];
 }
 
 // ---------------------------------------------------------------------
@@ -300,14 +338,14 @@ const OUTFIT_BUILDERS = {
 // ---------------------------------------------------------------------
 export const LP_VARIANTS = {
   v01: { name: '01 ボブ×ワンピ', hair: 'bob', outfit: 'dress', eyeType: 'rect', ears: false },
-  v02: { name: '02 ショート×パーカー', hair: 'short', outfit: 'hoodie', eyeType: 'rect', ears: false },
+  v02: { name: '02 ショート×パーカー', hair: 'short', outfit: 'hoodie', eyeType: 'rect', ears: false, ahoge: true },
   v03: { name: '03 ツイン×ワンピ', hair: 'twin', outfit: 'dress', eyeType: 'round', ears: false },
   v04: { name: '04 ロング×コート', hair: 'long', outfit: 'coat', eyeType: 'rect', ears: false },
   v05: { name: '05 尖髪×Tシャツ', hair: 'spiky', outfit: 'tee', eyeType: 'diamond', ears: false },
   v06: { name: '06 ポニー×パーカー', hair: 'ponytail', outfit: 'hoodie', eyeType: 'rect', ears: false },
-  v07: { name: '07 お団子×ワンピ', hair: 'bun', outfit: 'dress', eyeType: 'round', ears: false },
+  v07: { name: '07 お団子×ワンピ', hair: 'bun', outfit: 'dress', eyeType: 'round', ears: false, ahoge: true },
   v08: { name: '08 姫カット×コート', hair: 'hime', outfit: 'coat', eyeType: 'rect', ears: false },
-  v09: { name: '09 けもみみ×ワンピ', hair: 'short', outfit: 'dress', eyeType: 'rect', ears: true },
+  v09: { name: '09 けもみみ×ワンピ', hair: 'short', outfit: 'dress', eyeType: 'rect', ears: true, ahoge: true },
   v10: { name: '10 けもみみ×パーカー', hair: 'bob', outfit: 'hoodie', eyeType: 'round', ears: true },
   v11: { name: '11 ツイン×パーカー', hair: 'twin', outfit: 'hoodie', eyeType: 'rect', ears: false },
   v12: { name: '12 尖髪×コート', hair: 'spiky', outfit: 'coat', eyeType: 'rect', ears: false },
@@ -347,18 +385,17 @@ export function createLowPoly(variantId, config = {}) {
   const fit = OUTFIT_BUILDERS[V.outfit](B);
   cloth.push(...fit.cloth);
 
-  // 腕（肩から生やした先細りの小さな腕。体に密着させて浮かせない）
+  // 腕（参考画像: 先の尖った単純なくさび。手は作らない）
   for (const sx of [-1, 1]) {
     const shoulderY = B.y + B.h * 0.34;
     cloth.push(
-      place(frustum(0.052, 0.018, B.h * 0.62, 5), [sx * (B.r * 0.98), shoulderY - B.h * 0.3, 0.01], [0, 0, sx * 0.3]),
+      place(frustum(0.052, 0.008, B.h * 0.62, 4), [sx * (B.r * 0.98), shoulderY - B.h * 0.3, 0.01], [0, 0, sx * 0.35]),
     );
   }
 
-  // 脚（先細り。参考モデルはほぼ足先が点になる）
+  // 脚（参考画像: 足先は点。足パーツは作らない）
   for (const sx of [-1, 1]) {
-    dark.push(place(frustum(0.05, 0.022, bodyTop * 0.42, 5), [sx * 0.062, bodyTop * 0.21, 0]));
-    dark.push(place(box(0.075, 0.045, 0.11), [sx * 0.062, 0.024, 0.015]));
+    dark.push(place(frustum(0.05, 0.01, bodyTop * 0.48, 4), [sx * 0.062, bodyTop * 0.26, 0]));
   }
 
   // ---- 頭（丸いボールを髪と顔の窓に切り分け） ----
@@ -386,6 +423,12 @@ export function createLowPoly(variantId, config = {}) {
       hair.push(g);
     }
   }
+  if (V.ahoge) {
+    for (const g of ahoge(R)) {
+      g.translate(0, headCY, 0);
+      hair.push(g);
+    }
+  }
 
   // ---- 統合 ----
   function normalize(g) {
@@ -396,7 +439,8 @@ export function createLowPoly(variantId, config = {}) {
   }
 
   const groups = [
-    { geos: skin, color: bodyColor },
+    // 肌はスムーズシェーディング。面ごとの陰影ノイズが「顔のバランスが悪い」原因の一つだった
+    { geos: skin, color: bodyColor, smooth: true },
     { geos: hair, color: hairColor },
     { geos: cloth, color: shirtColor },
     { geos: dark, color: bottomColor },
@@ -406,14 +450,15 @@ export function createLowPoly(variantId, config = {}) {
   let triCount = 0;
   for (const grp of groups) {
     if (!grp.geos.length) continue;
-    const mat = flat(grp.color);
+    const mat = grp.smooth ? new THREE.MeshLambertMaterial({ color: grp.color }) : flat(grp.color);
     const outlineMat = new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide });
     const normalized = grp.geos.map(normalize);
-    const merged = mergeGeometries(normalized, false) || null;
+    let merged = mergeGeometries(normalized, false) || null;
+    if (merged && grp.smooth) merged = mergeVertices(merged, 1e-4);
     const geosToAdd = merged ? [merged] : normalized;
     for (const g of geosToAdd) {
       g.computeVertexNormals();
-      triCount += g.attributes.position.count / 3;
+      triCount += (g.index ? g.index.count : g.attributes.position.count) / 3;
       upper.add(new THREE.Mesh(g, mat));
       const o = new THREE.Mesh(g, outlineMat);
       o.scale.setScalar(1.03);

@@ -1,0 +1,13 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "verse-city",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set ALLOW_SHOTS=1&& node server/server.js"],
+      "port": 5179,
+      "cwd": "L:\\企画用\\WEB\\verse_city_web",
+      "env": { "ALLOW_SHOTS": "1" }
+    }
+  ]
+}

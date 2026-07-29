@@ -415,8 +415,13 @@ function buildPresenceJson() {
 // ------------------------------------------------------------
 
 // 開発用: ブラウザで描いた絵をファイルに保存する（見た目を確認しながら直すため）。
-// 環境変数 ALLOW_SHOTS=1 のときだけ有効。本番(Render)では設定しないので動かない。
-const ALLOW_SHOTS = process.env.ALLOW_SHOTS === '1';
+// ALLOW_SHOTS=1、またはローカル起動（Render以外）のループバック接続のみ有効。
+// 本番(Render)は RENDER 環境変数が必ず立つので常に無効になる。
+const ALLOW_SHOTS = process.env.ALLOW_SHOTS === '1' || !process.env.RENDER;
+function isLoopback(req) {
+  const a = req.socket.remoteAddress || '';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
 
 async function handleShot(req, res) {
   let body = '';
@@ -443,7 +448,7 @@ async function handleShot(req, res) {
 const httpServer = http.createServer(async (req, res) => {
   const url = (req.url || '/').split('?')[0];
 
-  if (ALLOW_SHOTS && req.method === 'POST' && url === '/api/_shot') {
+  if (ALLOW_SHOTS && isLoopback(req) && req.method === 'POST' && url === '/api/_shot') {
     await handleShot(req, res);
     return;
   }
