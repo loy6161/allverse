@@ -73,9 +73,10 @@ const EVENT_ID_RE = /^[a-z0-9_-]{1,24}$/;
 // ゲスト（未ログイン）の固定アバター。見た目は後で確定させる（2026-07-29 時点の暫定）
 const GUEST_AV = { h: 'short', o: 'middle', ac: 'none', hc: 12, sc: 12, bc: 0, ec: 0 };
 
-// 開発用の権限指定を許すか。ローカル（Render以外）かつログイン未設定のときだけ。
+// 開発用の権限指定を許すか。Render上では常に無効（RENDER環境変数が必ず立つため）。
+// ローカルでのみ有効で、管理者/VIP/ゲストの挙動を実際に動かして確かめるために使う。
 const DEV_ROLES = new Set(['admin', 'vip', 'user', 'guest']);
-const ALLOW_DEV_ROLE = !process.env.RENDER && !isLoginEnabled();
+const ALLOW_DEV_ROLE = !process.env.RENDER;
 
 // PRESENCE_SPEC §2.2 向けの出力上限
 const PRESENCE_MAX_WEB = 60;      // web[] の最大人数
@@ -393,6 +394,9 @@ async function handleJoin(client, msg) {
     t: 'welcome',
     id: client.id,
     role: client.role,
+    // 動画を操作できるかはサーバーが唯一の判断元（ログイン未設定の間は全員 true）
+    canControl: canControlVideo(client.role),
+    canInteract: canInteract(client.role),
     ev: ev.id,
     event: toEventInfo(ev),
     room: roomNumber,

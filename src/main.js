@@ -14,6 +14,7 @@ import { initEmoteBar } from './emotebar.js';
 import { initScreenUI } from './screenui.js';
 import { initViewMode } from './viewmode.js';
 import { initPlayerControls } from './playerctl.js';
+import { initRoomUI } from './roomui.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
@@ -57,6 +58,28 @@ let remote = null;
 let myId = null;
 let demoMode = false;
 let screenUI = null;
+let videoPanel = null;
+let roomUI = null;
+
+// 権限とイベント（サーバーのwelcomeで確定する）
+let myRole = 'user'; // 'admin' | 'vip' | 'user' | 'guest'
+// 「できるかどうか」はサーバーの判断をそのまま使う（ログイン未設定の間は全員が操作できる）
+let canControlVideo = true;
+let currentEvent = null;
+let currentRoom = null;
+let knownEvents = [];
+
+// サーバーが操作を断ったときの説明文
+const DENY_MESSAGES = {
+  'admin-only': 'この操作は管理者のみです',
+  'guest-no-chat': 'コメントするにはログインが必要です',
+  'guest-no-emote': 'エモートを使うにはログインが必要です',
+  'guest-no-avatar': '見た目を変えるにはログインが必要です',
+  'login-required': 'このイベントに入るにはログインが必要です',
+  'event-not-empty': '人が残っているイベントは削除できません',
+  'cannot-delete': 'このイベントは削除できません',
+  'too-many-events': 'イベントの数が上限に達しています',
+};
 
 // 現在のプレイヤー情報（再カスタムで書き換わる）
 const session = { name: '', config: null };
@@ -77,6 +100,19 @@ function updateCount(serverCount) {
   playerCountEl.textContent = `${total} 人`;
 }
 
+/** ヘッダーの表示を「イベント名 ＋ ルーム番号」にする */
+function updateHeader(room) {
+  currentRoom = room;
+  const evName = currentEvent ? currentEvent.name : 'VERSE CITY';
+  roomNameEl.textContent = `${evName} #${room}`;
+}
+
+/** 権限に応じてUIの出し分けをする（動画操作は管理者のみ） */
+function applyRoleToUi() {
+  if (videoPanel) videoPanel.setControllable(canControlVideo);
+  if (screenUI) screenUI.setVisible(canControlVideo);
+}
+
 // サーバーに繋がらない/切断されたときは従来のNPCデモに切り替える
 function startDemoMode() {
   if (demoMode) return;
@@ -93,7 +129,7 @@ function startDemoMode() {
   updateCount(null);
 }
 
-initJoinScreen(({ name, config }) => {
+initJoinScreen(({ name, config, eventId, roomNumber, idToken }) => {
   // 入場ボタンのクリック（ユーザー操作）を起点にライブ再生を開始する
   liveScreen.play();
 
@@ -114,9 +150,14 @@ initJoinScreen(({ name, config }) => {
 
   chat = initChat({
     onSend: (text) => {
+      if (myRole === 'guest') {
+        chat.addMessage('', 'コメントするにはログインが必要です', { system: true });
+        return;
+      }
       chat.addMessage(session.name, text, { self: true });
       if (player.userData.say) player.userData.say(text);
-      if (net && !demoMode) net.sendChat(text);
+      // ワールド内だけに届くローカル発言（YouTubeへは流さない）
+      if (net && !demoMode) net.sendChat(text, 'local');
     },
   });
 
@@ -125,10 +166,17 @@ initJoinScreen(({ name, config }) => {
   net = initNet({
     name,
     config,
+    idToken,
+    eventId,
+    roomNumber,
     handlers: {
-      onWelcome: ({ id, room, peers, count, screen, playback }) => {
+      onWelcome: ({ id, room, peers, count, screen, playback, role, canControl, event, events }) => {
         myId = id;
-        roomNameEl.textContent = `VERSE CITY #${room}`;
+        myRole = role || 'user';
+        canControlVideo = canControl !== false;
+        currentEvent = event || null;
+        knownEvents = events || [];
+        updateHeader(room);
         peers.forEach((p) => remote.addPeer(p));
         updateCount(count);
         // 途中入場でも、その部屋で今流れている動画と再生位置に合わせる
@@ -137,6 +185,30 @@ initJoinScreen(({ name, config }) => {
           if (screenUI) screenUI.setCurrent(screen);
         }
         if (playback) liveScreen.player.applySync(playback);
+        applyRoleToUi();
+      },
+      // 別のイベント/ルームへ移動したとき: 周りの人を総入れ替えする
+      onMoved: ({ room, peers, count, screen, playback, event }) => {
+        currentEvent = event || currentEvent;
+        remote.clear();
+        peers.forEach((p) => remote.addPeer(p));
+        updateHeader(room);
+        updateCount(count);
+        if (screen) {
+          liveScreen.setVideo(screen);
+          if (screenUI) screenUI.setCurrent(screen);
+        }
+        if (playback) liveScreen.player.applySync(playback);
+        chat.addMessage('', `${currentEvent ? currentEvent.name : ''} のルーム${room} に移動しました`, {
+          system: true,
+        });
+      },
+      onEvents: (list) => {
+        knownEvents = list || [];
+        if (roomUI) roomUI.setEvents(knownEvents);
+      },
+      onDenied: ({ reason }) => {
+        chat.addMessage('', DENY_MESSAGES[reason] || 'その操作は許可されていません', { system: true });
       },
       onPeerJoin: (p) => {
         remote.addPeer(p);
@@ -179,16 +251,21 @@ initJoinScreen(({ name, config }) => {
   // エモートバー（自分の分はローカルで即再生し、サーバーへも通知）
   initEmoteBar({
     onEmote: (id) => {
+      if (myRole === 'guest') {
+        chat.addMessage('', 'エモートを使うにはログインが必要です', { system: true });
+        return;
+      }
       if (player.userData.playEmote) player.userData.playEmote(id);
       if (net && !demoMode) net.sendEmote(id);
     },
   });
 
   // 右下の動画パネル（再生・音量・シーク）。シアター表示と動画変更のボタンもここに入れる
-  const videoPanel = initPlayerControls({
+  videoPanel = initPlayerControls({
     player: liveScreen.player,
-    // 再生/一時停止/シークは会場全員で揃える（音量・ミュートは各自の設定なので送らない）
+    // 再生/一時停止/シークはイベント全体で揃える（音量・ミュートは各自の設定なので送らない）
     onAction: (type, pos) => {
+      if (!canControlVideo) return; // 権限が無ければ共有状態を動かさない
       if (net && !demoMode) net.sendPlayback(type === 'pause' ? 'pause' : 'play', pos);
     },
   });
@@ -206,6 +283,30 @@ initJoinScreen(({ name, config }) => {
     },
   });
   screenUI.setCurrent(liveScreen.getVideo());
+
+  // イベント／ルームの移動パネル（管理者はイベント作成もここから）
+  roomUI = initRoomUI({
+    slot: videoPanel.slot,
+    // イベント作成の可否はサーバーの判断（canControl）に合わせる
+    getRole: () => (canControlVideo ? 'admin' : myRole),
+    getCurrent: () => ({ eventId: currentEvent ? currentEvent.id : '', room: currentRoom }),
+    onMove: (evId, room) => {
+      if (net && !demoMode) net.sendMove(evId, room);
+    },
+    onCreateEvent: (payload) => {
+      if (net && !demoMode) net.sendEventCreate(payload);
+    },
+    onDeleteEvent: (id) => {
+      if (net && !demoMode) net.sendEventDelete(id);
+    },
+    onRefresh: () => {
+      if (net && !demoMode) net.requestEvents();
+    },
+  });
+  roomUI.setEvents(knownEvents);
+
+  // welcomeが先に来ている場合に備えて、権限の反映をここでもう一度実行する
+  applyRoleToUi();
 
   // スクリーン全画面（シアター）＝動画パネル内 ／ UI表示切替＝画面右上のアイコン
   initViewMode({ controls, slot: videoPanel.slot });
@@ -231,6 +332,10 @@ initJoinScreen(({ name, config }) => {
 
 // ---- 入場後のアバター再カスタム ----
 avatarBtn.addEventListener('click', () => {
+  if (myRole === 'guest') {
+    if (chat) chat.addMessage('', '見た目を変えるにはログインが必要です', { system: true });
+    return;
+  }
   openCustomizer({
     name: session.name,
     config: session.config,

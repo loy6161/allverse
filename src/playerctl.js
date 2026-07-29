@@ -316,5 +316,21 @@ export function initPlayerControls({ player, onAction }) {
     setVisible(v) {
       panel.style.display = v ? 'flex' : 'none';
     },
+    /**
+     * 共有操作（再生/一時停止・シーク）を触れるかどうか。
+     * 音量とミュートは各自のローカル設定なので、ここでは制限しない。
+     * @param {boolean} v
+     */
+    setControllable(v) {
+      const on = Boolean(v);
+      playBtn.style.display = on ? '' : 'none';
+      seekRow.style.display = on ? '' : 'none';
+      if (!on) {
+        // 見るだけの人には「操作は管理者のみ」であることを伝える
+        time.title = '再生の操作は管理者のみです';
+      } else {
+        time.title = '';
+      }
+    },
   };
 }

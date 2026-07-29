@@ -272,5 +272,11 @@ export function initScreenUI({ onChange, slot }) {
     currentId.textContent = videoId || '-';
   }
 
-  return { close: closePanel, setCurrent };
+  /** 動画の差し替えは管理者だけなので、権限が無い人にはボタンごと出さない */
+  function setVisible(v) {
+    btn.style.display = v ? '' : 'none';
+    if (!v) closePanel();
+  }
+
+  return { close: closePanel, setCurrent, setVisible };
 }

@@ -56,7 +56,7 @@ export function avToConfig(av) {
 const WELCOME_TIMEOUT_MS = 3000;
 const POS_INTERVAL_MS = 100; // 最大10Hz
 
-export function initNet({ name, config, handlers }) {
+export function initNet({ name, config, handlers, idToken = '', eventId = '', roomNumber = null }) {
   const h = handlers || {};
   let ws = null;
   let welcomeTimer = null;
@@ -100,7 +100,14 @@ export function initNet({ name, config, handlers }) {
 
   if (ws) {
     ws.addEventListener('open', () => {
-      send({ t: 'join', n: name, av: configToAv(config) });
+      const joinMsg = { t: 'join', n: name, av: configToAv(config) };
+      if (idToken) joinMsg.idt = idToken; // Googleログイン済みなら権限判定に使われる
+      // 開発用: ?devRole=guest などで権限を試せる。本番サーバーは無視する
+      const devRole = new URLSearchParams(location.search).get('devRole');
+      if (devRole) joinMsg.devRole = devRole;
+      if (eventId) joinMsg.ev = eventId;
+      if (Number.isInteger(roomNumber)) joinMsg.rm = roomNumber;
+      send(joinMsg);
       welcomeTimer = setTimeout(() => {
         welcomeTimer = null;
         try {
@@ -133,8 +140,38 @@ export function initNet({ name, config, handlers }) {
               count: msg.count,
               screen: msg.screen,
               playback: msg.playback,
+              role: msg.role,
+              canControl: msg.canControl,
+              canInteract: msg.canInteract,
+              eventId: msg.ev,
+              event: msg.event,
+              events: msg.events,
+              persistent: msg.persistent,
             });
           }
+          break;
+        case 'moved':
+          // 別のイベント/ルームへ移動が完了した（周りの人が総入れ替えになる）
+          if (h.onMoved) {
+            h.onMoved({
+              room: msg.room,
+              peers: msg.peers,
+              count: msg.count,
+              screen: msg.screen,
+              playback: msg.playback,
+              eventId: msg.ev,
+              event: msg.event,
+            });
+          }
+          break;
+        case 'events':
+          if (h.onEvents) h.onEvents(msg.events);
+          break;
+        case 'event-created':
+          if (h.onEventCreated) h.onEventCreated(msg.ev);
+          break;
+        case 'denied':
+          if (h.onDenied) h.onDenied({ reason: msg.reason, eventId: msg.ev });
           break;
         case 'peer-join':
           if (h.onPeerJoin) h.onPeerJoin(msg.p);
@@ -149,7 +186,7 @@ export function initNet({ name, config, handlers }) {
           if (h.onPeerLeave) h.onPeerLeave(msg.id);
           break;
         case 'chat':
-          if (h.onChat) h.onChat({ id: msg.id, n: msg.n, txt: msg.txt });
+          if (h.onChat) h.onChat({ id: msg.id, n: msg.n, txt: msg.txt, scope: msg.sc || 'local' });
           break;
         case 'count':
           if (h.onCount) h.onCount(msg.c);
@@ -207,11 +244,12 @@ export function initNet({ name, config, handlers }) {
     send({ t: 'pos', x: qx, z: qz, r: qr, m: qm });
   }
 
-  function sendChat(txt) {
+  // scope: 'local'（ワールド内だけ・既定）/ 'stream'（配信にも流す・管理者のみ）
+  function sendChat(txt, scope = 'local') {
     if (!joined) return;
     const s = String(txt == null ? '' : txt).slice(0, 200);
     if (!s) return;
-    send({ t: 'chat', txt: s });
+    send({ t: 'chat', txt: s, sc: scope === 'stream' ? 'stream' : 'local' });
   }
 
   function sendUpdate(newName, newConfig) {
@@ -234,6 +272,29 @@ export function initNet({ name, config, handlers }) {
     send({ t: 'playback', st, pos: Math.max(0, Number(pos) || 0) });
   }
 
+  function sendMove(targetEventId, targetRoom) {
+    if (!joined) return;
+    const m = { t: 'move' };
+    if (targetEventId) m.ev = targetEventId;
+    if (Number.isInteger(targetRoom)) m.rm = targetRoom;
+    send(m);
+  }
+
+  function sendEventCreate({ name: evName, videoId, requireLogin }) {
+    if (!joined) return;
+    send({ t: 'event-create', name: evName, v: videoId, requireLogin: !!requireLogin });
+  }
+
+  function sendEventDelete(id) {
+    if (!joined) return;
+    send({ t: 'event-delete', id });
+  }
+
+  function requestEvents() {
+    if (!joined) return;
+    send({ t: 'events' });
+  }
+
   function close() {
     clearWelcomeTimer();
     if (ws) {
@@ -245,5 +306,17 @@ export function initNet({ name, config, handlers }) {
     }
   }
 
-  return { sendPos, sendChat, sendUpdate, sendEmote, sendScreen, sendPlayback, close };
+  return {
+    sendPos,
+    sendChat,
+    sendUpdate,
+    sendEmote,
+    sendScreen,
+    sendPlayback,
+    sendMove,
+    sendEventCreate,
+    sendEventDelete,
+    requestEvents,
+    close,
+  };
 }
