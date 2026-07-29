@@ -16,7 +16,7 @@
 2. https://render.com にGitHubアカウントでサインアップ（無料）
 3. ダッシュボード →「New +」→「Blueprint」→ このリポジトリを選択
    （render.yaml が自動で読まれ、設定入力は不要）
-4. 「Apply」でデプロイ開始。数分で `https://verse-city-web.onrender.com` のようなURLが発行される
+4. 「Apply」でデプロイ開始。数分で `https://allverse.onrender.com` のようなURLが発行される
 
 以後は git push するだけで自動再デプロイされる。
 

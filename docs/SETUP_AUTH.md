@@ -1,13 +1,13 @@
 # セットアップ手順（サービス名の変更 ／ Googleログイン ／ Turso）
 
 loyさんの作業ぶんだけをまとめたもの。**すべて無料**で、クレジットカードは要りません。
-所要時間は全部で25分ほど。
+所要時間は全部で30分ほど。
 
 **必ずこの順番でやってください。** Aで本番URLを確定しないと、Bの登録をやり直すことになります。
 
 | | 内容 | 目安 |
 |---|---|---|
-| **A** | RenderのURLを決める（そのまま使うか、作り直すか） | 5分 |
+| **A** | 名前をALLVERSEに揃える（GitHub改名＋Render作り直し） | 10分 |
 | **B** | Googleログインの設定（Aで決めたURLを登録する） | 10分 |
 | **C** | Tursoの設定（イベントを保存する） | 5分 |
 | **D** | 動作確認 | 5分 |
@@ -25,57 +25,73 @@ loyさんの作業ぶんだけをまとめたもの。**すべて無料**で、�
 
 ---
 
-## A. RenderのURLをどうするか（5分／やらない選択もあり）
+## A. 名前をALLVERSEに揃える（10分）
 
-### 重要: 改名してもURLは変わらない
+### 前提: Renderは改名してもURLが変わらない
 
-**Renderは、サービス名を変えても `.onrender.com` のURLを変えません。**
-サブドメインはサービスを作ったときに決まり、後から変更する機能がありません。
+**Renderは `.onrender.com` のサブドメインをサービス作成時に固定します。**
+ダッシュボードでサービス名を変えてもURLは変わりません（2026-07-29に実測で確認）。
+URLも揃えるには**サービスを作り直す**しかありません。
 
-実際に2026-07-29に確認した結果:
+### A-1. GitHubのリポジトリ名を変更 ✅ 完了（2026-07-29）
 
-| URL | 結果 |
-|---|---|
-| `https://allverse.onrender.com` | 404（存在しない） |
-| `https://verse-city-web.onrender.com` | 200（こちらが本番） |
+`loy6161/verse-city-web` → **`loy6161/allverse`**
 
-サービス名は `allverse` になっていますが、URLは `verse-city-web.onrender.com` のままです。
+GitHubは旧URLから自動でリダイレクトするので、これ自体では何も壊れません。
+ローカルの参照先（git remote）はClaude側で切り替え済みです。
 
-### 選択肢は2つ
+### A-2. Renderで新しいWeb Serviceを作る
 
-**① そのまま使う（おすすめ度: 高）**
+**Blueprintではなく、普通の Web Service として作ります。**
+既存サービスがBlueprint管理下にあり、Blueprintから作ると切り離しと削除が先に必要になるためです。
+普通のWeb Serviceなら、既存に触れずに並行して立ち上げられます。
 
-- URLは `verse-city-web.onrender.com` のまま
-- **画面の表示はすべて ALLVERSE** なので、ユーザーが旧名を見るのはアドレス欄だけ
-- Unity側への再共有が不要（共有済みのURLがそのまま生きる）
-- 将来 独自ドメイン（例: `allverse.jp`）を取れば、そちらが正式URLになり
-  `onrender.com` のURLは裏方になる。Renderは**無料プランでも独自ドメインを使えます**
-  （Settings → Custom Domains）
+1. ダッシュボードで「New +」→ **Web Service**
+2. リポジトリ **`loy6161/allverse`** を選択
+3. 以下を入力
 
-**② 作り直してURLも揃える**
+   | 項目 | 値 |
+   |---|---|
+   | **Name** | `allverse` |
+   | **Region** | **Singapore** |
+   | **Branch** | `master` |
+   | **Root Directory** | `server` |
+   | **Runtime** | Node |
+   | **Build Command** | `npm install` |
+   | **Start Command** | `node server.js` |
+   | **Instance Type** | Free |
 
-- `allverse.onrender.com` になる
-- **今が一番安いタイミング**（環境変数がまだ空／Unity側も本番URL未設定のため）
-- 手順:
-  1. Settings 最下部 **Delete or suspend** → サービスを削除
-  2. ダッシュボードで「New +」→「Blueprint」→ `verse-city-web` リポジトリを選ぶ
-  3. サービス名に `allverse` を入れて「Apply」
-- 注意: 数分のダウンタイムが出ます。**Renderには消えて困るデータを置いていない**ので、
-  データが失われることはありません（イベントはTurso、コードはGitHub）
+4. 「Create Web Service」
 
-### どちらを選ぶか
+> **Regionを Singapore にする理由**: 旧サービスは Oregon（米西海岸）にありました。
+> このアプリは位置情報を毎秒10回やり取りするので、日本から近い方が体感がはっきり良くなります。
+> 作り直す今がリージョンを選び直せる唯一のタイミングです。
 
-**独自ドメインを取る予定があるなら①**。`onrender.com` のURLは一時的なものなので、
-手間をかける価値が薄いです。
-**当面 `onrender.com` のまま運用して人に配るなら②**。アドレス欄の見た目が揃います。
+数分で `https://allverse.onrender.com` が立ち上がります。
 
-### 決めたらClaudeに伝えてください
+### A-3. 動作確認
 
-②を選んだ場合は、こちらで以下を直します。
+```
+https://allverse.onrender.com/api/status
+```
 
-- `render.yaml` のサービス名
-- `docs/DEPLOY_URL.md` の記載
-- Unity側チャットへ渡す連絡文（新URLの再共有用）
+`{"ok":true,...}` が返れば成功です。
+
+### A-4. 古いサービスを削除（急ぎではない）
+
+新しい方が動いてから、古い `verse-city-web`（ダッシュボード上の表示名は `allverse`）を消します。
+Blueprint管理下なので、**先にBlueprintを切り離す**必要があります。
+
+1. サービスの Settings に出ている Blueprint のリンクを開く
+2. **Disconnect**（切り離し）
+3. サービスの Settings 最下部 **Delete or suspend** → 削除
+
+> 消えて困るデータはRenderにありません（コードはGitHub、イベントはTurso）。
+
+### A-5. 終わったらClaudeに伝えてください
+
+`render.yaml`・`docs/DEPLOY_URL.md`・Unity側チャットへの連絡文を新URLに直します。
+（`render.yaml` は、古いBlueprintが余計な同期を起こさないよう、削除が済むまで触らずに待っています）
 
 ---
 
@@ -110,10 +126,9 @@ loyさんの作業ぶんだけをまとめたもの。**すべて無料**で、�
 3. 名前: `allverse-web`
 4. **承認済みの JavaScript 生成元** に次の2つを追加（ここが一番大事）
    ```
-   https://<本番URL>.onrender.com
+   https://allverse.onrender.com
    http://localhost:5179
    ```
-   例）そのまま使うなら `https://verse-city-web.onrender.com`
 5. 「作成」→ 表示される **クライアントID**（`......apps.googleusercontent.com`）をコピー
 
 > クライアントシークレットは使いません。コピーしなくて大丈夫です。
@@ -170,7 +185,7 @@ Bと同じ「Environment」画面で追加します。
 ブラウザで次を開くと、状態がそのまま出ます。
 
 ```
-https://<本番URL>.onrender.com/api/status
+https://allverse.onrender.com/api/status
 ```
 
 - `"login": true` … Googleログインが有効
@@ -201,8 +216,8 @@ B-3の「承認済みの JavaScript 生成元」が本番URLと一致してい�
 **イベントが消える**
 `/api/status` の `persistent` が `false` なら、Tursoの2つの環境変数を見直してください。
 
-**古いURLを開いてしまう**
-Aで②（作り直し）を選んだ場合のみ起きます。ブックマークとUnity側の設定を新URLに差し替えてください。
+**古いURL（verse-city-web.onrender.com）を開いてしまう**
+ブックマークやUnity側の設定が旧URLのままです。`allverse.onrender.com` に差し替えてください。
 
 ---
 
