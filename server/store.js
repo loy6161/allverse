@@ -79,6 +79,27 @@ export async function initStore() {
         updated_at INTEGER NOT NULL
       )
     `);
+    // ブロック（相互不可視）。ログイン済みユーザー同士だけ永続化する。
+    // ゲストは次に来たとき別人になるので、記録しても意味がない
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS blocks (
+        blocker_email TEXT NOT NULL,
+        blocked_email TEXT NOT NULL,
+        blocked_name  TEXT NOT NULL,
+        created_at    INTEGER NOT NULL,
+        PRIMARY KEY (blocker_email, blocked_email)
+      )
+    `);
+    // BAN（管理者が再入場を止める）
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS bans (
+        email      TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        by_name    TEXT NOT NULL,
+        reason     TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `);
     ready = true;
     lastError = '';
     console.log('[store] Turso に接続しました（イベントは永続化されます）');
@@ -202,6 +223,113 @@ export async function deleteEvent(id) {
     return true;
   } catch (e) {
     console.warn('[store] イベント削除に失敗:', e.message);
+    return false;
+  }
+}
+
+// ------------------------------------------------------------
+// ブロック（相互不可視）
+// ------------------------------------------------------------
+
+/**
+ * その人がブロックしている相手のメール一覧。
+ * 入場のたびに読んで、サーバーのメモリに載せ直す。
+ * @returns {Promise<Array<{email:string,name:string}>>}
+ */
+export async function loadBlocks(email) {
+  if (!ready || !email) return [];
+  try {
+    const rs = await db.execute({
+      sql: 'SELECT blocked_email, blocked_name FROM blocks WHERE blocker_email = ?',
+      args: [email],
+    });
+    return rs.rows.map((r) => ({ email: String(r.blocked_email), name: String(r.blocked_name) }));
+  } catch (e) {
+    console.warn('[store] ブロック一覧の読み込みに失敗:', e.message);
+    return [];
+  }
+}
+
+export async function saveBlock(blockerEmail, blockedEmail, blockedName) {
+  if (!ready || !blockerEmail || !blockedEmail) return false;
+  try {
+    await db.execute({
+      sql: `INSERT INTO blocks (blocker_email, blocked_email, blocked_name, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(blocker_email, blocked_email) DO UPDATE SET
+              blocked_name = excluded.blocked_name`,
+      args: [blockerEmail, blockedEmail, String(blockedName || ''), Date.now()],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] ブロックの保存に失敗:', e.message);
+    return false;
+  }
+}
+
+export async function deleteBlock(blockerEmail, blockedEmail) {
+  if (!ready || !blockerEmail || !blockedEmail) return false;
+  try {
+    await db.execute({
+      sql: 'DELETE FROM blocks WHERE blocker_email = ? AND blocked_email = ?',
+      args: [blockerEmail, blockedEmail],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] ブロックの解除に失敗:', e.message);
+    return false;
+  }
+}
+
+// ------------------------------------------------------------
+// BAN（管理者が再入場を止める）
+// ------------------------------------------------------------
+
+/** 全件読む。起動時にメモリへ載せて、入場のたびのDB問い合わせを避ける */
+export async function loadBans() {
+  if (!ready) return [];
+  try {
+    const rs = await db.execute('SELECT email, name, by_name, reason, created_at FROM bans');
+    return rs.rows.map((r) => ({
+      email: String(r.email),
+      name: String(r.name),
+      byName: String(r.by_name),
+      reason: String(r.reason),
+      createdAt: Number(r.created_at),
+    }));
+  } catch (e) {
+    console.warn('[store] BAN一覧の読み込みに失敗:', e.message);
+    return [];
+  }
+}
+
+export async function saveBan(ban) {
+  if (!ready || !ban || !ban.email) return false;
+  try {
+    await db.execute({
+      sql: `INSERT INTO bans (email, name, by_name, reason, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(email) DO UPDATE SET
+              name = excluded.name,
+              by_name = excluded.by_name,
+              reason = excluded.reason,
+              created_at = excluded.created_at`,
+      args: [ban.email, String(ban.name || ''), String(ban.byName || ''), String(ban.reason || ''), ban.createdAt],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] BANの保存に失敗:', e.message);
+    return false;
+  }
+}
+
+export async function deleteBan(email) {
+  if (!ready || !email) return false;
+  try {
+    await db.execute({ sql: 'DELETE FROM bans WHERE email = ?', args: [email] });
+    return true;
+  } catch (e) {
+    console.warn('[store] BANの解除に失敗:', e.message);
     return false;
   }
 }

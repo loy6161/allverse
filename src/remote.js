@@ -172,5 +172,9 @@ export function initRemotePlayers(scene) {
     clear,
     setNamesVisible,
     isNamesVisible,
+    /** 参加者一覧パネル用。今見えている人だけが並ぶ（ブロックした相手は入らない） */
+    list() {
+      return [...peers.entries()].map(([id, p]) => ({ id, name: p.name, role: p.role || 'user' }));
+    },
   };
 }

@@ -154,6 +154,7 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
               event: msg.event,
               events: msg.events,
               persistent: msg.persistent,
+              blocked: msg.blocked,
             });
           }
           break;
@@ -179,7 +180,27 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
           if (h.onEventCreated) h.onEventCreated(msg.ev);
           break;
         case 'denied':
-          if (h.onDenied) h.onDenied({ reason: msg.reason, eventId: msg.ev });
+          if (h.onDenied) h.onDenied({ reason: msg.reason, eventId: msg.ev, by: msg.by, why: msg.why });
+          break;
+        // ---- 迷惑行為への対処 ----
+        case 'blocked':
+          if (h.onBlocked) h.onBlocked({ k: msg.k, n: msg.n });
+          break;
+        case 'blocked-list':
+          if (h.onBlockedList) h.onBlockedList(msg.list || []);
+          break;
+        case 'moderated':
+          if (h.onModerated) h.onModerated({ act: msg.act, n: msg.n });
+          break;
+        case 'kicked':
+          // 退出させられた。closeが続くので、ここでは理由を伝えるだけ
+          if (h.onKicked) h.onKicked({ by: msg.by });
+          break;
+        case 'banned':
+          if (h.onBanned) h.onBanned({ by: msg.by, why: msg.why });
+          break;
+        case 'bans':
+          if (h.onBans) h.onBans(msg.list || []);
           break;
         case 'peer-join':
           if (h.onPeerJoin) h.onPeerJoin(msg.p);
@@ -303,6 +324,37 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     send({ t: 'events' });
   }
 
+  // ---- 迷惑行為への対処 ----
+  function sendBlock(id) {
+    if (!joined) return;
+    send({ t: 'block', id });
+  }
+
+  function sendUnblock(k) {
+    if (!joined) return;
+    send({ t: 'unblock', k });
+  }
+
+  function sendKick(id) {
+    if (!joined) return;
+    send({ t: 'kick', id });
+  }
+
+  function sendBan(id, why) {
+    if (!joined) return;
+    send({ t: 'ban', id, why });
+  }
+
+  function sendUnban(email) {
+    if (!joined) return;
+    send({ t: 'unban', email });
+  }
+
+  function requestBans() {
+    if (!joined) return;
+    send({ t: 'bans' });
+  }
+
   function close() {
     clearWelcomeTimer();
     if (ws) {
@@ -325,6 +377,12 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     sendEventCreate,
     sendEventDelete,
     requestEvents,
+    sendBlock,
+    sendUnblock,
+    sendKick,
+    sendBan,
+    sendUnban,
+    requestBans,
     close,
   };
 }

@@ -12,6 +12,7 @@ import http from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 
 import {
@@ -24,6 +25,12 @@ import {
   deleteEvent,
   loadProfile,
   saveProfile,
+  loadBlocks,
+  saveBlock,
+  deleteBlock,
+  loadBans,
+  saveBan,
+  deleteBan,
 } from './store.js';
 import {
   verifyIdToken,
@@ -88,6 +95,10 @@ const GUEST_AV = { h: 'short', o: 'middle', ac: 'none', hc: 12, sc: 12, bc: 0, e
 const DEV_ROLES = new Set(['admin', 'vip', 'user', 'guest']);
 const ALLOW_DEV_ROLE = !process.env.RENDER;
 
+// 迷惑行為への対処（2026-07-30追加）
+const MAX_BLOCKS = 200;           // 1人が持てるブロックの上限
+const MAX_BAN_REASON_LEN = 60;    // BAN理由の最大文字数
+
 // PRESENCE_SPEC §2.2 向けの出力上限
 const PRESENCE_MAX_WEB = 60;      // web[] の最大人数
 const PRESENCE_CHAT_WINDOW_MS = 30 * 1000; // c を付与する直近発言の有効期間
@@ -109,6 +120,30 @@ const rooms = new Map();
 let nextClientSeq = 1; // "c1", "c2", ... を払い出す連番
 let nextGuestSeq = 1; // 「ゲスト001」の連番
 const startedAt = Date.now();
+
+// BANされたメールアドレス。入場のたびにDBを叩かないようメモリに載せておく。
+// bans: Map<email, {email,name,byName,reason,createdAt}>
+const bans = new Map();
+
+/**
+ * ブロックの相手を指す文字列。
+ * ログイン済みは `e:メール`（次回入場しても同じ人）、
+ * ゲストは `g:接続id`（ゲストは次に来たら別人なので、その場限りで十分）。
+ */
+function blockKeyOf(client) {
+  return client.email ? `e:${client.email}` : `g:${client.id}`;
+}
+
+/**
+ * 2人の間にブロックがあるか。
+ * どちらか一方がブロックしていれば、両方から見えなくする（相互不可視）。
+ * 片方向にすると、ブロックした相手にこちらの発言が届き続けるので、
+ * 嫌がらせへの対処にならない。
+ */
+function isBlockedBetween(a, b) {
+  if (!a || !b) return false;
+  return a.blocks.has(blockKeyOf(b)) || b.blocks.has(blockKeyOf(a));
+}
 
 /**
  * 表示名はサーバーが決める（クライアントの申告は使わない）。
@@ -285,22 +320,27 @@ function send(ws, obj) {
   }
 }
 
-/** 同室の全員（フィルタ可）にブロードキャスト */
-function broadcastToRoom(eventId, roomNumber, obj, excludeId = null) {
+/**
+ * 同室の全員（フィルタ可）にブロードキャスト。
+ * from を渡すと、その人とブロック関係にある相手には届かない。
+ */
+function broadcastToRoom(eventId, roomNumber, obj, excludeId = null, from = null) {
   const room = rooms.get(roomKey(eventId, roomNumber));
   if (!room) return;
   for (const client of room.values()) {
     if (excludeId && client.id === excludeId) continue;
+    if (from && isBlockedBetween(from, client)) continue;
     send(client.ws, obj);
   }
 }
 
 /** 同じイベントの全ルームへブロードキャスト（管理者・VIPの姿と発言はこちらを使う） */
-function broadcastToEvent(eventId, obj, excludeId = null) {
+function broadcastToEvent(eventId, obj, excludeId = null, from = null) {
   for (const [key, members] of rooms) {
     if (keyEventId(key) !== eventId) continue;
     for (const client of members.values()) {
       if (excludeId && client.id === excludeId) continue;
+      if (from && isBlockedBetween(from, client)) continue;
       send(client.ws, obj);
     }
   }
@@ -309,13 +349,14 @@ function broadcastToEvent(eventId, obj, excludeId = null) {
 /**
  * そのクライアントの発信をどこまで届けるか。
  * 管理者・VIPはイベント全体、それ以外は自室のみ。
+ * どちらの場合も、ブロック関係にある相手には届かない。
  */
 function broadcastFrom(client, obj, excludeSelf = true) {
   const exclude = excludeSelf ? client.id : null;
   if (isGlobalRole(client.role)) {
-    broadcastToEvent(client.eventId, obj, exclude);
+    broadcastToEvent(client.eventId, obj, exclude, client);
   } else {
-    broadcastToRoom(client.eventId, client.room, obj, exclude);
+    broadcastToRoom(client.eventId, client.room, obj, exclude, client);
   }
 }
 
@@ -351,6 +392,7 @@ function visiblePeersFor(client) {
     const sameRoom = key === myKey;
     for (const other of members.values()) {
       if (other.id === client.id) continue;
+      if (isBlockedBetween(client, other)) continue; // ブロック相手は最初から居ないものとして扱う
       if (sameRoom || isGlobalRole(other.role)) out.push(toPeerInfo(other));
     }
   }
@@ -388,6 +430,23 @@ async function handleJoin(client, msg) {
   }
   client.role = role;
   client.email = email;
+
+  // BANされた人は入れない。名前を割り当てる前に弾く
+  if (email && bans.has(email)) {
+    const ban = bans.get(email);
+    send(client.ws, { t: 'denied', reason: 'banned', by: ban.byName, why: ban.reason });
+    return;
+  }
+
+  // ブロックしている相手をメモリに載せ直す（別の端末から入っても効くように）
+  client.blocks = new Set();
+  client.blockNames = new Map();
+  if (email) {
+    for (const b of await loadBlocks(email)) {
+      client.blocks.add(`e:${b.email}`);
+      client.blockNames.set(`e:${b.email}`, b.name);
+    }
+  }
 
   // ---- イベントの決定 ----
   ensureMainEvent();
@@ -445,6 +504,7 @@ async function handleJoin(client, msg) {
     playback: currentPlayback(ev.id),
     events: buildEventList(),
     persistent: isPersistent(),
+    blocked: blockedListFor(client), // 「ブロック中の人」を画面から解除できるようにする
   });
 
   // 管理者・VIPはイベント全体に、一般は自室にだけ現れる
@@ -676,6 +736,182 @@ function handleEventsRequest(client) {
   send(client.ws, { t: 'events', events: buildEventList() });
 }
 
+// ------------------------------------------------------------
+// 迷惑行為への対処（ブロック／キック／BAN）
+//
+// 3つの強さが違うので、使える人と効き方を分けている:
+//   ブロック … 誰でも使える。自分と相手が互いに見えなくなるだけ。相手は入場し続けられる
+//   キック   … 管理者・VIP。その場から退出させる。すぐ入り直せる（一時的な冷却用）
+//   BAN      … 管理者だけ。Googleアカウント単位で再入場を止める
+// ------------------------------------------------------------
+
+/** ブロック相手を画面に出さないための識別子。メールを本人以外に見せないため短いハッシュにする */
+function blockToken(key) {
+  return createHash('sha256').update(key).digest('hex').slice(0, 16);
+}
+
+/** 自分のブロック一覧（UIの「解除」に使う）。メールそのものは返さない */
+function blockedListFor(client) {
+  const out = [];
+  for (const key of client.blocks) {
+    out.push({ k: blockToken(key), n: client.blockNames.get(key) || '（名前不明）' });
+  }
+  return out;
+}
+
+/** 同じイベントにいる相手を接続idで探す（キック・BAN・ブロックの対象指定に使う） */
+function findPeerInEvent(client, id) {
+  if (typeof id !== 'string' || !id) return null;
+  for (const [key, members] of rooms) {
+    if (keyEventId(key) !== client.eventId) continue;
+    const target = members.get(id);
+    if (target) return target;
+  }
+  return null;
+}
+
+/** その相手を自分の画面から消す／相手の画面からも自分を消す */
+function hideEachOther(a, b) {
+  send(a.ws, { t: 'peer-leave', id: b.id });
+  send(b.ws, { t: 'peer-leave', id: a.id });
+}
+
+/** block: 相手と相互に見えなくする。相手には通知しない（トラブルを増やさないため） */
+async function handleBlock(client, msg) {
+  if (!client.joined) return;
+  const target = findPeerInEvent(client, msg.id);
+  if (!target) return;
+  if (target.id === client.id) return; // 自分はブロックできない
+  if (client.blocks.size >= MAX_BLOCKS) {
+    send(client.ws, { t: 'denied', reason: 'too-many-blocks' });
+    return;
+  }
+
+  const key = blockKeyOf(target);
+  client.blocks.add(key);
+  client.blockNames.set(key, target.n);
+  hideEachOther(client, target);
+  send(client.ws, { t: 'blocked', k: blockToken(key), n: target.n });
+
+  // 記録できるのはログイン済み同士だけ。ゲストは次に来たら別人なので残しても意味がない
+  if (client.email && target.email) await saveBlock(client.email, target.email, target.n);
+}
+
+/** unblock: 解除。姿がすぐ戻るように、同じ場所にいれば入場通知を送り直す */
+async function handleUnblock(client, msg) {
+  if (!client.joined) return;
+  let hit = '';
+  for (const key of client.blocks) {
+    if (blockToken(key) === msg.k) {
+      hit = key;
+      break;
+    }
+  }
+  if (!hit) return;
+
+  client.blocks.delete(hit);
+  client.blockNames.delete(hit);
+  if (client.email && hit.startsWith('e:')) await deleteBlock(client.email, hit.slice(2));
+
+  // 解除した相手が今その場にいるなら、互いの姿を戻す
+  for (const [key, members] of rooms) {
+    if (keyEventId(key) !== client.eventId) continue;
+    for (const other of members.values()) {
+      if (other.id === client.id) continue;
+      if (blockKeyOf(other) !== hit) continue;
+      if (isBlockedBetween(client, other)) continue; // 相手側のブロックが残っていれば戻さない
+      send(client.ws, { t: 'peer-join', p: toPeerInfo(other) });
+      send(other.ws, { t: 'peer-join', p: toPeerInfo(client) });
+    }
+  }
+  send(client.ws, { t: 'blocked-list', list: blockedListFor(client) });
+}
+
+/**
+ * kick: その場から退出させる（管理者・VIP）。再入場はできる。
+ * 同格以上は蹴れない。VIPが管理者を、管理者が管理者を蹴れると収拾がつかなくなるため。
+ */
+function handleKick(client, msg) {
+  if (!client.joined) return;
+  if (!isGlobalRole(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'staff-only' });
+    return;
+  }
+  const target = findPeerInEvent(client, msg.id);
+  if (!target || target.id === client.id) return;
+  if (isGlobalRole(target.role)) {
+    send(client.ws, { t: 'denied', reason: 'cannot-kick-staff' });
+    return;
+  }
+  send(target.ws, { t: 'kicked', by: client.n });
+  send(client.ws, { t: 'moderated', act: 'kick', n: target.n });
+  try {
+    target.ws.close();
+  } catch {
+    // 既に切れている場合は何もしない（closeイベント側で後始末される）
+  }
+}
+
+/** ban: 再入場を止める（管理者だけ）。Googleアカウント単位なのでゲストにはかけられない */
+async function handleBan(client, msg) {
+  if (!client.joined) return;
+  if (client.role !== 'admin') {
+    send(client.ws, { t: 'denied', reason: 'admin-only' });
+    return;
+  }
+  const target = findPeerInEvent(client, msg.id);
+  if (!target || target.id === client.id) return;
+  if (isGlobalRole(target.role)) {
+    send(client.ws, { t: 'denied', reason: 'cannot-ban-staff' });
+    return;
+  }
+  if (!target.email) {
+    // ゲストは次に来たら別人になるので、BANしても止められない
+    send(client.ws, { t: 'denied', reason: 'cannot-ban-guest' });
+    return;
+  }
+
+  const ban = {
+    email: target.email,
+    name: target.n,
+    byName: client.n,
+    reason: clampString(msg.why, MAX_BAN_REASON_LEN),
+    createdAt: Date.now(),
+  };
+  bans.set(ban.email, ban);
+  await saveBan(ban);
+
+  send(target.ws, { t: 'banned', by: client.n, why: ban.reason });
+  send(client.ws, { t: 'moderated', act: 'ban', n: target.n });
+  try {
+    target.ws.close();
+  } catch {
+    // 同上
+  }
+}
+
+/** unban: 解除（管理者だけ） */
+async function handleUnban(client, msg) {
+  if (!client.joined || client.role !== 'admin') {
+    send(client.ws, { t: 'denied', reason: 'admin-only' });
+    return;
+  }
+  const email = typeof msg.email === 'string' ? msg.email.toLowerCase() : '';
+  if (!email || !bans.has(email)) return;
+  bans.delete(email);
+  await deleteBan(email);
+  send(client.ws, { t: 'bans', list: [...bans.values()] });
+}
+
+/** bans: BAN一覧の要求（管理者だけ） */
+function handleBansRequest(client) {
+  if (!client.joined || client.role !== 'admin') {
+    send(client.ws, { t: 'denied', reason: 'admin-only' });
+    return;
+  }
+  send(client.ws, { t: 'bans', list: [...bans.values()] });
+}
+
 const HANDLERS = {
   join: handleJoin,
   pos: handlePos,
@@ -688,6 +924,12 @@ const HANDLERS = {
   'event-delete': handleEventDelete,
   move: handleMove,
   events: handleEventsRequest,
+  block: handleBlock,
+  unblock: handleUnblock,
+  kick: handleKick,
+  ban: handleBan,
+  unban: handleUnban,
+  bans: handleBansRequest,
 };
 
 /** 全員にイベント一覧を配る（人数が変わったとき・イベントが増減したとき） */
@@ -1008,6 +1250,9 @@ wss.on('connection', (ws) => {
     m: false,
     lastChat: null,
     msgTimes: [],
+    // ブロックしている相手（相互不可視の判定に使う）。入場時にDBから読み直す
+    blocks: new Set(),
+    blockNames: new Map(), // 解除UIに出す名前。キーはblocks側と同じ
   };
 
   ws.on('message', (raw) => {
@@ -1055,11 +1300,14 @@ async function boot() {
     events.set(row.id, makeEvent(row));
   }
 
+  // BANはメモリに載せておく。入場のたびにDBを叩かずに済ませるため
+  for (const b of await loadBans()) bans.set(b.email, b);
+
   httpServer.listen(PORT, () => {
     console.log(`[VERSE CITY Web Server] listening on port ${PORT} (ws path: ${WS_PATH})`);
     console.log(`  ログイン: ${isLoginEnabled() ? '有効' : '無効（GOOGLE_CLIENT_ID 未設定）'}`);
     console.log(`  イベント永続化: ${isPersistent() ? '有効（Turso）' : '無効（メモリのみ）'}`);
-    console.log(`  イベント数: ${events.size}`);
+    console.log(`  イベント数: ${events.size} ／ BAN: ${bans.size}件`);
   });
 }
 

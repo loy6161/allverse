@@ -17,6 +17,7 @@ import { initScreenUI } from './screenui.js';
 import { initViewMode } from './viewmode.js';
 import { initPlayerControls } from './playerctl.js';
 import { initRoomUI } from './roomui.js';
+import { initPeopleUI } from './people.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
@@ -71,6 +72,11 @@ let currentEvent = null;
 let currentRoom = null;
 let knownEvents = [];
 let namesHidden = false; // UI非表示中はネームプレートも消す（アバター作り直し時に復元するため保持）
+let peopleUI = null;
+let blockedList = []; // 自分がブロックしている相手（解除UIに出す）
+let banList = []; // BAN一覧（管理者のみサーバーから届く）
+// キック/BAN/入場拒否の説明。設定されているときは、切断を「通信不良」として扱わない
+let removedReason = '';
 
 // サーバーが操作を断ったときの説明文
 const DENY_MESSAGES = {
@@ -82,6 +88,11 @@ const DENY_MESSAGES = {
   'event-not-empty': '人が残っているイベントは削除できません',
   'cannot-delete': 'このイベントは削除できません',
   'too-many-events': 'イベントの数が上限に達しています',
+  'staff-only': 'この操作は管理者・VIPのみです',
+  'cannot-kick-staff': '管理者・VIPはキックできません',
+  'cannot-ban-staff': '管理者・VIPはBANできません',
+  'cannot-ban-guest': 'ゲストはBANできません（Googleアカウント単位のため）。キックで対応してください',
+  'too-many-blocks': 'ブロックできる人数の上限に達しています',
 };
 
 // 現在のプレイヤー情報（再カスタムで書き換わる）
@@ -155,8 +166,18 @@ function startDemoMode() {
   if (demoMode) return;
   demoMode = true;
   if (remote) remote.clear();
-  // 一人きりの画面にならないよう、デモ用のNPCを出す
   npcAuto = false;
+
+  // 退出させられた場合は、原因を伝えるのが先。
+  // 「通信が不安定なのかな」と誤解させないよう、NPCで賑やかしたりしない
+  if (removedReason) {
+    ensureSim().setCount(0);
+    chat.addMessage('', removedReason, { system: true });
+    updateCount(null);
+    return;
+  }
+
+  // 一人きりの画面にならないよう、デモ用のNPCを出す
   ensureSim().setCount(7);
   chat.addMessage('', 'オフラインデモモード（同期サーバー未接続）', { system: true });
   updateCount(null);
@@ -217,7 +238,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
     eventId,
     roomNumber,
     handlers: {
-      onWelcome: ({ id, name: assignedName, room, peers, count, cap, screen, playback, role, canControl, event, events }) => {
+      onWelcome: ({ id, name: assignedName, room, peers, count, cap, screen, playback, role, canControl, event, events, blocked }) => {
         myId = id;
         myRole = role || 'user';
         if (cap) roomCapacity = cap;
@@ -242,9 +263,11 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
           controls.setAvatar(player);
         }
         knownEvents = events || [];
+        blockedList = blocked || [];
         updateHeader(room);
         peers.forEach((p) => remote.addPeer(p));
         updateCount(count);
+        if (peopleUI) peopleUI.refresh();
         // 途中入場でも、その部屋で今流れている動画と再生位置に合わせる
         if (screen) {
           liveScreen.setVideo(screen);
@@ -259,6 +282,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
         if (cap) roomCapacity = cap;
         remote.clear();
         peers.forEach((p) => remote.addPeer(p));
+        if (peopleUI) peopleUI.refresh();
         updateHeader(room);
         updateCount(count);
         if (screen) {
@@ -274,16 +298,55 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
         knownEvents = list || [];
         if (roomUI) roomUI.setEvents(knownEvents);
       },
-      onDenied: ({ reason }) => {
+      onDenied: ({ reason, by, why }) => {
+        if (reason === 'banned') {
+          // 入場そのものを断られた。理由を画面に出して、デモモードには落とさない
+          removedReason = why
+            ? `${by || '管理者'} によってBANされています（理由: ${why}）`
+            : `${by || '管理者'} によってBANされています`;
+          return;
+        }
         chat.addMessage('', DENY_MESSAGES[reason] || 'その操作は許可されていません', { system: true });
       },
       onPeerJoin: (p) => {
         remote.addPeer(p);
         chat.addMessage('', `${p.n} が入場しました`, { system: true });
+        if (peopleUI) peopleUI.refresh();
       },
       onPeerMove: (m) => remote.movePeer(m),
       onPeerUpdate: (m) => remote.updatePeer(m),
-      onPeerLeave: (id) => remote.removePeer(id),
+      onPeerLeave: (id) => {
+        remote.removePeer(id);
+        if (peopleUI) peopleUI.refresh();
+      },
+      // ---- 迷惑行為への対処 ----
+      onBlocked: ({ k, n }) => {
+        blockedList = [...blockedList.filter((b) => b.k !== k), { k, n }];
+        chat.addMessage('', `${n} をブロックしました（お互いに見えなくなります）`, { system: true });
+        if (peopleUI) peopleUI.refresh();
+      },
+      onBlockedList: (list) => {
+        blockedList = list;
+        if (peopleUI) peopleUI.refresh();
+      },
+      onModerated: ({ act, n }) => {
+        chat.addMessage('', act === 'ban' ? `${n} をBANしました` : `${n} をキックしました`, { system: true });
+        if (net && myRole === 'admin') net.requestBans();
+        if (peopleUI) peopleUI.refresh();
+      },
+      onBans: (list) => {
+        banList = list;
+        if (peopleUI) peopleUI.refresh();
+      },
+      // 退出させられた側。切断が続くので、デモモードに落ちる前に理由を出す
+      onKicked: ({ by }) => {
+        removedReason = `${by} によって退出させられました。入り直すことはできます。`;
+      },
+      onBanned: ({ by, why }) => {
+        removedReason = why
+          ? `${by} によってBANされました（理由: ${why}）。このアカウントでは入れません。`
+          : `${by} によってBANされました。このアカウントでは入れません。`;
+      },
       onChat: (m) => {
         if (m.id === myId) return; // 自分の発言はローカルで表示済み
         chat.addMessage(m.n, m.txt);
@@ -380,6 +443,35 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
     },
   });
   roomUI.setEvents(knownEvents);
+
+  // 参加者パネル（ブロック／キック／BAN）
+  peopleUI = initPeopleUI({
+    slot: videoPanel.slot,
+    getRole: () => myRole,
+    getMyName: () => session.name,
+    getPeople: () => (remote ? remote.list() : []),
+    getBlocked: () => blockedList,
+    getBans: () => banList,
+    onBlock: (id) => {
+      if (net && !demoMode) net.sendBlock(id);
+    },
+    onUnblock: (k) => {
+      if (net && !demoMode) net.sendUnblock(k);
+    },
+    onKick: (id) => {
+      if (net && !demoMode) net.sendKick(id);
+    },
+    onBan: (id, why) => {
+      if (net && !demoMode) net.sendBan(id, why);
+    },
+    onUnban: (email) => {
+      if (net && !demoMode) net.sendUnban(email);
+    },
+    // 管理者のときだけBAN一覧を取りに行く（一般ユーザーには断られるので送らない）
+    onRefresh: () => {
+      if (net && !demoMode && myRole === 'admin') net.requestBans();
+    },
+  });
 
   // welcomeが先に来ている場合に備えて、権限の反映をここでもう一度実行する
   applyRoleToUi();
