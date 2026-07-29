@@ -100,15 +100,6 @@ export async function initStore() {
         created_at INTEGER NOT NULL
       )
     `);
-    // サーバーだけが使う保存領域。今はYouTube投稿の認可（リフレッシュトークン）だけ。
-    // 値は外に出さない。/api/status にも「繋がっているか」しか出さない
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS secrets (
-        key        TEXT PRIMARY KEY,
-        value      TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `);
     ready = true;
     lastError = '';
     console.log('[store] Turso に接続しました（イベントは永続化されます）');
@@ -339,51 +330,6 @@ export async function deleteBan(email) {
     return true;
   } catch (e) {
     console.warn('[store] BANの解除に失敗:', e.message);
-    return false;
-  }
-}
-
-// ------------------------------------------------------------
-// サーバー用の保存領域（外部サービスの認可など）
-//
-// 中身は機微な値なので、ログにも /api/status にも絶対に出さないこと。
-// Renderのファイルシステムは再起動で消えるため、ここ（Turso）が唯一の置き場所。
-// 永続化が無効な環境では保存できない＝再起動のたびに認可し直しになる。
-// ------------------------------------------------------------
-
-export async function loadSecret(key) {
-  if (!ready || !key) return '';
-  try {
-    const rs = await db.execute({ sql: 'SELECT value FROM secrets WHERE key = ?', args: [key] });
-    return rs.rows.length ? String(rs.rows[0].value) : '';
-  } catch (e) {
-    console.warn('[store] 保存値の読み込みに失敗:', e.message);
-    return '';
-  }
-}
-
-export async function saveSecret(key, value) {
-  if (!ready || !key) return false;
-  try {
-    await db.execute({
-      sql: `INSERT INTO secrets (key, value, updated_at) VALUES (?, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-      args: [key, String(value || ''), Date.now()],
-    });
-    return true;
-  } catch (e) {
-    console.warn('[store] 保存値の書き込みに失敗:', e.message);
-    return false;
-  }
-}
-
-export async function deleteSecret(key) {
-  if (!ready || !key) return false;
-  try {
-    await db.execute({ sql: 'DELETE FROM secrets WHERE key = ?', args: [key] });
-    return true;
-  } catch (e) {
-    console.warn('[store] 保存値の削除に失敗:', e.message);
     return false;
   }
 }

@@ -77,8 +77,6 @@ let blockedList = []; // 自分がブロックしている相手（解除UIに�
 let banList = []; // BAN一覧（管理者のみサーバーから届く）
 // キック/BAN/入場拒否の説明。設定されているときは、切断を「通信不良」として扱わない
 let removedReason = '';
-let streamRelayOn = false; // 管理者が配信への転送をONにしているか
-let myIdToken = ''; // Googleログインの証。HTTPの管理APIを呼ぶときに添える
 
 // サーバーが操作を断ったときの説明文
 const DENY_MESSAGES = {
@@ -95,7 +93,6 @@ const DENY_MESSAGES = {
   'cannot-ban-staff': '管理者・VIPはBANできません',
   'cannot-ban-guest': 'ゲストはBANできません（Googleアカウント単位のため）。キックで対応してください',
   'too-many-blocks': 'ブロックできる人数の上限に達しています',
-  'stream-off': '配信のコメント欄への転送はいまOFFです（ワールド内だけに送りました）',
 };
 
 // 現在のプレイヤー情報（再カスタムで書き換わる）
@@ -201,7 +198,6 @@ function startEntryFlow(prev = {}) {
 startEntryFlow();
 
 function enterWorld({ name, config, eventId, roomNumber, idToken }) {
-  myIdToken = idToken || ''; // 配信連携の管理APIで本人確認に使う
   // 入場ボタンのクリック（ユーザー操作）を起点にライブ再生を開始する
   liveScreen.play();
 
@@ -221,15 +217,15 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
   });
 
   chat = initChat({
-    onSend: (text, scope) => {
+    onSend: (text) => {
       if (myRole === 'guest') {
         chat.addMessage('', 'コメントするにはログインが必要です', { system: true });
         return;
       }
       chat.addMessage(session.name, text, { self: true });
       if (player.userData.say) player.userData.say(text);
-      // 既定はワールド内だけ。📺を押したときだけ配信のコメント欄にも流す
-      if (net && !demoMode) net.sendChat(text, scope === 'stream' ? 'stream' : 'local');
+      // ワールド内だけに届くローカル発言（YouTubeへは流さない）
+      if (net && !demoMode) net.sendChat(text, 'local');
     },
   });
 
@@ -242,7 +238,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
     eventId,
     roomNumber,
     handlers: {
-      onWelcome: ({ id, name: assignedName, room, peers, count, cap, screen, playback, role, canControl, event, events, blocked, stream }) => {
+      onWelcome: ({ id, name: assignedName, room, peers, count, cap, screen, playback, role, canControl, event, events, blocked }) => {
         myId = id;
         myRole = role || 'user';
         if (cap) roomCapacity = cap;
@@ -268,8 +264,6 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
         }
         knownEvents = events || [];
         blockedList = blocked || [];
-        streamRelayOn = Boolean(stream);
-        chat.setStreamAvailable(streamRelayOn);
         updateHeader(room);
         peers.forEach((p) => remote.addPeer(p));
         updateCount(count);
@@ -324,23 +318,6 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
       onPeerLeave: (id) => {
         remote.removePeer(id);
         if (peopleUI) peopleUI.refresh();
-      },
-      // ---- 配信のコメント欄への転送 ----
-      onStreamState: (on) => {
-        streamRelayOn = on;
-        chat.setStreamAvailable(on);
-        chat.addMessage(
-          '',
-          on
-            ? '配信のコメント欄への転送がONになりました（📺を押して送ると配信にも出ます）'
-            : '配信のコメント欄への転送がOFFになりました',
-          { system: true },
-        );
-        if (roomUI && roomUI.refreshStream) roomUI.refreshStream();
-      },
-      // 送れなかったときだけ届く。黙って捨てると「配信に出たつもり」で会話が進む
-      onStreamResult: ({ why }) => {
-        chat.addMessage('', why, { system: true });
       },
       // ---- 迷惑行為への対処 ----
       onBlocked: ({ k, n }) => {
@@ -454,12 +431,6 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
     },
     onRefresh: () => {
       if (net && !demoMode) net.requestEvents();
-    },
-    // 配信のコメント欄への転送（管理者が接続とON/OFFをここで行う）
-    getIdToken: () => myIdToken,
-    onStreamToggle: (on) => {
-      streamRelayOn = on;
-      chat.setStreamAvailable(on);
     },
     // 負荷テスト用のNPC。自分の画面にだけ出るので、他の人には影響しない
     getNpcCount: () => (sim ? sim.count() : 0),

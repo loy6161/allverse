@@ -92,8 +92,6 @@ function injectStyle() {
  * @param {(payload:{name:string,videoId:string,requireLogin:boolean}) => void} p.onCreateEvent
  * @param {(id:string) => void} p.onDeleteEvent
  * @param {() => void} p.onRefresh
- * @param {() => string} [p.getIdToken] Googleのログイン情報（配信連携の管理APIに使う）
- * @param {(on:boolean) => void} [p.onStreamToggle] 配信への転送のON/OFF
  * @param {() => number} [p.getNpcCount] NPCの現在数
  * @param {() => boolean} [p.isNpcAuto] 自動補充中かどうか
  * @param {(n:number|null) => void} [p.onNpcCount] NPCの人数を指定する（null で自動補充に戻す）
@@ -109,8 +107,6 @@ export function initRoomUI({
   getNpcCount,
   isNpcAuto,
   onNpcCount,
-  getIdToken,
-  onStreamToggle,
 }) {
   injectStyle();
 
@@ -314,116 +310,6 @@ export function initRoomUI({
       }
       test.appendChild(presets);
       panel.appendChild(test);
-
-      renderStreamSection();
-    }
-  }
-
-  // ---- 配信のコメント欄への転送（管理者のみ） ----
-  //
-  // 配信者のYouTubeアカウントを1回だけ認可してもらい、その名義で
-  // ワールド内の発言を「なまえ: 本文」の形で流す。
-  // 1日に送れる回数がかなり少ないので、残り回数を必ず画面に出す。
-  let streamBox = null;
-
-  async function ytApi(pathname, body = {}) {
-    const res = await fetch(pathname, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idt: getIdToken ? getIdToken() : '', ...body }),
-    });
-    return res.json().catch(() => ({ ok: false, error: '応答を読めませんでした' }));
-  }
-
-  function renderStreamSection() {
-    streamBox = document.createElement('div');
-    streamBox.className = 'vc-room-admin';
-    panel.appendChild(streamBox);
-    renderStreamStatus();
-  }
-
-  async function renderStreamStatus() {
-    if (!streamBox) return;
-    const st = await ytApi('/api/yt/status');
-    streamBox.innerHTML = '';
-
-    const label = document.createElement('div');
-    label.className = 'vc-room-title';
-    label.textContent = '配信のコメント欄へ転送';
-    streamBox.appendChild(label);
-
-    const hint = document.createElement('div');
-    hint.className = 'vc-room-hint';
-    streamBox.appendChild(hint);
-
-    if (!st.configured) {
-      hint.textContent =
-        'この機能はまだ設定されていません（サーバーに GOOGLE_CLIENT_SECRET が必要です）。docs/SETUP_YOUTUBE.md を参照してください。';
-      return;
-    }
-
-    if (!st.connected) {
-      hint.textContent =
-        '配信者のYouTubeアカウントを1回だけ接続します。ワールド内の発言は、このアカウントの名前で「なまえ: 本文」の形で流れます。';
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.textContent = 'YouTubeに接続';
-      btn.addEventListener('click', async () => {
-        const r = await ytApi('/api/yt/auth');
-        if (r.ok && r.url) {
-          window.open(r.url, '_blank', 'noopener');
-        } else {
-          hint.textContent = `接続できませんでした: ${r.error || '不明なエラー'}`;
-        }
-      });
-      streamBox.appendChild(btn);
-      if (!st.persistent) {
-        const warn = document.createElement('div');
-        warn.className = 'vc-room-hint';
-        warn.textContent = '⚠️ 保存先(Turso)が無効なので、サーバーが再起動すると接続し直しになります。';
-        streamBox.appendChild(warn);
-      }
-      return;
-    }
-
-    hint.textContent = `接続中: ${st.channel || '（チャンネル名を取得できませんでした）'} ／ 今日あと ${st.postsLeft} 回送れます`;
-
-    const row = document.createElement('label');
-    const check = document.createElement('input');
-    check.type = 'checkbox';
-    check.checked = Boolean(st.enabled);
-    check.addEventListener('change', async () => {
-      const r = await ytApi('/api/yt/enable', { on: check.checked });
-      if (onStreamToggle) onStreamToggle(Boolean(r.enabled));
-      renderStreamStatus();
-    });
-    row.appendChild(check);
-    row.appendChild(document.createTextNode('転送をONにする（参加者に📺ボタンが出ます）'));
-    streamBox.appendChild(row);
-
-    const note = document.createElement('div');
-    note.className = 'vc-room-hint';
-    note.textContent =
-      '配信に出た発言は取り消せないので、参加者側も📺を押したときだけ送られます。配信中でないと送れません。';
-    streamBox.appendChild(note);
-
-    const off = document.createElement('button');
-    off.type = 'button';
-    off.className = 'vc-room-del';
-    off.textContent = '接続を解除';
-    off.addEventListener('click', async () => {
-      if (!window.confirm('YouTubeとの接続を解除します。転送は止まります。')) return;
-      await ytApi('/api/yt/disconnect');
-      if (onStreamToggle) onStreamToggle(false);
-      renderStreamStatus();
-    });
-    streamBox.appendChild(off);
-
-    if (st.error) {
-      const err = document.createElement('div');
-      err.className = 'vc-room-hint';
-      err.textContent = `直近のエラー: ${st.error}`;
-      streamBox.appendChild(err);
     }
   }
 
@@ -444,10 +330,6 @@ export function initRoomUI({
     setEvents(list) {
       events = Array.isArray(list) ? list : [];
       if (open) render();
-    },
-    /** 配信転送の状態が変わったときに、開いているパネルを描き直す */
-    refreshStream() {
-      if (open && streamBox) renderStreamStatus();
     },
     /** 自動補充でNPCが増減したときに、開いているパネルの人数表示を合わせる */
     refreshNpc() {

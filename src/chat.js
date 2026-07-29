@@ -142,32 +142,6 @@ function injectStyle() {
       box-shadow: 0 0 14px rgba(255, 0, 255, 0.5);
     }
 
-    /* 配信のコメント欄にも流すかの切り替え。押した瞬間に分かるよう赤く光らせる */
-    .vc-chat-stream {
-      flex: 0 0 auto;
-      padding: 0 10px;
-      border-radius: 8px;
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      background: rgba(255, 255, 255, 0.06);
-      color: #eaf6ff;
-      cursor: pointer;
-      font-size: 14px;
-    }
-    .vc-chat-stream.on {
-      border-color: #ff3b6b;
-      background: rgba(255, 59, 107, 0.22);
-      box-shadow: 0 0 12px rgba(255, 59, 107, 0.5);
-    }
-    .vc-chat-stream.hidden { display: none; }
-
-    .vc-chat-warn {
-      font-size: 11px;
-      color: #ffb3c4;
-      margin: -2px 0 0;
-      line-height: 1.5;
-    }
-    .vc-chat-warn.hidden { display: none; }
-
     .vc-chat-send:active {
       filter: brightness(0.95);
     }
@@ -196,46 +170,17 @@ export function initChat({ onSend }) {
   input.placeholder = 'メッセージを入力...';
   input.maxLength = 200;
 
-  // 配信のコメント欄にも流すかの切り替え。
-  // 既定はOFF。配信に出た発言は取り消せないので、不可逆な方を既定にしない。
-  // 管理者が転送をONにしているときだけ出す
-  const streamBtn = document.createElement('button');
-  streamBtn.type = 'button';
-  streamBtn.className = 'vc-chat-stream hidden';
-  streamBtn.textContent = '📺';
-  streamBtn.title = '配信のコメント欄にも送る';
-
   const sendBtn = document.createElement('button');
   sendBtn.type = 'button';
   sendBtn.className = 'vc-chat-send';
   sendBtn.textContent = '送信';
 
   inputRow.appendChild(input);
-  inputRow.appendChild(streamBtn);
   inputRow.appendChild(sendBtn);
-
-  const warn = document.createElement('p');
-  warn.className = 'vc-chat-warn hidden';
-  warn.textContent = '⚠️ この発言は配信のコメント欄にも出ます（あとから消せません）';
 
   panel.appendChild(log);
   panel.appendChild(inputRow);
-  panel.appendChild(warn);
   root.appendChild(panel);
-
-  let streamOn = false;
-  let streamAvailable = false;
-
-  function applyStreamUi() {
-    streamBtn.classList.toggle('hidden', !streamAvailable);
-    streamBtn.classList.toggle('on', streamOn);
-    warn.classList.toggle('hidden', !(streamAvailable && streamOn));
-  }
-
-  streamBtn.addEventListener('click', () => {
-    streamOn = !streamOn;
-    applyStreamUi();
-  });
 
   function addMessage(name, text, opts = {}) {
     const line = document.createElement('p');
@@ -264,7 +209,7 @@ export function initChat({ onSend }) {
   function handleSend() {
     const text = input.value.trim();
     if (!text) return;
-    onSend(text, streamAvailable && streamOn ? 'stream' : 'local');
+    onSend(text);
     input.value = '';
   }
 
@@ -279,14 +224,5 @@ export function initChat({ onSend }) {
   // 具体的な会場名とルーム番号は、サーバーからwelcomeが届いた時点でヘッダーに出る
   addMessage('', `${APP_NAME} へようこそ！`, { system: true });
 
-  return {
-    addMessage,
-    /** 管理者が転送をONにしたら📺ボタンを出す。OFFに戻ったら選択ごと消す */
-    setStreamAvailable(v) {
-      streamAvailable = Boolean(v);
-      if (!streamAvailable) streamOn = false;
-      applyStreamUi();
-    },
-    isStreamOn: () => streamAvailable && streamOn,
-  };
+  return { addMessage };
 }
