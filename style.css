@@ -71,7 +71,8 @@ html, body {
 #avatar-btn {
   position: fixed;
   top: 16px;
-  right: 64px; /* 右上隅はUI表示切替アイコン(.vc-ui-toggle)が使う */
+  /* 右上隅は表示トグル2つ（UI非表示=right:16 / ネームプレート=right:58）が使う */
+  right: 106px;
   z-index: 10;
   padding: 8px 14px;
   font-size: 13px;
@@ -90,8 +91,9 @@ html, body {
 /* ------------------------------------------------------------------
    スマホの画面の使い方（2026-07-30 指定）
 
-   下から順に  ①動画のコントローラー ②エモート ③操作キー(左)＋チャットアイコン(右)
-   右上から順に ①UI非表示アイコン ②アバター変更
+   下から  ①操作キー(左)＋チャットアイコン(右)  ②エモート(チャットの上に縦一列)
+   右上から ①UI非表示アイコン ②アバター変更 ③⚙(動画のコントロール)
+   動画のコントロールとチャットは、常時出しっぱなしにせずボタンで開く。
 
    各パーツのスタイルは持ち主のモジュールが注入するので、位置だけを
    ここの変数で決めて、それぞれが参照する形にしている。
@@ -101,23 +103,25 @@ html, body {
 @media (max-width: 640px) {
   :root {
     --m-gap: 10px;
-    --m-bottom: 12px; /* 画面の下端からの余白 */
-    --m-video-h: 74px; /* 動画のコントローラーの高さ */
-    --m-emote-h: 58px; /* エモートバーの高さ */
+    --m-bottom: 16px; /* 画面の下端からの余白 */
     --m-pad-h: 110px; /* 操作キー（ジョイスティック）の直径 */
     --m-chat-icon: 56px;
 
-    /* ②エモート: ①動画コントローラーの上 */
-    --m-emote-bottom: calc(var(--m-bottom) + var(--m-video-h) + var(--m-gap));
-    /* ③操作キー／チャットアイコン: ②エモートの上 */
-    --m-pad-bottom: calc(var(--m-emote-bottom) + var(--m-emote-h) + var(--m-gap));
-    /* チャットログや各種パネルはさらに上（下部UIに一切かぶらせない） */
-    --m-panel-bottom: calc(var(--m-pad-bottom) + var(--m-pad-h) + var(--m-gap));
+    /* エモートはチャットアイコンの真上から縦に伸びる */
+    --m-emote-bottom: calc(var(--m-bottom) + var(--m-chat-icon) + var(--m-gap));
+    --m-video-h: 74px; /* 動画のコントロールの高さ */
+
+    /* 開いて出てくるパネル（チャットログ・動画のコントロール）は左下の操作キーより上。
+       横幅いっぱいに出すので操作キーを避ける必要がある */
+    --m-panel-bottom: calc(var(--m-bottom) + var(--m-pad-h) + var(--m-gap));
+    /* さらにその上の段。動画のコントロールの中のボタン（📺動画URL・🚪ルーム・👥参加者）から
+       開くパネルはここに出す。動画のコントロール自身と重ならないようにするため */
+    --m-panel2-bottom: calc(var(--m-panel-bottom) + var(--m-video-h) + var(--m-gap));
   }
 
-  /* 右上: UI非表示アイコン（viewmode.js が top/right を持つ）の真下にアバター変更 */
+  /* 右上を縦に積む: UI非表示アイコン(top:12) → アバター変更 → ⚙ */
   #avatar-btn {
-    top: 54px; /* UI非表示アイコン(top:12・高さ34) の下 */
+    top: 54px;
     right: 12px;
     padding: 7px 12px;
     font-size: 12px;

@@ -84,7 +84,7 @@ let canControlVideo = true;
 let currentEvent = null;
 let currentRoom = null;
 let knownEvents = [];
-let namesHidden = false; // UI非表示中はネームプレートも消す（アバター作り直し時に復元するため保持）
+let namesHidden = false; // ネームプレートを消しているか（アバターを作り直したときに再適用するため保持）
 let peopleUI = null;
 let blockedList = []; // 自分がブロックしている相手（解除UIに出す）
 let banList = []; // BAN一覧（管理者のみサーバーから届く）
@@ -493,10 +493,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
   initViewMode({
     controls,
     slot: videoPanel.slot,
-    // ネームプレートと吹き出しは3D空間の中にあるのでCSSでは消えない。個別に切り替える
-    onUIHidden: (hidden) => {
-      namesHidden = hidden;
-      const show = !hidden;
+    // ネームプレートと吹き出しは3D空間の中にあるのでCSSでは消えない。個別に切り替える。
+    // 「UI非表示(H)」と「ネームプレートだけ非表示(N)」の両方をまとめた結果が来る
+    onNamesVisible: (show) => {
+      namesHidden = !show;
       if (player && player.userData.setNameVisible) player.userData.setNameVisible(show);
       if (remote && remote.setNamesVisible) remote.setNamesVisible(show);
       if (sim && sim.setNamesVisible) sim.setNamesVisible(show);

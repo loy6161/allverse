@@ -99,16 +99,27 @@ function injectStyle() {
     }
 
     @media (max-width: 640px) {
+      /* スマホは右下のチャットアイコンの真上から縦一列に伸ばす。
+         幅をチャットアイコン(56px)と揃えて、右端で一直線に並ぶようにしている */
       .vc-emote-bar {
-        /* 下から2番目（動画のコントローラーの上）。積み方は style.css の変数で決めている */
+        left: auto;
+        right: 16px;
         bottom: var(--m-emote-bottom);
+        transform: none;
+        flex-direction: column;
         gap: 6px;
-        padding: 6px 8px;
+        padding: 5px; /* 5+44+5+border2 = 56px でチャットアイコンと同じ幅になる */
+        border-radius: 999px;
       }
       .vc-emote-btn {
         width: 44px;
         height: 44px;
         font-size: 18px;
+      }
+      /* チャットや動画コントロールを開いている間は、縦に長いエモートが被るので退避 */
+      body.vc-m-chat-open .vc-emote-bar,
+      body.vc-m-video-open .vc-emote-bar {
+        display: none;
       }
     }
   `;

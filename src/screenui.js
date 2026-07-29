@@ -137,13 +137,16 @@ function injectStyle() {
     }
 
     @media (max-width: 640px) {
-      /* 下部UI（動画コントローラー・エモート・操作キー）にかぶらない高さへ */
+      /* このパネルを開くボタン(📺)は動画のコントロールの中にあるので、
+         そのコントロール自身より上の段に出す */
       .vc-screen-panel {
         right: 12px;
         left: 12px;
         width: auto;
         max-width: none;
-        bottom: var(--m-panel-bottom);
+        bottom: var(--m-panel2-bottom);
+        max-height: calc(100vh - var(--m-panel2-bottom) - 145px);
+        overflow-y: auto;
       }
     }
   `;

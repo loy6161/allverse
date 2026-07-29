@@ -1,5 +1,11 @@
 // mobile.js
-// スマホ向け操作UI（バーチャルジョイスティック／ピンチズーム／チャット折りたたみ）
+// スマホ向け操作UI（バーチャルジョイスティック／ピンチズーム／チャットと動画操作の折りたたみ）
+//
+// 画面の使い方（2026-07-30 指定）:
+//   下から  操作キー(左) ＋ チャットアイコン(右) … 一番下の段
+//           エモート … チャットアイコンの真上に縦一列（emotebar.js 側で指定）
+//   右上から UI非表示 / ネームプレート → アバター変更 → ⚙(動画のコントロール)
+// チャットと動画のコントロールは同時に開かない（どちらも横幅いっぱいを使うため）。
 // タッチ端末（または ?mobile=1）のときだけ initMobile() が UI を構築する。
 // PC(マウスのみ)環境では何もせず { enabled: false } を返す。
 
@@ -68,6 +74,33 @@ function injectStyle() {
       filter: brightness(1.2);
     }
 
+    /* 動画のコントロールを開く歯車。右上のアバター変更ボタンの真下に置く */
+    .vc-m-gear {
+      position: fixed;
+      top: 95px;
+      right: 12px;
+      z-index: 13;
+      width: 34px;
+      height: 34px;
+      display: none; /* 出すのは狭い画面のときだけ（下の media query） */
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      color: #eee;
+      background: rgba(10, 10, 30, 0.6);
+      border: 1px solid rgba(255, 176, 92, 0.45);
+      border-radius: 9px;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      cursor: pointer;
+      padding: 0;
+      font-family: inherit;
+    }
+    .vc-m-gear.is-on {
+      background: rgba(255, 176, 92, 0.35);
+      box-shadow: 0 0 10px rgba(255, 176, 92, 0.6);
+    }
+
     @media (max-width: 640px) {
       /* join-screen: 縦長パネルを画面内で縦スクロールできるようにする */
       #join-screen {
@@ -79,19 +112,19 @@ function injectStyle() {
         max-height: none;
       }
 
-      /* 下から3番目の段: 操作キー（左）とチャットアイコン（右）を同じ高さに並べる。
-         積み方は style.css の変数で決めている */
+      /* 一番下の段: 操作キー（左）とチャットアイコン（右） */
       .vc-mobile-joystick-base {
         left: 16px;
-        bottom: var(--m-pad-bottom);
+        bottom: var(--m-bottom);
       }
       .vc-mobile-chat-toggle {
         right: 16px;
-        /* ジョイスティックより小さいので、上下の中心を合わせる */
-        bottom: calc(var(--m-pad-bottom) + (var(--m-pad-h) - var(--m-chat-icon)) / 2);
+        bottom: var(--m-bottom);
       }
 
-      /* チャットログは下部UIの上。開いている間だけ出るので画面を広く使う */
+      .vc-m-gear { display: flex; }
+
+      /* チャットログは操作キーより上。開いている間だけ出るので画面を広く使う */
       #chat-root {
         left: 12px;
         bottom: var(--m-panel-bottom);
@@ -130,6 +163,10 @@ export function initMobile({ controls, chatRoot }) {
   if (!isTouch) return { enabled: false };
 
   injectStyle();
+  // スマホ用UIが動いていることの印。
+  // 「動画パネルを隠して ⚙ から開く」等の切り替えを、この印が付いているときだけに限定する。
+  // 画面幅だけで判断すると、PCで窓を細くした人が動画操作に触れなくなってしまう
+  document.body.classList.add('vc-mobile');
 
   // ---------------------------------------------------------------------
   // バーチャルジョイスティック（左下）
@@ -255,24 +292,50 @@ export function initMobile({ controls, chatRoot }) {
   window.addEventListener('pointercancel', releasePointer);
 
   // ---------------------------------------------------------------------
-  // チャット折りたたみ（右下トグル）
+  // チャット（右下）と動画のコントロール（右上の⚙）の開閉
+  //
+  // どちらも横幅いっぱいを使うので同時には開かない。開いている間は
+  // 縦一列のエモートも退避する（CSSの body.vc-m-chat-open / vc-m-video-open で制御）。
   // ---------------------------------------------------------------------
   chatRoot.style.display = 'none';
 
   const chatToggle = document.createElement('button');
   chatToggle.type = 'button';
   chatToggle.className = 'vc-mobile-chat-toggle';
+  chatToggle.title = 'チャット';
   chatToggle.textContent = '\u{1F4AC}'; // 💬
   document.body.appendChild(chatToggle);
 
+  const gear = document.createElement('button');
+  gear.type = 'button';
+  gear.className = 'vc-m-gear';
+  gear.title = '動画のコントロール';
+  gear.textContent = '\u2699'; // ⚙
+  document.body.appendChild(gear);
+
   let chatOpen = false;
+  let videoOpen = false;
+
+  function apply() {
+    chatRoot.style.display = chatOpen ? '' : 'none';
+    chatToggle.textContent = chatOpen ? '✕' : '\u{1F4AC}';
+    gear.textContent = videoOpen ? '✕' : '\u2699';
+    gear.classList.toggle('is-on', videoOpen);
+    document.body.classList.toggle('vc-m-chat-open', chatOpen);
+    document.body.classList.toggle('vc-m-video-open', videoOpen);
+  }
+  apply();
+
   chatToggle.addEventListener('click', () => {
     chatOpen = !chatOpen;
-    chatRoot.style.display = chatOpen ? '' : 'none';
-    chatToggle.textContent = chatOpen ? '✕' : '\u{1F4AC}'; // ✕ : 💬
-    // 画面が狭いので、チャットを開いている間は動画パネルを退避させる
-    const videoPanel = document.querySelector('.vc-video-panel');
-    if (videoPanel) videoPanel.style.display = chatOpen ? 'none' : '';
+    if (chatOpen) videoOpen = false; // 片方を開いたらもう片方は閉じる
+    apply();
+  });
+
+  gear.addEventListener('click', () => {
+    videoOpen = !videoOpen;
+    if (videoOpen) chatOpen = false;
+    apply();
   });
 
   return { enabled: true };

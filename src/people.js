@@ -44,9 +44,15 @@ function injectStyle() {
 }
 .vc-people-hidden { display: none; }
 
-/* スマホでは下部UI（動画コントローラー・エモート・操作キー）の上に出す */
+/* スマホでは、このパネルを開くボタンが入っている動画のコントロールより上の段に出す */
 @media (max-width: 640px) {
-  .vc-people-panel { right: 12px; left: 12px; width: auto; bottom: var(--m-panel-bottom); max-height: 50vh; }
+  .vc-people-panel {
+    right: 12px; left: 12px; width: auto;
+    bottom: var(--m-panel2-bottom);
+    /* 上に伸びても右上のボタン（⚙ は top:95・高さ34）に届かない高さで止める。
+       vh の固定値だと画面が低い端末で突き抜けるので、残りの空きから計算する */
+    max-height: calc(100vh - var(--m-panel2-bottom) - 145px);
+  }
 }
 
 

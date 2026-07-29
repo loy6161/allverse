@@ -124,14 +124,19 @@ function injectStyle() {
     }
 
     @media (max-width: 640px) {
-      /* スマホでは一番下（積み方は style.css の変数で決めている） */
+      /* スマホでは画面が狭いので出しっぱなしにしない。
+         右上の ⚙ を押したときだけ、操作キーより上に開く（積み方は style.css の変数） */
       .vc-video-panel {
         right: 12px;
         left: 12px;
-        bottom: var(--m-bottom);
+        bottom: var(--m-panel-bottom);
         width: auto;
         padding: 8px 10px 9px;
       }
+      /* 隠すのは vc-mobile（スマホ用UIが動いていて ⚙ が存在する）ときだけ。
+         これを付けないと、PCで窓を細くしただけの人が動画操作に触れなくなる */
+      body.vc-mobile .vc-video-panel { display: none; }
+      body.vc-mobile.vc-m-video-open .vc-video-panel { display: flex; }
       .vc-vp-vol { width: 56px; }
     }
   `;
