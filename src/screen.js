@@ -17,7 +17,18 @@ const VIDEO_ID = 'unrobrGhlv0'; // clubVERSE関連動画（loyさん指定）
 // そこで iframe を「キャンバスの後ろ」に置き、キャンバス側のスクリーン面を
 // 「色を書かず深度だけ書くマテリアル」にして穴を開ける。
 // これで映像は穴から見え、手前のアバターはキャンバスに描かれて映像の上に出る。
-export function initLiveScreen(camera, scene) {
+/**
+ * @param {Object} [place] スクリーンの場所と大きさ。ワールドによって違うので外から渡す。
+ *   既定は仮ワールドのLED位置（幅14×高さ7・world(0, 5.4, -18.95)）。
+ */
+export function initLiveScreen(camera, scene, place = {}) {
+  const SC = {
+    x: place.x != null ? place.x : 0,
+    y: place.y != null ? place.y : 5.4,
+    z: place.z != null ? place.z : -18.95,
+    width: place.width || 14,
+    height: place.height || 7,
+  };
   const cssRenderer = new CSS3DRenderer();
   cssRenderer.setSize(window.innerWidth, window.innerHeight);
   const layer = cssRenderer.domElement;
@@ -29,9 +40,9 @@ export function initLiveScreen(camera, scene) {
 
   const cssScene = new THREE.Scene();
 
-  // WebGLスクリーン（14x7、world座標(0, 5.4, -19.05)）と同じ場所・サイズ
+  // WebGL側のスクリーン面と同じ場所・同じ大きさに重ねる（ズレると穴から映像がはみ出す）
   const PX_W = 1120;
-  const PX_H = 560;
+  const PX_H = Math.round((PX_W * SC.height) / SC.width);
   const holder = document.createElement('div');
   holder.style.width = `${PX_W}px`;
   holder.style.height = `${PX_H}px`;
@@ -39,8 +50,8 @@ export function initLiveScreen(camera, scene) {
   holder.style.pointerEvents = 'none';
 
   const cssObj = new CSS3DObject(holder);
-  cssObj.position.set(0, 5.4, -18.95);
-  cssObj.scale.setScalar(14 / PX_W);
+  cssObj.position.set(SC.x, SC.y, SC.z);
+  cssObj.scale.setScalar(SC.width / PX_W);
   cssScene.add(cssObj);
 
   let started = false;
@@ -62,10 +73,10 @@ export function initLiveScreen(camera, scene) {
     scene.traverse((o) => {
       if (!o.isMesh) return;
       const p = o.geometry && o.geometry.parameters;
-      if (!p || p.width !== 14 || p.height !== 7) return;
+      if (!p || p.width !== SC.width || p.height !== SC.height) return;
       o.getWorldPosition(wp);
-      // スクリーン位置(0, 5.4, -18.95)の近傍にあるものだけを対象にする
-      if (Math.abs(wp.x) < 1 && Math.abs(wp.y - 5.4) < 1 && Math.abs(wp.z + 18.95) < 1.5) {
+      // スクリーン位置の近傍にあるものだけを対象にする
+      if (Math.abs(wp.x - SC.x) < 1 && Math.abs(wp.y - SC.y) < 1 && Math.abs(wp.z - SC.z) < 1.5) {
         if (!screenMeshes.includes(o)) screenMeshes.push(o);
       }
     });

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createWorld } from './world.js';
+import { createClubWorld } from './world_club.js';
 import { createAvatar } from './avatar.js';
 import { preloadAvatars } from './avatar_glb.js';
 import { initJoinScreen, openCustomizer } from './join.js';
@@ -39,8 +40,13 @@ const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerH
 camera.position.set(0, 6, 14);
 camera.lookAt(0, 1, 0);
 
-// タッチ端末は負荷を抑えた構成でワールドを作る（反射・粒子数など）
-const world = createWorld(scene, { lowSpec: IS_TOUCH });
+// 会場の切り替え。既定はVRChatから持ってきた clubVERSE。
+// 仮ワールドに戻したいときは ?world=mock を付ける（見比べ用に残してある）
+const WORLD_KIND = new URLSearchParams(location.search).get('world') === 'mock' ? 'mock' : 'club';
+const world =
+  WORLD_KIND === 'club'
+    ? createClubWorld(scene, { renderer })
+    : createWorld(scene, { lowSpec: IS_TOUCH }); // タッチ端末は負荷を抑えた構成
 
 // 背景色はキャンバスではなくページ側で持つ（キャンバスを透過させるため）。
 // 見た目は変わらないが、スクリーン面の穴から背後のiframeが見えるようになる。
@@ -50,7 +56,14 @@ if (skyColor) {
   scene.background = null;
 }
 
-const liveScreen = initLiveScreen(camera, scene);
+// スクリーンの位置は会場ごとに違うので、ワールド側が持っている値を渡す
+// 実写系のテクスチャが白飛びするので、clubVERSE では色調を整えてから出す
+if (WORLD_KIND === 'club') {
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+}
+
+const liveScreen = initLiveScreen(camera, scene, world.screen || {});
 
 let player = null;
 let controls = null;
