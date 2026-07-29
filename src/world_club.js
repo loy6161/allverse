@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { addMoon } from './night_sky.js';
+import { addMoon, addStars } from './night_sky.js';
 
 // ------------------------------------------------------------------
 // clubVERSE（VRChatの実ワールドから持ってきた会場）
@@ -80,16 +80,18 @@ const MATERIAL_RULES = [
   // --- ガラス（透過していなかったので入れ直す）---
   // clubVERSE_glass_cl は天井ガラス(563m2)。VRChat側では発光扱いだが、
   // そのまま白発光させると空が真っ白になるので発光は切って素通しにする。
+  // ガラスが白く見える主因は映り込み（envMapIntensity）。透過度そのものより
+  // ここを絞らないと、外の星空が白い膜の向こうになる（2026-07-30 指摘で判明）
   {
     test: (n) => n === 'clubVERSE_glass_cl',
     apply: (m) => {
       m.transparent = true;
-      m.opacity = 0.14;
+      m.opacity = 0.08;
       m.color.setHex(0x9fb6d8);
       m.emissive.setHex(0x000000);
       m.roughness = 0.05;
       m.metalness = 0.0;
-      m.envMapIntensity = 1.1;
+      m.envMapIntensity = 0.35;
       m.depthWrite = false;
       m.side = THREE.DoubleSide;
     },
@@ -98,12 +100,12 @@ const MATERIAL_RULES = [
     test: (n) => n.includes('glass'),
     apply: (m) => {
       m.transparent = true;
-      m.opacity = 0.22;
+      m.opacity = 0.1;
       m.color.setHex(0x8ba7c8);
       m.emissive.setHex(0x000000);
       m.roughness = 0.06;
       m.metalness = 0.0;
-      m.envMapIntensity = 1.2;
+      m.envMapIntensity = 0.4;
       m.depthWrite = false;
       m.side = THREE.DoubleSide;
     },
@@ -155,6 +157,12 @@ const MATERIAL_RULES = [
   {
     test: (n) => n.includes('AudioLink'),
     apply: (m) => {
+      // テクスチャは外す（2026-07-30 指定）。柄が乗るとネオン管に見えないため、
+      // 均一なフラット発光にする
+      m.map = null;
+      m.emissiveMap = null;
+      m.roughnessMap = null;
+      m.metalnessMap = null;
       m.color.setHex(0x08131c);
       m.emissive.setHex(0x5ccfff);
       m.emissiveIntensity = 0.7;
@@ -305,6 +313,10 @@ export function createClubWorld(scene, { renderer } = {}) {
 
   // 月。天井ガラス越しに見上げると入る位置に置いている（会場の右前方・仰角約45度）
   addMoon(scene, { position: [55, 95, -75], radius: 22, glowScale: 80 });
+
+  // 星空。会場の外に球状にばら撒いたパーティクル。
+  // 天井ガラスと背面ガラス越しに見える（ガラスの映り込みを絞ったのはこのため）
+  addStars(scene);
 
   // ---- 明かり ----
   // VRChat側は焼いた光（Bakery）で見せているが、それは持ってきていない。

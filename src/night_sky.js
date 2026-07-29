@@ -80,6 +80,66 @@ export function makeMoonTexture() {
 }
 
 /**
+ * 星空（パーティクル）。仮ワールドの浮遊パーティクルと同じ見せ方で、
+ * 会場の外に大きな球状にばら撒いて「星」に見せる（2026-07-30 指定）。
+ * 遠景なので揺らさない（アニメーション不要）。
+ *
+ * @param {THREE.Object3D} parent
+ * @param {{count?: number, radiusMin?: number, radiusMax?: number, size?: number}} opts
+ */
+export function addStars(parent, opts = {}) {
+  const count = opts.count ?? 700;
+  const rMin = opts.radiusMin ?? 120;
+  const rMax = opts.radiusMax ?? 320;
+  const size = opts.size ?? 1.6;
+
+  // 固定シード（リロードで星の配置が変わらないように）
+  let s = 424242;
+  const rand = () => ((s = (s * 9301 + 49297) % 233280), s / 233280);
+
+  const pos = new Float32Array(count * 3);
+  const col = new Float32Array(count * 3);
+  const warm = new THREE.Color(0xfff2dd);
+  const cool = new THREE.Color(0xcfe4ff);
+  const tmp = new THREE.Color();
+  for (let i = 0; i < count; i++) {
+    // 上半球に置く（地平線の下に星があると床下から光が透ける）
+    const r = rMin + rand() * (rMax - rMin);
+    const theta = rand() * Math.PI * 2;
+    const phi = Math.acos(0.05 + rand() * 0.95); // 天頂寄り〜地平線ぎりぎり
+    pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+    pos[i * 3 + 1] = r * Math.cos(phi);
+    pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+    tmp.copy(warm).lerp(cool, rand());
+    const dim = 0.45 + rand() * 0.55; // 明るさにばらつき
+    col[i * 3] = tmp.r * dim;
+    col[i * 3 + 1] = tmp.g * dim;
+    col[i * 3 + 2] = tmp.b * dim;
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+
+  const stars = new THREE.Points(
+    geo,
+    new THREE.PointsMaterial({
+      size,
+      map: makeGlowTexture('rgba(255,255,255,1)', 'rgba(210,225,255,0.55)'),
+      transparent: true,
+      opacity: 0.9,
+      vertexColors: true,
+      depthWrite: false,
+      fog: false, // 遠景。霧で消さない
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
+    }),
+  );
+  parent.add(stars);
+  return stars;
+}
+
+/**
  * 巨大な月＋ハローを parent に足す。背景色と霧は呼び出し側が決める。
  *
  * @param {THREE.Object3D} parent
