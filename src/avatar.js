@@ -1,12 +1,17 @@
 import * as THREE from 'three';
+import { createGlbAvatar } from './avatar_glb.js';
 
 // ------------------------------------------------------------------
-// プリセット式・デフォルメちびキャラアバター（VRoid/VRChat系トゥーン調）
+// プリセット式・デフォルメちびキャラアバター
+// 本体はGLB版（avatar_glb.js）。このファイルは部品リスト・テキストスプライト・
+// 旧実装（createLegacyAvatar）を持つ
 // ------------------------------------------------------------------
 
 export const AVATAR_PARTS = {
   bodyColors: ['#ffdbac', '#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#3a2a1e', '#7fe6ff', '#ff8fe6'],
-  hairStyles: ['short', 'long', 'twin', 'hat'],
+  // GLBアバター（Blender製）のスタイル一覧。wireには文字列がそのまま乗り、
+  // 未知のidを受けた側は先頭にフォールバックする（net.js）ので追加は後方互換
+  hairStyles: ['bob', 'short', 'twin', 'bun', 'long', 'pony', 'kemo'],
   hairColors: ['#1a1a1a', '#4a2c17', '#caa06b', '#e0483a', '#ff6fd8', '#4fd8ff', '#8a5fff', '#f2f2f2'],
   shirtColors: ['#00ffea', '#ff00e5', '#ffb400', '#3b82f6', '#22c55e', '#ef4444', '#a855f7', '#f5f5f5'],
 };
@@ -352,7 +357,7 @@ function wrapLines(ctx, text, maxWidth, maxLines) {
   return lines;
 }
 
-function createTextSprite(text, opts = {}) {
+export function createTextSprite(text, opts = {}) {
   const {
     fontSize = 30,
     font = 'bold',
@@ -522,8 +527,14 @@ function buildHair(style, hairColor) {
 }
 
 // ---- アバター本体 -----------------------------------------------------
+// 2026-07-29: 本体はBlender製GLBアバター（avatar_glb.js）に切り替えた。
+// 旧プリミティブ版は createLegacyAvatar として残す（未使用・比較用）。
 
 export function createAvatar(config) {
+  return createGlbAvatar(config);
+}
+
+export function createLegacyAvatar(config) {
   const {
     bodyColor = '#ffdbac',
     hairStyle = 'short',

@@ -2,9 +2,13 @@ import * as THREE from 'three';
 import { AVATAR_PARTS, randomConfig, createAvatar } from './avatar.js';
 
 const HAIR_LABELS = {
+  bob: 'ボブ',
   short: 'ショート',
-  long: 'ロング',
   twin: 'ツインテール',
+  bun: 'お団子',
+  long: 'ロング',
+  pony: 'ポニーテール',
+  kemo: 'けもみみ',
   hat: 'ぼうし',
 };
 

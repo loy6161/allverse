@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createWorld } from './world.js';
 import { createAvatar } from './avatar.js';
+import { preloadAvatars } from './avatar_glb.js';
 import { initJoinScreen, openCustomizer } from './join.js';
 import { initMobile } from './mobile.js';
 import { initChat } from './chat.js';
@@ -13,6 +14,8 @@ import { initEmoteBar } from './emotebar.js';
 import { initScreenUI } from './screenui.js';
 import { initViewMode } from './viewmode.js';
 import { initPlayerControls } from './playerctl.js';
+
+preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
 const canvas = document.getElementById('scene');
 // alpha:true = キャンバスを透過可能にする。スクリーン面に開けた「穴」から
