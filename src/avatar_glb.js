@@ -15,7 +15,7 @@ import { createTextSprite } from './avatar.js';
 // ------------------------------------------------------------------
 
 // パーツ合成方式: body_<服装> + hair_<髪型> + acc_<アクセ> を実行時に組む
-export const GLB_STYLES = ['long', 'short', 'twin', 'bun', 'pony'];
+export const GLB_STYLES = ['long', 'bob', 'short', 'twin', 'bun', 'pony'];
 export const GLB_OUTFITS = ['middle', 'long', 'short'];
 export const GLB_ACCESSORIES = ['none', 'kemo', 'ahoge'];
 
@@ -57,7 +57,9 @@ function wrapWithPivot(mesh, pivot) {
   return g;
 }
 
-function toon(color, emissiveScale = 0.05) {
+// フラット寄りの質感（ユーザー指定 2026-07-29: 影なしのフラットな方がかわいい）。
+// エミッシブを高めにして、会場の照明で暗く沈まないようにする
+function toon(color, emissiveScale = 0.42) {
   const mat = new THREE.MeshToonMaterial({ color });
   mat.emissive = new THREE.Color(color).multiplyScalar(emissiveScale);
   mat.side = THREE.DoubleSide; // 髪は開いたシェルなので両面必須
@@ -85,14 +87,14 @@ export function createGlbAvatar(config) {
     ? new THREE.Color(eyeColor)
     : new THREE.Color(hairColor).lerp(new THREE.Color('#93242e'), 0.55);
   const MAT_BUILDERS = {
-    MatHair: () => toon(hairColor, 0.06),
-    MatSkin: () => toon(bodyColor, 0.05),
-    MatCloth: () => toon(shirtColor, 0.07),
-    MatDark: () => toon(bottomColor, 0.04),
-    MatEye: () => toon('#191219', 0.02),
-    MatEyeC: () => toon(eyeIrisColor, 0.12),
+    MatHair: () => toon(hairColor),
+    MatSkin: () => toon(bodyColor),
+    MatCloth: () => toon(shirtColor),
+    MatDark: () => toon(bottomColor, 0.35),
+    MatEye: () => toon('#191219', 0.3),
+    MatEyeC: () => toon(eyeIrisColor, 0.45),
     MatEyeGlint: () => new THREE.MeshBasicMaterial({ color: '#ffffff' }),
-    MatCheek: () => toon('#ff96a0', 0.25),
+    MatCheek: () => toon('#ff96a0', 0.5),
   };
 
   // ---- 可動パーツ参照（読み込み後に埋まる） ----
@@ -115,6 +117,9 @@ export function createGlbAvatar(config) {
 
     const eyeMeshes = [];
     for (const mesh of meshes) {
+      // 影は落とさない・受けない（フラットな見た目＆シャドウマップ負荷の削減）
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
       const matName = mesh.material?.name || '';
       const builder = MAT_BUILDERS[matName];
       if (builder) mesh.material = builder();

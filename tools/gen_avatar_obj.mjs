@@ -266,30 +266,34 @@ function ahoge() {
 //       旧ロング（背中ケープ）は形が悪く廃止。アホ毛・けもみみはアクセサリーへ分離
 //   体: 服装（ロング/ミドル/ショート）＋肌・顔・腕・脚。髪型と自由に組み合わせる
 // ---------------------------------------------------------------
-const SHORT_RINGS = RINGS_ALL.slice(0, 5); // R5まで（裾が上）
-const shortDome = () => hairDome({ rings: SHORT_RINGS, hemDrop: 0.06, lockTipY: -0.2 });
+const BOB_RINGS = RINGS_ALL.slice(0, 5); // R5まで（あご下で切り揃え）＝ボブ
+const SHORT_RINGS = RINGS_ALL.slice(0, 4); // R4まで（耳が出る短さ）＝ショート
+const bobDome = () => hairDome({ rings: BOB_RINGS, hemDrop: 0.06, lockTipY: -0.2 });
 const PARTS = {
   hair_long() {
     hairDome({});
   },
+  hair_bob() {
+    bobDome();
+  },
   hair_short() {
-    shortDome();
+    hairDome({ rings: SHORT_RINGS, hemDrop: 0.05, lockTipY: -0.16 });
   },
   hair_twin() {
-    shortDome();
+    bobDome();
     for (const sx of [-1, 1]) {
       ball('hair', sx * 0.27, 1.0, -0.06, 0.055, 6, 4);
       cone3('hair', [sx * 0.29, 0.98, -0.07], [sx * 0.38, 0.44, -0.05], 0.075);
     }
   },
   hair_bun() {
-    shortDome();
+    bobDome();
     for (const sx of [-1, 1]) {
       ball('hair', sx * 0.185, 1.105, -0.03, 0.115, 7, 5);
     }
   },
   hair_pony() {
-    shortDome();
+    bobDome();
     ball('hair', 0, 0.99, -0.28, 0.07, 6, 4);
     cone3('hair', [0, 0.96, -0.31], [0, 0.38, -0.4], 0.11);
   },
@@ -312,8 +316,9 @@ const PARTS = {
     OUTFITS.tunic();
   },
   acc_kemo() {
+    // 正三角形に近い低めの耳（尖らせすぎると角に見える）
     for (const sx of [-1, 1]) {
-      cone3('hair', [sx * 0.13, 1.05, -0.01], [sx * 0.21, 1.26, 0.0], 0.062, 90);
+      cone3('hair', [sx * 0.135, 1.03, -0.01], [sx * 0.19, 1.16, 0.0], 0.09, 90);
     }
   },
   acc_ahoge() {

@@ -3,6 +3,7 @@ import { AVATAR_PARTS, randomConfig, createAvatar } from './avatar.js';
 
 const HAIR_LABELS = {
   long: 'ロング',
+  bob: 'ボブ',
   short: 'ショート',
   twin: 'ツインテール',
   bun: 'お団子',
@@ -368,10 +369,11 @@ function buildCustomizeScreen({
   previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   previewRenderer.setSize(300, 300, false);
 
-  const ambient = new THREE.AmbientLight(0x8899ff, 0.9);
-  const keyLight = new THREE.DirectionalLight(0x00ffea, 1.1);
-  keyLight.position.set(2, 3, 3);
-  const rimLight = new THREE.DirectionalLight(0xff00e5, 0.8);
+  // 明るくフラットに見せる（暗い色付きライトだと造形が沈む）
+  const ambient = new THREE.AmbientLight(0xffffff, 1.35);
+  const keyLight = new THREE.DirectionalLight(0xfff2e0, 0.9);
+  keyLight.position.set(1.5, 3, 4);
+  const rimLight = new THREE.DirectionalLight(0xaad4ff, 0.35);
   rimLight.position.set(-2, 1.5, -2);
   previewScene.add(ambient, keyLight, rimLight);
 
@@ -487,7 +489,7 @@ function buildCustomizeScreen({
 export function initJoinScreen(onJoin) {
   buildCustomizeScreen({
     title: 'VERSE CITY',
-    subtitle: 'clubVERSE Web メタバース (モックアップ)',
+    subtitle: 'VERSE CITY WEB',
     buttonLabel: '入場する',
     showCancel: false,
     initialName: '',
@@ -505,7 +507,7 @@ export function initJoinScreen(onJoin) {
 export function openCustomizer({ name, config, onApply, onCancel }) {
   buildCustomizeScreen({
     title: 'アバター変更',
-    subtitle: 'clubVERSE Web メタバース (モックアップ)',
+    subtitle: 'VERSE CITY WEB',
     buttonLabel: 'この姿に変更',
     showCancel: true,
     initialName: name || '',

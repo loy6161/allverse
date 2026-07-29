@@ -19,7 +19,8 @@ export const AVATAR_PARTS = {
   // GLBアバター（Blender製）のパーツ一覧。wireには文字列がそのまま乗り、
   // 未知のidを受けた側は先頭にフォールバックする（net.js）ので追加は後方互換
   // ※「long」は承認済みボブ形状の名前（旧bobをリネーム。旧ロングは廃止）
-  hairStyles: ['long', 'short', 'twin', 'bun', 'pony'],
+  //   「bob」はあご下丈、「short」は耳が出る短さ（2026-07-29 追加）
+  hairStyles: ['long', 'bob', 'short', 'twin', 'bun', 'pony'],
   outfits: ['middle', 'long', 'short'],
   accessories: ['none', 'kemo', 'ahoge'],
   hairColors: COLOR14,
