@@ -11,8 +11,9 @@
 
 ブラウザ会場は**本番公開済み**。2026-07-29に「実戦で使うための3点（Googleログイン・管理者権限・
 イベント/ルーム）」を実装し、あわせてサービス名を **ALLVERSE** に統一した。
-URLは `https://allverse.onrender.com` へ移行中（旧: `verse-city-web.onrender.com`）。
-残る大物は「Unity側presence連携の結合テスト」と、**loyさんによるRender/Google/Tursoの設定**（SETUP_AUTH.md）。
+本番URLは **https://allverse.onrender.com**（旧 verse-city-web.onrender.com は削除済み）。
+**Googleログインとイベント永続化（Turso）も設定完了・稼働中。**
+残る大物は「Unity側presence連携の結合テスト」（新URLの共有が次のアクション）。
 
 ## できていること（検証済み）
 
@@ -57,12 +58,10 @@ URLは `https://allverse.onrender.com` へ移行中（旧: `verse-city-web.onren
 
 1. ~~Renderデプロイ~~ **完了（2026-07-26）**。URLは ALLVERSE 統一に伴い移行中（詳細 DEPLOY_URL.md）
    - GitHub: https://github.com/loy6161/allverse （private・git push で自動再デプロイ。2026-07-29に verse-city-web から改名）
-2. **loyさんの設定作業**（30分・無料）: ①Renderで新しいWeb Service `allverse` を作る
-   （Renderは改名してもURLが変わらないため作り直し。RegionはSingaporeに変更）→ 古い方を削除
-   ②Google CloudでOAuthクライアントIDを作り、`https://allverse.onrender.com` を承認済み生成元に登録
-   ③Tursoでデータベースを作る。手順は **SETUP_AUTH.md**。
-   **必ずこの順番**（先にURLを確定しないとOAuthの登録をやり直すことになる）。
-   やるまでは権限制御が効かず、イベントも保存されない
+2. ~~loyさんの設定作業~~ **完了（2026-07-29）**: Render作り直し（allverse / Singapore）＋
+   Googleログイン＋Turso永続化。サーバー側の疎通は確認済み（login:true / persistent:true /
+   WS接続OK / ゲスト制限OK）。**残りはブラウザで管理者としての動作確認と、
+   Google同意画面の「アプリを公開」だけ**（SETUP_AUTH.md D・B-5）
 3. **結合テスト**: Unity側がWorker環境変数にpresence.json URLを設定 → Workerモック → Render実データ の順（Unity側と合意済み）。**Unity側チャットへのURL共有が次のアクション**
 4. フェイズ1期間の機能育成（**着手には都度ユーザーOKが必要**）: VRM対応（レギュラー）、ボイチャ、テクスチャカスタム（承認制）
 5. ALLVERSE Phase 1（ポータル設計）合流時: ワールド内チャット→YouTubeクロスポスト実装、VERSE COIN資金決済法整理
