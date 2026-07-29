@@ -129,4 +129,5 @@
 ```
 cd L:\企画用\WEB\verse_city_web\server && npm start   # サーバー(5179)＝静的配信+WS+presence
 ```
-→ http://localhost:5179 を開く。リモートは https://github.com/loy6161/allverse （push で自動デプロイ）。
+→ http://localhost:5179 を開く。リモートは https://github.com/loy6161/allverse 。
+本番への反映は `server/` を含む push のときだけ走る（理由と恒久対応は docs/DEPLOY.md）。

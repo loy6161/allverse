@@ -992,6 +992,12 @@ function buildStatusJson() {
     // 設定ミスを画面から特定できるようにする（トークンは含めない）
     store: getStoreStatus(),
     uptime: Math.floor((Date.now() - startedAt) / 1000),
+    // いま動いているのがどのコミットかを外から見られるようにする。
+    // 2026-07-30、本番が9コミット前のまま止まっているのに気づけず、
+    // 「デプロイしたのに反映されない」の切り分けに時間を取られた。
+    // Render が渡す環境変数をそのまま出す（ローカルでは unknown）
+    commit: (process.env.RENDER_GIT_COMMIT || 'unknown').slice(0, 7),
+    branch: process.env.RENDER_GIT_BRANCH || 'unknown',
   };
 }
 
