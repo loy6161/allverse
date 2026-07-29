@@ -40,6 +40,7 @@ export function initRemotePlayers(scene) {
     const root = createAvatar({ ...config, name: p.n });
     root.position.set(p.x || 0, 0, p.z || 0);
     root.rotation.y = THREE.MathUtils.degToRad(p.r || 0);
+    if (!namesVisible && root.userData.setNameVisible) root.userData.setNameVisible(false);
     scene.add(root);
 
     peers.set(p.id, {
@@ -135,5 +136,30 @@ export function initRemotePlayers(scene) {
     peers.clear();
   }
 
-  return { addPeer, movePeer, updatePeer, removePeer, say, emote, count, update, clear };
+  // UI非表示のときは他プレイヤーの名前・吹き出しも消す。
+  // 後から入ってきた人にも効くよう、状態を覚えて addPeer 時に適用する
+  let namesVisible = true;
+  function setNamesVisible(v) {
+    namesVisible = Boolean(v);
+    peers.forEach((peer) => {
+      if (peer.root.userData.setNameVisible) peer.root.userData.setNameVisible(namesVisible);
+    });
+  }
+  function isNamesVisible() {
+    return namesVisible;
+  }
+
+  return {
+    addPeer,
+    movePeer,
+    updatePeer,
+    removePeer,
+    say,
+    emote,
+    count,
+    update,
+    clear,
+    setNamesVisible,
+    isNamesVisible,
+  };
 }

@@ -3,6 +3,7 @@ import { createWorld } from './world.js';
 import { createAvatar } from './avatar.js';
 import { preloadAvatars } from './avatar_glb.js';
 import { initJoinScreen, openCustomizer } from './join.js';
+import { openPlacePicker } from './placepick.js';
 import { initMobile } from './mobile.js';
 import { initChat } from './chat.js';
 import { initSimPlayers } from './players.js';
@@ -68,6 +69,7 @@ let canControlVideo = true;
 let currentEvent = null;
 let currentRoom = null;
 let knownEvents = [];
+let namesHidden = false; // UI非表示中はネームプレートも消す（アバター作り直し時に復元するため保持）
 
 // サーバーが操作を断ったときの説明文
 const DENY_MESSAGES = {
@@ -129,7 +131,21 @@ function startDemoMode() {
   updateCount(null);
 }
 
-initJoinScreen(({ name, config, eventId, roomNumber, idToken }) => {
+// 入場は2段階: ①アバターと名前 → ②イベント/ルーム選択 → ワールドへ
+function startEntryFlow(prev = {}) {
+  initJoinScreen((picked) => {
+    openPlacePicker({
+      onDecide: ({ eventId, roomNumber }) => {
+        enterWorld({ ...picked, eventId, roomNumber });
+      },
+      // 「← アバター」で1歩目に戻る（選んだ見た目と名前は保つ）
+      onBack: () => startEntryFlow({ name: picked.name, config: picked.config }),
+    });
+  }, prev);
+}
+startEntryFlow();
+
+function enterWorld({ name, config, eventId, roomNumber, idToken }) {
   // 入場ボタンのクリック（ユーザー操作）を起点にライブ再生を開始する
   liveScreen.play();
 
@@ -309,7 +325,18 @@ initJoinScreen(({ name, config, eventId, roomNumber, idToken }) => {
   applyRoleToUi();
 
   // スクリーン全画面（シアター）＝動画パネル内 ／ UI表示切替＝画面右上のアイコン
-  initViewMode({ controls, slot: videoPanel.slot });
+  initViewMode({
+    controls,
+    slot: videoPanel.slot,
+    // ネームプレートと吹き出しは3D空間の中にあるのでCSSでは消えない。個別に切り替える
+    onUIHidden: (hidden) => {
+      namesHidden = hidden;
+      const show = !hidden;
+      if (player && player.userData.setNameVisible) player.userData.setNameVisible(show);
+      if (remote && remote.setNamesVisible) remote.setNamesVisible(show);
+      if (sim && sim.setNamesVisible) sim.setNamesVisible(show);
+    },
+  });
 
   // Pキー: スクリーンを一時的に手前に出してYouTubeプレイヤーを直接操作できるようにする
   // （普段は映像がアバターの後ろに来るよう背面に置いているため）
@@ -328,7 +355,7 @@ initJoinScreen(({ name, config, eventId, roomNumber, idToken }) => {
 
   // スマホ対応（タッチ端末 or ?mobile=1 のときだけ有効化される）
   initMobile({ controls, chatRoot });
-});
+}
 
 // ---- 入場後のアバター再カスタム ----
 avatarBtn.addEventListener('click', () => {
@@ -350,6 +377,7 @@ avatarBtn.addEventListener('click', () => {
       player = createAvatar({ ...config, name });
       player.position.copy(pos);
       player.rotation.y = rotY;
+      if (namesHidden && player.userData.setNameVisible) player.userData.setNameVisible(false);
       scene.add(player);
       controls.setAvatar(player);
 

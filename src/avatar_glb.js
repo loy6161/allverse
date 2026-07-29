@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createTextSprite } from './avatar.js';
+import { playClap } from './sfx.js';
 
 // ------------------------------------------------------------------
 // GLBアバター（Blender製・設計メッシュ版）
@@ -86,6 +87,8 @@ export function createGlbAvatar(config) {
   const eyeIrisColor = eyeColor
     ? new THREE.Color(eyeColor)
     : new THREE.Color(hairColor).lerp(new THREE.Color('#93242e'), 0.55);
+  // ペンライトの色は服の色から作る（人それぞれ違う色になり、客席が賑やかに見える）
+  const accentColorForPenlight = new THREE.Color(shirtColor).lerp(new THREE.Color('#ffffff'), 0.35);
   const MAT_BUILDERS = {
     MatHair: () => toon(hairColor),
     MatSkin: () => toon(bodyColor),
@@ -161,8 +164,10 @@ export function createGlbAvatar(config) {
 
   // ---- ネームプレート ----
   const NAME_Y = 1.44;
+  let nameSprite = null;
+  let namesVisible = true;
   if (name) {
-    const nameSprite = createTextSprite(name, {
+    nameSprite = createTextSprite(name, {
       fontSize: 26,
       textColor: '#eafcff',
       bgColor: 'rgba(6, 8, 20, 0.6)',
@@ -200,8 +205,16 @@ export function createGlbAvatar(config) {
       maxLines: 3,
     });
     speechSprite.position.set(0, name ? NAME_Y + 0.4 : NAME_Y, 0);
+    speechSprite.visible = namesVisible;
     body.add(speechSprite);
     speechTimer = setTimeout(clearSpeech, 4000);
+  }
+
+  /** UI非表示（Hキー）に合わせて、名前と吹き出しも消す */
+  function setNameVisible(v) {
+    namesVisible = Boolean(v);
+    if (nameSprite) nameSprite.visible = namesVisible;
+    if (speechSprite) speechSprite.visible = namesVisible;
   }
 
   // ---- アニメーション ----
@@ -233,10 +246,128 @@ export function createGlbAvatar(config) {
     }
   }
 
-  // ---- エモート（旧avatar.jsと同じid・尺） ----
+  // ---- 小道具: ペンライト（右手に持たせる） ----
+  // 腕は肩を支点にした1本の円錐なので、手の位置＝腕の先端。
+  // そこに棒を置き、腕の軸をそのまま延長する向きに合わせると「握っている」ように見える。
+  let penlight = null;
+  function ensurePenlight() {
+    if (penlight || !armR) return;
+    const stick = new THREE.Group();
+
+    const bodyMat = new THREE.MeshBasicMaterial({ color: 0x2a2a34 });
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.019, 0.019, 0.07, 6), bodyMat);
+    grip.position.y = 0.035;
+    stick.add(grip);
+
+    const glowMat = new THREE.MeshBasicMaterial({ color: accentColorForPenlight });
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.02, 0.19, 6), glowMat);
+    tube.position.y = 0.165;
+    stick.add(tube);
+
+    // ふんわりした光（加算合成の板を十字に2枚）
+    const auraMat = new THREE.MeshBasicMaterial({
+      color: accentColorForPenlight,
+      transparent: true,
+      opacity: 0.33,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    for (const ry of [0, Math.PI / 2]) {
+      const aura = new THREE.Mesh(new THREE.PlaneGeometry(0.13, 0.3), auraMat);
+      aura.position.y = 0.165;
+      aura.rotation.y = ry;
+      stick.add(aura);
+    }
+
+    // 手の位置と腕の向き（GLB由来の実寸から求める）
+    const hand = new THREE.Vector3(0.075, -0.235, 0.015);
+    const dir = new THREE.Vector3(0.15, -0.2, 0.03).normalize();
+    stick.position.copy(hand);
+    stick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    stick.visible = false;
+    armR.add(stick);
+    penlight = stick;
+  }
+
+  // ---- 小道具: ハート（ふわふわ浮かぶ） ----
+  const hearts = [];
+  let heartTexture = null;
+  function makeHeartTexture() {
+    if (heartTexture) return heartTexture;
+    const S = 64;
+    const cv = document.createElement('canvas');
+    cv.width = S;
+    cv.height = S;
+    const c = cv.getContext('2d');
+    c.fillStyle = '#ff5b86';
+    c.beginPath();
+    // ハート形（上の2つの丸＋下のV）
+    c.moveTo(S * 0.5, S * 0.82);
+    c.bezierCurveTo(S * 0.05, S * 0.5, S * 0.16, S * 0.13, S * 0.5, S * 0.32);
+    c.bezierCurveTo(S * 0.84, S * 0.13, S * 0.95, S * 0.5, S * 0.5, S * 0.82);
+    c.closePath();
+    c.fill();
+    heartTexture = new THREE.CanvasTexture(cv);
+    heartTexture.colorSpace = THREE.SRGBColorSpace;
+    return heartTexture;
+  }
+  function spawnHeart() {
+    const mat = new THREE.SpriteMaterial({
+      map: makeHeartTexture(),
+      transparent: true,
+      depthWrite: false,
+      opacity: 1,
+    });
+    const sp = new THREE.Sprite(mat);
+    const size = 0.12 + Math.random() * 0.09;
+    sp.scale.set(size, size, 1);
+    // 胸の前あたりから出す。顔にかぶらないよう、少し下・少し左右に散らす
+    const side = Math.random() < 0.5 ? -1 : 1;
+    sp.position.set(side * (0.1 + Math.random() * 0.24), 0.5 + Math.random() * 0.12, 0.34);
+    sp.renderOrder = 900;
+    body.add(sp);
+    hearts.push({
+      sprite: sp,
+      life: 0,
+      ttl: 1.5 + Math.random() * 0.6,
+      vy: 0.34 + Math.random() * 0.2,
+      sway: (Math.random() - 0.5) * 0.5,
+      phase: Math.random() * Math.PI * 2,
+    });
+  }
+  function updateHearts(dt) {
+    for (let i = hearts.length - 1; i >= 0; i--) {
+      const h = hearts[i];
+      h.life += dt;
+      const k = h.life / h.ttl;
+      if (k >= 1) {
+        body.remove(h.sprite);
+        h.sprite.material.dispose();
+        hearts.splice(i, 1);
+        continue;
+      }
+      h.sprite.position.y += h.vy * dt;
+      h.sprite.position.x += Math.sin(h.life * 3 + h.phase) * h.sway * dt;
+      // 出たては少し大きくなり、最後にふっと消える
+      const pop = k < 0.15 ? k / 0.15 : 1;
+      h.sprite.material.opacity = (1 - k * k) * pop;
+    }
+  }
+  function clearHearts() {
+    for (const h of hearts) {
+      body.remove(h.sprite);
+      h.sprite.material.dispose();
+    }
+    hearts.length = 0;
+  }
+
+  // ---- エモート ----
   const EMOTE_DURATIONS = { wave: 2.5, clap: 2.5, jump: 2.0, dance: 4.0, heart: 3.0, penlight: 4.0 };
   let emoteId = null;
   let emoteT = 0;
+  let lastBeat = -1; // 拍手音を1打につき1回だけ鳴らすための直前の拍番号
+  let heartCount = 0; // これまでに出したハートの数
   const ease = (t, dur, edge) => Math.min(1, Math.min(t, dur - t) / edge);
 
   function resetPose() {
@@ -249,6 +380,8 @@ export function createGlbAvatar(config) {
         if (p.userData.basePos) p.position.copy(p.userData.basePos);
       }
     }
+    if (penlight) penlight.visible = false;
+    heartCount = 0;
   }
   // 腕が短く頭が大きいので、前挙げ系エモート中は支点ごと少し前・外に出して
   // シルエットから見えるようにする（sx: -1=左腕, 1=右腕）
@@ -260,40 +393,78 @@ export function createGlbAvatar(config) {
       p.userData.basePos.z + 0.09 * env,
     );
   }
+
+  // ---- 腕の向きは「角度」ではなく「手を向けたい方向」で指定する ----
+  // 腕は肩を支点にした1本の錐なので、オイラー角で書くと回転の向きを取り違えやすい
+  // （実際に左右逆にして腕が体の裏に回る不具合を出した）。
+  // 何もしていないときの腕の向きから目標方向へ回す、という書き方にして意図をそのまま残す。
+  const ARM_REST_R = new THREE.Vector3(0.075, -0.235, 0.015).normalize(); // 右腕の自然な向き
+  const ARM_REST_L = new THREE.Vector3(-0.075, -0.235, 0.015).normalize();
+  const _aimTmp = new THREE.Vector3();
+  const _aimQuat = new THREE.Quaternion();
+  /**
+   * 腕をある方向へ向ける。
+   * @param {THREE.Object3D} arm armL / armR
+   * @param {number} sx -1=左腕 / 1=右腕
+   * @param {number[]} dir 向けたい方向（体のローカル座標。x=右, y=上, z=前）
+   * @param {number} env 0〜1。0なら自然な姿勢、1なら指定方向へ完全に向く
+   */
+  function aimArm(arm, sx, dir, env = 1) {
+    if (!arm) return;
+    const rest = sx > 0 ? ARM_REST_R : ARM_REST_L;
+    _aimTmp.set(dir[0], dir[1], dir[2]).normalize();
+    _aimQuat.setFromUnitVectors(rest, _aimTmp);
+    arm.quaternion.identity().slerp(_aimQuat, Math.max(0, Math.min(1, env)));
+  }
   function playEmote(id) {
     if (!EMOTE_DURATIONS[id]) return;
     resetPose();
     emoteId = id;
     emoteT = 0;
+    lastBeat = -1;
+    if (id === 'penlight') {
+      ensurePenlight();
+      if (penlight) penlight.visible = true;
+    }
   }
   function applyEmote(id, t, dur) {
     switch (id) {
       case 'wave': {
-        // 頭が大きい（半径0.3）ので真横に上げると髪に埋まる。前方斜め上で振る
+        // 手を振る。腕を高く上げてから、画面の左右方向に大きく倒す。
+        // 前後に振ると正面から見て動きがほぼ見えないので、必ず左右に振ること。
+        // 振れ幅は必ず体の外側に置く。内側まで振ると腕が頭の裏に回って見えなくなる
         const env = ease(t, dur, 0.3);
-        if (armR) {
-          armR.rotation.x = -1.15 * env;
-          armR.rotation.z = -(0.7 * env + Math.sin(t * 9) * 0.45 * env);
-          pushArmOut(armR, 1, env);
-        }
-        body.rotation.z = Math.sin(t * 9) * 0.03 * env;
+        const swing = Math.sin(t * 7.0);
+        // 髪の外側まで手を出す。真上に上げると髪に隠れるので斜め45度くらいに開く
+        aimArm(armR, 1, [0.82 + swing * 0.3, 0.6, 0.38], env);
+        pushArmOut(armR, 1, env);
+        // 反対の手は自然に下ろしたまま
+        body.rotation.z = -swing * 0.045 * env;
+        body.position.y = Math.abs(swing) * 0.008 * env;
         break;
       }
       case 'clap': {
-        // 顔の前で手を合わせる
+        // 拍手。両手を胸の前・体の中心線近くまで寄せて打ち合わせる。
+        // 腕が肩から生えた1本の錐なので手は完全には重ならないが、
+        // 「中心へ寄る往復＋打点の音」で拍手として読める。
         const env = ease(t, dur, 0.25);
-        const beat = Math.sin(t * 13) * 0.25 * env;
-        if (armL) {
-          armL.rotation.x = -1.25 * env;
-          armL.rotation.z = 0.45 * env + beat;
-          pushArmOut(armL, -1, env);
+        const beatPhase = t * 6.0; // 1秒あたり3打
+        const open = (Math.sin(beatPhase * Math.PI) + 1) / 2; // 0=合わさる 1=開く
+        // 肩幅(0.38m)より腕(0.25m)が短いので、腕を強く内側へ向けないと手は中心に来ない。
+        // 外向きのまま開閉させても「肩をすくめている」ようにしか見えなかった。
+        const conv = -0.78 + open * 0.6; // 合わさるとき大きく内向き、開くと浅くなる
+        aimArm(armL, -1, [-conv, -0.34, 0.6], env);
+        aimArm(armR, 1, [conv, -0.34, 0.6], env);
+        pushArmOut(armL, -1, env);
+        pushArmOut(armR, 1, env);
+        body.position.y = -open * 0.012 * env;
+
+        // 手が合わさった瞬間だけ1打鳴らす
+        const beatIndex = Math.floor(beatPhase);
+        if (beatIndex !== lastBeat && open < 0.25) {
+          lastBeat = beatIndex;
+          playClap();
         }
-        if (armR) {
-          armR.rotation.x = -1.25 * env;
-          armR.rotation.z = -0.45 * env - beat;
-          pushArmOut(armR, 1, env);
-        }
-        body.position.y = Math.sin(t * 6.5) * 0.02 * env;
         break;
       }
       case 'jump': {
@@ -318,30 +489,35 @@ export function createGlbAvatar(config) {
         break;
       }
       case 'heart': {
-        // 両腕を顔の前に上げてハートの形に寄せる
+        // ♥マークがふわふわ出る演出が主役。腕は「胸に手を当てる」控えめな添え方にして、
+        // ハグに見えないようにする（腕を大きく回すとハグの形になってしまう）
         const env = ease(t, dur, 0.35);
-        const pulse = Math.sin(t * 2.5) * 0.05 * env;
-        if (armL) {
-          armL.rotation.x = -1.45 * env;
-          armL.rotation.z = (0.65 + pulse) * env;
-          pushArmOut(armL, -1, env);
+        const breathe = Math.sin(t * 2.6) * 0.05;
+        // 胸の前に軽く手を添える（腕を大きく回すとハグの形になってしまう）
+        aimArm(armL, -1, [-0.10, -0.52 + breathe, 0.85], env);
+        aimArm(armR, 1, [0.10, -0.52 + breathe, 0.85], env);
+        body.rotation.x = 0.05 * env;
+        body.position.y = Math.sin(t * 2.6) * 0.012 * env;
+
+        // 一定間隔でハートを足す（終わりぎわは出さず、余韻で消えていくようにする）
+        const spawnEvery = 0.2;
+        const shouldHave = Math.floor(Math.min(t, dur - 0.7) / spawnEvery);
+        if (shouldHave > heartCount) {
+          heartCount = shouldHave;
+          spawnHeart();
         }
-        if (armR) {
-          armR.rotation.x = -1.45 * env;
-          armR.rotation.z = -(0.65 + pulse) * env;
-          pushArmOut(armR, 1, env);
-        }
-        body.rotation.x = 0.08 * env;
         break;
       }
       case 'penlight': {
+        // ライブの客席の振り方。腕を高く上げ、肩からゆっくり大きく左右に振る。
+        // 速く小刻みに振ると何をしているか読めないので、拍に乗る速さにする。
         const env = ease(t, dur, 0.3);
-        if (armR) {
-          armR.rotation.x = -1.0 * env;
-          armR.rotation.z = -(0.6 * env + Math.sin(t * 10) * 0.5 * env);
-          pushArmOut(armR, 1, env);
-        }
-        body.rotation.z = Math.sin(t * 10) * 0.02 * env;
+        const swing = Math.sin(t * 4.0);
+        // 腕を高く上げ、拍に乗せて大きく左右に振る（内側に入れると頭の裏に回る）
+        aimArm(armR, 1, [0.66 + swing * 0.4, 0.88, 0.3], env);
+        // 体を軽く沈めて拍を取る
+        body.position.y = -Math.abs(Math.cos(t * 4.0)) * 0.02 * env;
+        body.rotation.z = -swing * 0.055 * env;
         break;
       }
       default:
@@ -361,6 +537,8 @@ export function createGlbAvatar(config) {
   function update(dt) {
     if (!loaded) return;
     updateBlink(dt);
+    // ハートはエモートが終わったあとも浮かび続けて消える
+    if (hearts.length) updateHearts(dt);
 
     if (emoteId) {
       const dur = EMOTE_DURATIONS[emoteId];
@@ -399,6 +577,7 @@ export function createGlbAvatar(config) {
   root.userData.setMoving = setMoving;
   root.userData.say = say;
   root.userData.playEmote = playEmote;
+  root.userData.setNameVisible = setNameVisible;
 
   return root;
 }

@@ -177,5 +177,11 @@ export function initSimPlayers(scene, { count, bounds, onChat }) {
   return {
     update,
     players: npcs.map((npc) => npc.group),
+    // UI非表示のときはNPCの名前・吹き出しも消す
+    setNamesVisible(v) {
+      for (const npc of npcs) {
+        if (npc.group.userData.setNameVisible) npc.group.userData.setNameVisible(Boolean(v));
+      }
+    },
   };
 }

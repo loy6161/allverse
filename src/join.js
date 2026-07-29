@@ -324,12 +324,6 @@ function buildCustomizeScreen({
               <div class="login-note" id="login-note"></div>
             </div>
           </div>
-          <div class="customize-row" id="place-row" style="display:none">
-            <div class="customize-label">イベント</div>
-            <div class="hairstyle-buttons" id="event-buttons"></div>
-            <div class="customize-label" style="margin-top:6px">ルーム</div>
-            <div class="hairstyle-buttons" id="room-buttons"></div>
-          </div>
           <div class="customize-row">
             <div class="customize-label">髪型</div>
             <div class="hairstyle-buttons" id="hairstyle-buttons"></div>
@@ -499,11 +493,7 @@ function buildCustomizeScreen({
   buildSwatchRow('eyecolor-swatches', AVATAR_PARTS.eyeColors, 'eyeColor');
   buildSwatchRow('shirtcolor-swatches', AVATAR_PARTS.shirtColors, 'shirtColor');
 
-  // ---- ログイン・イベント・ルーム（入場画面のときだけ出す） ----
-  let selectedEventId = '';
-  let selectedRoom = null;
-  let serverEvents = [];
-
+  // ---- ログイン（入場画面のときだけ出す。イベント/ルームの選択は次の画面 placepick.js） ----
   // ログインしていないゲストは見た目を変えられないので、選択UIを触れなくする
   function applyGuestLock() {
     const cfg = getConfig();
@@ -523,73 +513,9 @@ function buildCustomizeScreen({
     }
   }
 
-  function renderRoomButtons() {
-    const el = document.getElementById('room-buttons');
-    if (!el) return;
-    const ev = serverEvents.find((e) => e.id === selectedEventId);
-    el.innerHTML = '';
-    const list = (ev && ev.rooms) || [{ room: 1, count: 0, full: false }];
-    // 「おまかせ」＝サーバーが空いている部屋に入れてくれる
-    const auto = document.createElement('button');
-    auto.type = 'button';
-    auto.className = 'hair-btn' + (selectedRoom === null ? ' selected' : '');
-    auto.textContent = 'おまかせ';
-    auto.addEventListener('click', () => {
-      selectedRoom = null;
-      renderRoomButtons();
-    });
-    el.appendChild(auto);
-
-    for (const r of list) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hair-btn' + (selectedRoom === r.room ? ' selected' : '') + (r.full ? ' locked' : '');
-      btn.textContent = `ルーム${r.room}（${r.count}人）`;
-      btn.disabled = r.full;
-      btn.addEventListener('click', () => {
-        if (r.full) return;
-        selectedRoom = r.room;
-        renderRoomButtons();
-      });
-      el.appendChild(btn);
-    }
-  }
-
-  function renderEventButtons() {
-    const el = document.getElementById('event-buttons');
-    if (!el) return;
-    el.innerHTML = '';
-    for (const ev of serverEvents) {
-      const needLogin = ev.requireLogin && !isSignedIn();
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hair-btn' + (ev.id === selectedEventId ? ' selected' : '') + (needLogin ? ' locked' : '');
-      btn.textContent = `${ev.name}（${ev.count}人）` + (ev.requireLogin ? ' 🔒' : '');
-      btn.title = needLogin ? 'このイベントに入るにはログインが必要です' : '';
-      btn.addEventListener('click', () => {
-        if (needLogin) return;
-        selectedEventId = ev.id;
-        selectedRoom = null;
-        renderEventButtons();
-        renderRoomButtons();
-      });
-      el.appendChild(btn);
-    }
-  }
-
-  async function setupPlaceAndLogin() {
+  async function setupLogin() {
     if (!showPlace) return;
     const cfg = await fetchConfig();
-    serverEvents = Array.isArray(cfg.events) ? cfg.events : [];
-    if (serverEvents.length) {
-      selectedEventId = serverEvents[0].id;
-      // イベントが常設1つだけなら選ばせる意味がないので隠す
-      const placeRow = document.getElementById('place-row');
-      if (placeRow) placeRow.style.display = serverEvents.length > 1 || serverEvents[0].rooms?.length > 1 ? '' : 'none';
-      renderEventButtons();
-      renderRoomButtons();
-    }
-
     if (cfg.login) {
       const row = document.getElementById('login-row');
       const note = document.getElementById('login-note');
@@ -601,12 +527,11 @@ function buildCustomizeScreen({
           note.classList.toggle('signed', Boolean(p));
         }
         applyGuestLock();
-        renderEventButtons();
       });
       applyGuestLock();
     }
   }
-  setupPlaceAndLogin();
+  setupLogin();
 
   // ---- 名前入力 & 決定ボタン ----
   const joinBtn = document.getElementById('join-btn');
@@ -619,8 +544,6 @@ function buildCustomizeScreen({
     onSubmit({
       name,
       config: { ...config },
-      eventId: selectedEventId,
-      roomNumber: selectedRoom,
       idToken: getIdToken(),
     });
   }
@@ -638,14 +561,21 @@ function buildCustomizeScreen({
   }
 }
 
-export function initJoinScreen(onJoin) {
+/**
+ * 入場画面（1歩目: アバターと名前）。
+ * 決定すると onJoin({name, config, idToken}) が呼ばれる。
+ * 場所の選択は placepick.js（2歩目）が担当する。
+ * @param {(r:{name:string,config:object,idToken:string}) => void} onJoin
+ * @param {{name?:string, config?:object}} [prev] 「← アバター」で戻ってきたときの復元用
+ */
+export function initJoinScreen(onJoin, prev = {}) {
   buildCustomizeScreen({
     title: 'VERSE CITY',
     subtitle: 'VERSE CITY WEB',
-    buttonLabel: '入場する',
+    buttonLabel: '次へ（場所を選ぶ）',
     showCancel: false,
-    initialName: '',
-    initialConfig: randomConfig(),
+    initialName: prev.name || '',
+    initialConfig: prev.config ? { ...prev.config } : randomConfig(),
     fallbackName: randomGuestName,
     onSubmit: onJoin,
     onCancel: null,

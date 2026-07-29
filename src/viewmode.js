@@ -122,7 +122,7 @@ function isTypingTarget(el) {
 
 // controls: initControls の戻り値（setTheater を持つ）
 // slot: 右下の動画パネル内のボタン置き場（あればシアターボタンをそこに入れる）
-export function initViewMode({ controls, slot } = {}) {
+export function initViewMode({ controls, slot, onUIHidden } = {}) {
   injectStyle();
 
   // シアター表示ボタン（動画関連なので右下の動画パネルに入れる）
@@ -172,6 +172,9 @@ export function initViewMode({ controls, slot } = {}) {
     document.body.classList.toggle(HIDDEN_CLASS, hidden);
     uiToggle.textContent = hidden ? '🚫' : '👁';
     uiToggle.title = hidden ? 'UIを表示 (H)' : 'UIを隠す (H)';
+    // ネームプレートと吹き出しは3D空間の中にあるのでCSSでは消せない。
+    // 呼び出し側（main.js）に伝えて、アバター側で消してもらう
+    if (onUIHidden) onUIHidden(hidden);
   }
 
   function toggleUI() {
