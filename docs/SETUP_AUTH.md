@@ -3,12 +3,12 @@
 loyさんの作業ぶんだけをまとめたもの。**すべて無料**で、クレジットカードは要りません。
 所要時間は全部で25分ほど。
 
-**必ずこの順番でやってください。** Aを先にしないと、Bの登録をやり直すことになります。
+**必ずこの順番でやってください。** Aで本番URLを確定しないと、Bの登録をやり直すことになります。
 
 | | 内容 | 目安 |
 |---|---|---|
-| **A** | Renderのサービス名を変更（URLが変わる） | 5分 |
-| **B** | Googleログインの設定（新しいURLを登録する） | 10分 |
+| **A** | RenderのURLを決める（そのまま使うか、作り直すか） | 5分 |
+| **B** | Googleログインの設定（Aで決めたURLを登録する） | 10分 |
 | **C** | Tursoの設定（イベントを保存する） | 5分 |
 | **D** | 動作確認 | 5分 |
 
@@ -25,40 +25,53 @@ loyさんの作業ぶんだけをまとめたもの。**すべて無料**で、�
 
 ---
 
-## A. Renderのサービス名を変更（5分）
+## A. RenderのURLをどうするか（5分／やらない選択もあり）
 
-サービス名がそのままURLになります。今は `verse-city-web` ですが、サービス名を **ALLVERSE** に決めたので揃えます。
+### 重要: 改名してもURLは変わらない
 
-### A-1. 名前を変える
+**Renderは、サービス名を変えても `.onrender.com` のURLを変えません。**
+サブドメインはサービスを作ったときに決まり、後から変更する機能がありません。
 
-1. https://dashboard.render.com/ を開く
-2. サービス一覧から **verse-city-web** をクリック
-3. 左メニューの **Settings** を開く
-4. 一番上の **Name** の欄を編集する
-   - 第1希望: `allverse`
-   - 埋まっていたら: `allverse-world` → `allverse-live` の順で試す
-   - （`.onrender.com` は世界中で共有なので、すでに誰かが使っていると弾かれます）
-5. **Save Changes** を押す
+実際に2026-07-29に確認した結果:
 
-新しいURLは `https://<決めた名前>.onrender.com` になります。**この後の手順で何度も使うのでメモしてください。**
+| URL | 結果 |
+|---|---|
+| `https://allverse.onrender.com` | 404（存在しない） |
+| `https://verse-city-web.onrender.com` | 200（こちらが本番） |
 
-> ⚠️ **古いURLは使えなくなります。** 友人に共有済みのリンクがあれば貼り直しが必要です。
+サービス名は `allverse` になっていますが、URLは `verse-city-web.onrender.com` のままです。
 
-### A-2. うまくいかないとき
+### 選択肢は2つ
 
-**Nameの欄が編集できない／保存でエラーになる場合**
+**① そのまま使う（おすすめ度: 高）**
 
-このサービスはBlueprint（render.yaml）から作られているため、名前の変更を拒否されることがあります。その場合は作り直しが早いです。**Renderには消えて困るデータを置いていない**ので、作り直しても失われるものはありません。
+- URLは `verse-city-web.onrender.com` のまま
+- **画面の表示はすべて ALLVERSE** なので、ユーザーが旧名を見るのはアドレス欄だけ
+- Unity側への再共有が不要（共有済みのURLがそのまま生きる）
+- 将来 独自ドメイン（例: `allverse.jp`）を取れば、そちらが正式URLになり
+  `onrender.com` のURLは裏方になる。Renderは**無料プランでも独自ドメインを使えます**
+  （Settings → Custom Domains）
 
-1. Settings の一番下 **Delete Service** で今のサービスを削除
-2. ダッシュボードで「New +」→「Blueprint」→ `verse-city-web` リポジトリを選ぶ
-3. サービス名を聞かれたら決めた名前を入れて「Apply」
+**② 作り直してURLも揃える**
 
-作り直した場合は、**BとCで登録する環境変数を入れ直す**必要があります（まだ何も入れていないので、実質そのまま進めればOKです）。
+- `allverse.onrender.com` になる
+- **今が一番安いタイミング**（環境変数がまだ空／Unity側も本番URL未設定のため）
+- 手順:
+  1. Settings 最下部 **Delete or suspend** → サービスを削除
+  2. ダッシュボードで「New +」→「Blueprint」→ `verse-city-web` リポジトリを選ぶ
+  3. サービス名に `allverse` を入れて「Apply」
+- 注意: 数分のダウンタイムが出ます。**Renderには消えて困るデータを置いていない**ので、
+  データが失われることはありません（イベントはTurso、コードはGitHub）
 
-### A-3. 終わったらClaudeに伝えてください
+### どちらを選ぶか
 
-決まったURLを教えてもらえれば、こちらで以下を直します。
+**独自ドメインを取る予定があるなら①**。`onrender.com` のURLは一時的なものなので、
+手間をかける価値が薄いです。
+**当面 `onrender.com` のまま運用して人に配るなら②**。アドレス欄の見た目が揃います。
+
+### 決めたらClaudeに伝えてください
+
+②を選んだ場合は、こちらで以下を直します。
 
 - `render.yaml` のサービス名
 - `docs/DEPLOY_URL.md` の記載
@@ -97,10 +110,10 @@ loyさんの作業ぶんだけをまとめたもの。**すべて無料**で、�
 3. 名前: `allverse-web`
 4. **承認済みの JavaScript 生成元** に次の2つを追加（ここが一番大事）
    ```
-   https://<Aで決めた名前>.onrender.com
+   https://<本番URL>.onrender.com
    http://localhost:5179
    ```
-   例）Aで `allverse` にしたなら `https://allverse.onrender.com`
+   例）そのまま使うなら `https://verse-city-web.onrender.com`
 5. 「作成」→ 表示される **クライアントID**（`......apps.googleusercontent.com`）をコピー
 
 > クライアントシークレットは使いません。コピーしなくて大丈夫です。
@@ -157,7 +170,7 @@ Bと同じ「Environment」画面で追加します。
 ブラウザで次を開くと、状態がそのまま出ます。
 
 ```
-https://<Aで決めた名前>.onrender.com/api/status
+https://<本番URL>.onrender.com/api/status
 ```
 
 - `"login": true` … Googleログインが有効
@@ -179,7 +192,7 @@ https://<Aで決めた名前>.onrender.com/api/status
 `GOOGLE_CLIENT_ID` が入っているか、デプロイが終わっているかを確認。`/api/status` の `login` が `false` なら未反映です。
 
 **ログインしようとするとエラーになる（redirect_uri_mismatch / origin エラー）**
-B-3の「承認済みの JavaScript 生成元」がAで決めたURLと一致していないケースがほとんどです。
+B-3の「承認済みの JavaScript 生成元」が本番URLと一致していないケースがほとんどです。
 `https://` から始まっているか、末尾にスラッシュが付いていないかを確認してください。
 
 **自分が管理者にならない**
@@ -189,7 +202,7 @@ B-3の「承認済みの JavaScript 生成元」がAで決めたURLと一致し�
 `/api/status` の `persistent` が `false` なら、Tursoの2つの環境変数を見直してください。
 
 **古いURLを開いてしまう**
-ブックマークやUnity側の設定が古いままです。新URLに差し替えてください。
+Aで②（作り直し）を選んだ場合のみ起きます。ブックマークとUnity側の設定を新URLに差し替えてください。
 
 ---
 

@@ -1,13 +1,12 @@
 # 本番URL（Render・2026-07-26デプロイ）
 
-> ⚠️ **2026-07-29: URLの変更を予定しています。**
-> サービス名を「ALLVERSE」に統一するため、Renderのサービス名を `verse-city-web` から
-> `allverse`（または空きがなければ `allverse-world` 等）へ変更します。
-> **変更するとこのページのURLはすべて無効になります。**
-> 手順は SETUP_AUTH.md の「A. Renderのサービス名を変更」。
-> 変更後は、このファイルの記載とUnity側チャットへの共有を更新すること。
+> **2026-07-29: Renderのサービス名を `allverse` に変更したが、URLは変わっていない。**
+> Renderは `.onrender.com` のサブドメインをサービス作成時に固定し、改名しても変更しない
+> （実測: `allverse.onrender.com` は404、`verse-city-web.onrender.com` が200）。
+> **下記のURLは現在も有効。** URLも揃えたい場合はサービスの作り直しが必要で、
+> 判断と手順は SETUP_AUTH.md の「A. RenderのURLをどうするか」にまとめてある。
 
-## 公開URL（変更前）
+## 公開URL
 
 - **会場**: https://verse-city-web.onrender.com
 - **presence.json（VRC連携用・ALLVERSE Workerの取得先）**: https://verse-city-web.onrender.com/api/presence.json

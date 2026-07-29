@@ -56,8 +56,9 @@
 
 1. ~~Renderデプロイ~~ **完了（2026-07-26）**: https://verse-city-web.onrender.com （詳細 DEPLOY_URL.md）
    - GitHub: https://github.com/loy6161/verse-city-web （private・git push で自動再デプロイ）
-2. **loyさんの設定作業**（25分・無料）: ①Renderのサービス名を `allverse` に変更（URLが変わる）
-   ②Google CloudでOAuthクライアントIDを作り、新URLを承認済み生成元に登録 ③Tursoでデータベースを作る。
+2. **loyさんの設定作業**（20分・無料）: ①本番URLを確定（Renderは改名してもURLが変わらないため、
+   `verse-city-web.onrender.com` のまま使うか、サービスを作り直して `allverse.onrender.com` にするかの判断）
+   ②Google CloudでOAuthクライアントIDを作り、そのURLを承認済み生成元に登録 ③Tursoでデータベースを作る。
    手順は **SETUP_AUTH.md**。**必ずこの順番**（先にURLを確定しないとOAuthの登録をやり直すことになる）。
    やるまでは権限制御が効かず、イベントも保存されない
 3. **結合テスト**: Unity側がWorker環境変数にpresence.json URLを設定 → Workerモック → Render実データ の順（Unity側と合意済み）。**Unity側チャットへのURL共有が次のアクション**
