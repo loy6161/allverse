@@ -44,6 +44,12 @@ function injectStyle() {
 }
 .vc-people-hidden { display: none; }
 
+/* スマホでは下部UI（動画コントローラー・エモート・操作キー）の上に出す */
+@media (max-width: 640px) {
+  .vc-people-panel { right: 12px; left: 12px; width: auto; bottom: var(--m-panel-bottom); max-height: 50vh; }
+}
+
+
 .vc-people-title { font-size: 12px; letter-spacing: 2px; color: rgba(0,255,234,0.85); margin-bottom: 8px; }
 .vc-people-hint { font-size: 11px; color: rgba(220,235,255,0.5); margin: -4px 0 10px; line-height: 1.5; }
 .vc-people-empty { color: rgba(220,235,255,0.5); font-size: 12px; padding: 4px 0; }

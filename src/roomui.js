@@ -42,6 +42,12 @@ function injectStyle() {
 }
 .vc-room-hidden { display: none; }
 
+/* スマホでは下部UI（動画コントローラー・エモート・操作キー）の上に出す */
+@media (max-width: 640px) {
+  .vc-room-panel { right: 12px; left: 12px; width: auto; bottom: var(--m-panel-bottom); max-height: 50vh; }
+}
+
+
 .vc-room-title { font-size: 12px; letter-spacing: 2px; color: rgba(0,255,234,0.85); margin-bottom: 8px; }
 .vc-room-hint { font-size: 11px; color: rgba(220,235,255,0.5); margin: -4px 0 10px; line-height: 1.5; }
 

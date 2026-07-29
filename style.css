@@ -86,3 +86,50 @@ html, body {
   background: rgba(255, 0, 229, 0.2);
   box-shadow: 0 0 10px rgba(255, 0, 229, 0.4);
 }
+
+/* ------------------------------------------------------------------
+   スマホの画面の使い方（2026-07-30 指定）
+
+   下から順に  ①動画のコントローラー ②エモート ③操作キー(左)＋チャットアイコン(右)
+   右上から順に ①UI非表示アイコン ②アバター変更
+
+   各パーツのスタイルは持ち主のモジュールが注入するので、位置だけを
+   ここの変数で決めて、それぞれが参照する形にしている。
+   1か所で積み方を変えれば全部が追従する（バラバラに px を書くと必ずズレる）。
+   高さは実機(375x812)で実測した値。
+   ------------------------------------------------------------------ */
+@media (max-width: 640px) {
+  :root {
+    --m-gap: 10px;
+    --m-bottom: 12px; /* 画面の下端からの余白 */
+    --m-video-h: 74px; /* 動画のコントローラーの高さ */
+    --m-emote-h: 58px; /* エモートバーの高さ */
+    --m-pad-h: 110px; /* 操作キー（ジョイスティック）の直径 */
+    --m-chat-icon: 56px;
+
+    /* ②エモート: ①動画コントローラーの上 */
+    --m-emote-bottom: calc(var(--m-bottom) + var(--m-video-h) + var(--m-gap));
+    /* ③操作キー／チャットアイコン: ②エモートの上 */
+    --m-pad-bottom: calc(var(--m-emote-bottom) + var(--m-emote-h) + var(--m-gap));
+    /* チャットログや各種パネルはさらに上（下部UIに一切かぶらせない） */
+    --m-panel-bottom: calc(var(--m-pad-bottom) + var(--m-pad-h) + var(--m-gap));
+  }
+
+  /* 右上: UI非表示アイコン（viewmode.js が top/right を持つ）の真下にアバター変更 */
+  #avatar-btn {
+    top: 54px; /* UI非表示アイコン(top:12・高さ34) の下 */
+    right: 12px;
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+
+  /* 左上のルーム情報。右上のボタンと突き当たらないよう幅を制限する */
+  #room-info {
+    max-width: calc(100vw - 150px);
+  }
+  #room-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

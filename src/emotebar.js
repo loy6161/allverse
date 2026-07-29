@@ -100,9 +100,8 @@ function injectStyle() {
 
     @media (max-width: 640px) {
       .vc-emote-bar {
-        /* 下から: ジョイスティック/チャットトグル → 動画パネル(bottom:148) → エモートバー
-           の順に積むため、さらに上へ引き上げる */
-        bottom: 232px;
+        /* 下から2番目（動画のコントローラーの上）。積み方は style.css の変数で決めている */
+        bottom: var(--m-emote-bottom);
         gap: 6px;
         padding: 6px 8px;
       }

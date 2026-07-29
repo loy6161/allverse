@@ -108,7 +108,10 @@ function injectStyle() {
     body.${HIDDEN_CLASS} .vc-theater-hint { display: none; }
 
     @media (max-width: 640px) {
+      /* 右上のいちばん外側。アバター変更ボタンはこの真下に並ぶ（style.css 側で位置指定） */
       .vc-ui-toggle { top: 12px; right: 12px; width: 34px; height: 34px; }
+      /* シアター中の案内。画面下端は動画のコントローラーが使うので、その上へ */
+      .vc-theater-hint { bottom: var(--m-emote-bottom); }
     }
   `;
   document.head.appendChild(style);

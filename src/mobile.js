@@ -47,6 +47,7 @@ function injectStyle() {
       bottom: 20px;
       width: 56px;
       height: 56px;
+      flex: 0 0 auto;
       border-radius: 50%;
       border: 1px solid rgba(255, 0, 229, 0.5);
       background: linear-gradient(135deg, rgba(0, 255, 234, 0.25), rgba(255, 0, 229, 0.25));
@@ -78,17 +79,30 @@ function injectStyle() {
         max-height: none;
       }
 
-      /* chat-root: 画面幅からはみ出さない＆ジョイスティックと重ならない位置に引き上げ */
+      /* 下から3番目の段: 操作キー（左）とチャットアイコン（右）を同じ高さに並べる。
+         積み方は style.css の変数で決めている */
+      .vc-mobile-joystick-base {
+        left: 16px;
+        bottom: var(--m-pad-bottom);
+      }
+      .vc-mobile-chat-toggle {
+        right: 16px;
+        /* ジョイスティックより小さいので、上下の中心を合わせる */
+        bottom: calc(var(--m-pad-bottom) + (var(--m-pad-h) - var(--m-chat-icon)) / 2);
+      }
+
+      /* チャットログは下部UIの上。開いている間だけ出るので画面を広く使う */
       #chat-root {
-        bottom: 150px;
+        left: 12px;
+        bottom: var(--m-panel-bottom);
       }
       .vc-chat-panel {
-        width: calc(100vw - 90px);
-        max-width: calc(100vw - 90px);
+        width: calc(100vw - 24px);
+        max-width: calc(100vw - 24px);
       }
       .vc-chat-log {
         width: 100%;
-        height: 150px;
+        height: 130px;
       }
 
       /* キーボード操作説明は不要／室内情報は小さく */

@@ -135,6 +135,17 @@ function injectStyle() {
       color: #ff6b6b;
       min-height: 14px;
     }
+
+    @media (max-width: 640px) {
+      /* 下部UI（動画コントローラー・エモート・操作キー）にかぶらない高さへ */
+      .vc-screen-panel {
+        right: 12px;
+        left: 12px;
+        width: auto;
+        max-width: none;
+        bottom: var(--m-panel-bottom);
+      }
+    }
   `;
   document.head.appendChild(style);
 }

@@ -124,12 +124,12 @@ function injectStyle() {
     }
 
     @media (max-width: 640px) {
-      /* スマホは左下のジョイスティック(高さ約110px)・右下のチャットトグルを避けて上に置く */
+      /* スマホでは一番下（積み方は style.css の変数で決めている） */
       .vc-video-panel {
         right: 12px;
-        bottom: 148px;
-        width: calc(100vw - 24px);
-        max-width: 320px;
+        left: 12px;
+        bottom: var(--m-bottom);
+        width: auto;
         padding: 8px 10px 9px;
       }
       .vc-vp-vol { width: 56px; }
