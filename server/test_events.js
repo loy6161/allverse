@@ -33,11 +33,16 @@ function connect(name, opts = {}) {
     });
     ws.on('error', reject);
     ws.on('open', () => {
+      // 表示名はサーバーが決める。テストでは名前で相手を特定するので、
+      // devEmail/devName を渡してログイン済みユーザーとして名前を確定させる
+      // （devRole:'guest' を指定したケースは、ゲスト連番になるのが正しい挙動）
+      const authed = opts.devRole && opts.devRole !== 'guest';
       ws.send(
         JSON.stringify({
           t: 'join',
           n: name,
           av: { h: 'bob', o: 'middle', ac: 'none', hc: 1, sc: 2, bc: 0, ec: 1 },
+          ...(authed ? { devEmail: `${encodeURIComponent(name)}@example.com`, devName: name } : {}),
           ...opts,
         }),
       );
@@ -162,10 +167,14 @@ async function main() {
   const gDeniedAv = await waitFor(guest, (m) => m.t === 'denied' && m.reason === 'guest-no-avatar');
   check('ゲストはアバターを変更できない', Boolean(gDeniedAv));
 
-  // ゲストの見た目がサーバー側で固定されているか（別の人から見えるav）
-  const guestPeer = (await waitFor(a1, (m) => m.t === 'peer-join' && m.p.n === 'ゲスト'))?.p;
+  // ゲストの見た目と名前がサーバー側で決まっているか（別の人から見える情報で確認）
+  const guestPeer = (await waitFor(a1, (m) => m.t === 'peer-join' && /^ゲスト\d{3}$/.test(m.p.n)))?.p;
   check('ゲストの見た目はサーバーが固定する', guestPeer?.av?.h === 'short' && guestPeer?.av?.ac === 'none',
     JSON.stringify(guestPeer?.av));
+  check('ゲストの名前はサーバーが連番で割り当てる（申告した名前は使われない）',
+    Boolean(guestPeer) && guestPeer.n !== 'ゲスト' && /^ゲスト\d{3}$/.test(guestPeer.n),
+    guestPeer && guestPeer.n);
+  check('ゲスト自身にも確定した名前が返る', /^ゲスト\d{3}$/.test(gw?.n || ''), gw?.n);
 
   // ---------- 11. ルーム移動 ----------
   a1.inbox.length = 0;

@@ -187,11 +187,26 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
     eventId,
     roomNumber,
     handlers: {
-      onWelcome: ({ id, room, peers, count, screen, playback, role, canControl, event, events }) => {
+      onWelcome: ({ id, name: assignedName, room, peers, count, screen, playback, role, canControl, event, events }) => {
         myId = id;
         myRole = role || 'user';
         canControlVideo = canControl !== false;
         currentEvent = event || null;
+
+        // 表示名はサーバーが決める（ログイン名 or ゲスト連番）。
+        // 入場画面で見せていた名前と違う場合は、自分のアバターを作り直して合わせる
+        if (assignedName && assignedName !== session.name) {
+          session.name = assignedName;
+          const pos = player.position.clone();
+          const rotY = player.rotation.y;
+          scene.remove(player);
+          player = createAvatar({ ...session.config, name: assignedName });
+          player.position.copy(pos);
+          player.rotation.y = rotY;
+          if (namesHidden && player.userData.setNameVisible) player.userData.setNameVisible(false);
+          scene.add(player);
+          controls.setAvatar(player);
+        }
         knownEvents = events || [];
         updateHeader(room);
         peers.forEach((p) => remote.addPeer(p));
@@ -371,7 +386,7 @@ avatarBtn.addEventListener('click', () => {
       session.name = name;
       session.config = { ...config };
       // 入場後に変えた姿も次回に持ち越す（サーバー側は update を受けて保存する）
-      saveLocalPrefs({ name, config });
+      saveLocalPrefs({ config });
 
       // 位置と向きを保ったままアバターを作り直す
       const pos = player.position.clone();

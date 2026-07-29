@@ -95,7 +95,12 @@ async function main() {
   await waitOpen(bob);
 
   // --- join: Alice が先に入場 ---
-  alice.ws.send(JSON.stringify({ t: 'join', n: 'Alice', av: { h: 'twin', hc: 5, sc: 0, bc: 1 } }));
+  // 表示名はサーバーが決める（2026-07-29〜）。テストでは devEmail/devName で
+  // ログイン済みユーザーを模して、名前を確定させたうえで中継を検証する
+  alice.ws.send(JSON.stringify({
+    t: 'join', n: '詐称しても無視される', av: { h: 'twin', hc: 5, sc: 0, bc: 1 },
+    devRole: 'user', devEmail: 'alice@example.com', devName: 'Alice',
+  }));
   const welcomeAlice = await waitFor(alice, (m) => m.t === 'welcome');
   if (!welcomeAlice) {
     record('Alice welcome受信', false, 'タイムアウト');
@@ -104,7 +109,10 @@ async function main() {
   const aliceId = welcomeAlice.id;
 
   // --- join: Bob が後から入場 ---
-  bob.ws.send(JSON.stringify({ t: 'join', n: 'Bob', av: { h: 'short', hc: 1, sc: 2, bc: 0 } }));
+  bob.ws.send(JSON.stringify({
+    t: 'join', n: '詐称しても無視される', av: { h: 'short', hc: 1, sc: 2, bc: 0 },
+    devRole: 'user', devEmail: 'bob@example.com', devName: 'Bob',
+  }));
   const welcomeBob = await waitFor(bob, (m) => m.t === 'welcome');
   if (!welcomeBob) {
     record('Bob welcome受信', false, 'タイムアウト');
@@ -143,13 +151,19 @@ async function main() {
     `alice=${JSON.stringify(chatAtAlice)} bob=${JSON.stringify(chatAtBob)}`,
   );
 
-  // --- update: Bobが変更 → Aliceにpeer-updateとして届く ---
+  // --- update: Bobがアバターを変更 → Aliceにpeer-updateとして届く ---
+  // 名前は変えられない（サーバーが入場時に確定させたものを使い続ける）
   bob.ws.send(JSON.stringify({ t: 'update', n: 'Bobby', av: { h: 'hat', hc: 2, sc: 3, bc: 1 } }));
   const peerUpdateAtAlice = await waitFor(alice, (m) => m.t === 'peer-update' && m.id === bobId);
   record(
-    'updateがpeer-updateとして相手に届く',
-    Boolean(peerUpdateAtAlice) && peerUpdateAtAlice.n === 'Bobby',
+    'updateでアバターが変わる',
+    Boolean(peerUpdateAtAlice) && peerUpdateAtAlice.av.h === 'hat',
     peerUpdateAtAlice ? JSON.stringify(peerUpdateAtAlice) : 'タイムアウト',
+  );
+  record(
+    'updateで名前は変えられない',
+    Boolean(peerUpdateAtAlice) && peerUpdateAtAlice.n === 'Bob',
+    peerUpdateAtAlice ? `n=${peerUpdateAtAlice.n}` : 'タイムアウト',
   );
 
   // --- presence.json: 2人分(rm=1, av付き)が入っている ---

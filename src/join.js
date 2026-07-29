@@ -213,6 +213,21 @@ function injectStyle() {
   color: rgba(255, 255, 255, 0.35);
 }
 
+/* 名前はサーバーが決めるので、入力欄ではなく表示欄として見せる */
+#name-input[readonly] {
+  cursor: default;
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: rgba(234, 246, 255, 0.9);
+}
+
+.name-note {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(220, 235, 255, 0.5);
+}
+
 .join-btn-row {
   display: flex;
   gap: 10px;
@@ -284,11 +299,6 @@ function disposeObject3D(obj) {
   });
 }
 
-function randomGuestName() {
-  const n = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
-  return `ゲスト${n}`;
-}
-
 /**
  * 入場画面 / 再カスタム画面 共通のUI構築処理。
  * #join-screen 内にアバターカスタマイズ＋名前入力＋決定ボタンを構築し、
@@ -301,7 +311,6 @@ function buildCustomizeScreen({
   showCancel,
   initialName,
   initialConfig,
-  fallbackName,
   onSubmit,
   onCancel,
   showPlace = false, // ログイン・イベント・ルームの選択を出すか（入場画面のみ）
@@ -360,7 +369,8 @@ function buildCustomizeScreen({
           </div>
           <div class="customize-row">
             <div class="customize-label">なまえ</div>
-            <input type="text" id="name-input" maxlength="12" placeholder="なまえ" autocomplete="off" />
+            <input type="text" id="name-input" readonly tabindex="-1" placeholder="ゲスト（自動で番号がつきます）" autocomplete="off" />
+            <div class="name-note" id="name-note">ログインすると、Googleアカウントの名前で表示されます</div>
           </div>
           <div class="join-btn-row">
             <button type="button" id="join-btn" class="join-btn">${buttonLabel}</button>
@@ -371,9 +381,24 @@ function buildCustomizeScreen({
   `;
 
   const nameInput = document.getElementById('name-input');
-  if (initialName) {
-    nameInput.value = initialName;
+  const nameNote = document.getElementById('name-note');
+
+  /**
+   * 表示名を見せる。名前を決めるのはサーバーなので、ここは確認用の表示でしかない。
+   * @param {string} resolved ログイン済みならGoogleの表示名。未ログインなら空
+   */
+  function showResolvedName(resolved) {
+    if (resolved) {
+      nameInput.value = resolved;
+      if (nameNote) nameNote.textContent = 'Googleアカウントの名前で表示されます（変更できません）';
+    } else {
+      nameInput.value = '';
+      if (nameNote) {
+        nameNote.textContent = 'ログインすると、Googleアカウントの名前で表示されます';
+      }
+    }
   }
+  showResolvedName(initialName || '');
 
   const joinBtnRow = document.querySelector('.join-btn-row');
   let cancelBtn = null;
@@ -573,27 +598,25 @@ function buildCustomizeScreen({
           rebuildPreviewAvatar();
           refreshSelections();
         }
-        // 名前は「保存済み → Googleの表示名 → 空」の順で埋める。
-        // Googleの名前は本名のことがあるので、初期値として入れるだけで固定はしない
-        if (!nameInput.value.trim()) {
-          nameInput.value = (server.name || server.googleName || '').slice(0, 12);
-        }
+        // 名前はGoogleアカウントの表示名で固定（サーバーが確定させる）。
+        // ここでは「入場したらこう表示される」ことを見せているだけ
+        showResolvedName(server.googleName || server.name || '');
       });
       applyGuestLock();
     }
   }
   setupLogin();
 
-  // ---- 名前入力 & 決定ボタン ----
+  // ---- 決定ボタン ----
   const joinBtn = document.getElementById('join-btn');
 
   function handleSubmit() {
-    const typed = nameInput.value.trim().slice(0, 12);
-    const name = typed.length > 0 ? typed : fallbackName();
+    // 名前は入場時にサーバーが確定させる（ログイン名 or ゲスト連番）。
+    // ここで渡すのは表示用の控えで、サーバーはこれを採用しない
+    const name = nameInput.value.trim();
 
-    // 次回そのまま入れるようにブラウザへ保存する。
-    // ログイン済みならサーバー側にも保存されるが、そちらは join を受けたサーバーが行う
-    saveLocalPrefs({ name, config });
+    // 次回そのまま入れるように見た目をブラウザへ保存する
+    saveLocalPrefs({ config });
 
     closeScreen();
     onSubmit({
@@ -604,9 +627,6 @@ function buildCustomizeScreen({
   }
 
   joinBtn.addEventListener('click', handleSubmit);
-  nameInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') handleSubmit();
-  });
 
   if (showCancel && cancelBtn) {
     cancelBtn.addEventListener('click', () => {
@@ -617,23 +637,24 @@ function buildCustomizeScreen({
 }
 
 /**
- * 入場画面（1歩目: アバターと名前）。
+ * 入場画面（1歩目: アバターの見た目）。
  * 決定すると onJoin({name, config, idToken}) が呼ばれる。
  * 場所の選択は placepick.js（2歩目）が担当する。
+ * 表示名はサーバーが決めるので、ここでは確認用に見せているだけ。
  * @param {(r:{name:string,config:object,idToken:string}) => void} onJoin
  * @param {{name?:string, config?:object}} [prev] 「← アバター」で戻ってきたときの復元用
  */
 export function initJoinScreen(onJoin, prev = {}) {
-  // 優先順位: 「← アバター」で戻ってきた内容 → 前回の保存 → ランダム
+  // 見た目の優先順位: 「← アバター」で戻ってきた内容 → 前回の保存 → ランダム。
+  // 名前はサーバーが決めるので、ここでは空にしておく（ログインすれば自動で入る）
   const saved = loadLocalPrefs();
   buildCustomizeScreen({
     title: APP_NAME,
     subtitle: APP_TAGLINE,
     buttonLabel: '次へ（場所を選ぶ）',
     showCancel: false,
-    initialName: prev.name || (saved && saved.name) || '',
+    initialName: '',
     initialConfig: prev.config ? { ...prev.config } : saved && saved.config ? { ...saved.config } : randomConfig(),
-    fallbackName: randomGuestName,
     onSubmit: onJoin,
     onCancel: null,
     showPlace: true,
@@ -641,7 +662,8 @@ export function initJoinScreen(onJoin, prev = {}) {
 }
 
 /**
- * 入場後の再カスタム画面。#join-screen を使ってアバターの見た目・名前を再選択させる。
+ * 入場後の再カスタム画面。#join-screen を使ってアバターの見た目を選び直す。
+ * 名前はサーバーが確定させているので、ここでは変更できない。
  * @param {{ name: string, config: object, onApply: (result: {name: string, config: object}) => void, onCancel?: () => void }} params
  */
 export function openCustomizer({ name, config, onApply, onCancel }) {
@@ -652,7 +674,6 @@ export function openCustomizer({ name, config, onApply, onCancel }) {
     showCancel: true,
     initialName: name || '',
     initialConfig: { ...config },
-    fallbackName: () => name || randomGuestName(),
     onSubmit: onApply,
     onCancel: onCancel || null,
   });

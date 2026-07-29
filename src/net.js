@@ -140,6 +140,7 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
           if (h.onWelcome) {
             h.onWelcome({
               id: msg.id,
+              name: msg.n, // サーバーが確定させた表示名
               room: msg.room,
               peers: msg.peers,
               count: msg.count,

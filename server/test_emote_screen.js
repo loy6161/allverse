@@ -24,7 +24,11 @@ function connect(name) {
     });
     ws.on('error', reject);
     ws.on('open', () => {
-      ws.send(JSON.stringify({ t: 'join', n: name, av: { h: 'short', hc: 0, sc: 0, bc: 0 } }));
+      // 表示名はサーバーが決めるので、devEmail/devName でログイン済みを模して確定させる
+      ws.send(JSON.stringify({
+        t: 'join', n: name, av: { h: 'short', hc: 0, sc: 0, bc: 0 },
+        devRole: 'user', devEmail: `${encodeURIComponent(name)}@example.com`, devName: name,
+      }));
       resolve({ ws, inbox });
     });
   });

@@ -1,5 +1,9 @@
 // ============================================================
-// 入場設定（名前・アバター）の保存と復元
+// 入場設定（アバターの見た目）の保存と復元
+//
+// ※ 表示名は保存しない。名前はサーバーが決める仕様になったため
+//   （ログイン済み＝Googleアカウントの表示名／未ログイン＝ゲスト連番）。
+//   ここで復元すると、実際に表示される名前と食い違って紛らわしくなる。
 //
 // 2段構え:
 //   1. ブラウザ（localStorage）… ログインしていなくても効く。すぐ読める
@@ -31,25 +35,20 @@ function safeWrite(obj) {
 }
 
 /**
- * 保存されている設定を読む。
- * @returns {{name?:string, config?:object}|null}
+ * 保存されている見た目を読む。
+ * @returns {{config?:object}|null}
  */
 export function loadLocalPrefs() {
   const p = safeRead();
   if (!p || typeof p !== 'object') return null;
-  const out = {};
-  if (typeof p.name === 'string') out.name = p.name;
-  if (p.config && typeof p.config === 'object') out.config = p.config;
-  return Object.keys(out).length ? out : null;
+  if (!p.config || typeof p.config !== 'object') return null;
+  return { config: p.config };
 }
 
-/** 名前とアバターを保存する */
-export function saveLocalPrefs({ name, config }) {
-  const cur = safeRead() || {};
-  if (typeof name === 'string') cur.name = name;
-  if (config && typeof config === 'object') cur.config = config;
-  cur.savedAt = Date.now();
-  safeWrite(cur);
+/** アバターの見た目を保存する（名前は保存しない） */
+export function saveLocalPrefs({ config }) {
+  if (!config || typeof config !== 'object') return;
+  safeWrite({ config, savedAt: Date.now() });
 }
 
 /**

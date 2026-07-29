@@ -107,7 +107,26 @@ const events = new Map();
 const rooms = new Map();
 
 let nextClientSeq = 1; // "c1", "c2", ... を払い出す連番
+let nextGuestSeq = 1; // 「ゲスト001」の連番
 const startedAt = Date.now();
+
+/**
+ * 表示名はサーバーが決める（クライアントの申告は使わない）。
+ *
+ * 2026-07-29 確定: ログイン済みはGoogleアカウントの表示名で固定する。
+ * この名前はYouTubeのコメントに出る名前と同じなので、コミュニティ内では既に公開名であり、
+ * かつ本人以外は名乗れなくなる（なりすまし防止）。
+ * 未ログインは「ゲスト+連番」をこちらで割り当てる。連番なので他人と被らず、詐称もできない。
+ */
+function resolveDisplayName(email, googleName) {
+  if (!email) {
+    const n = String(nextGuestSeq++).padStart(3, '0');
+    return `ゲスト${n}`;
+  }
+  // Googleの表示名が取れないときはメールのローカル部で代替する
+  const base = (googleName || '').trim() || String(email).split('@')[0];
+  return clampString(base, MAX_NAME_LEN, 'メンバー');
+}
 
 /**
  * クライアント1人分の状態
@@ -349,10 +368,12 @@ async function handleJoin(client, msg) {
   // ---- 認証（任意）----
   let role = defaultRole();
   let email = '';
+  let googleName = '';
   if (msg.idt) {
     const info = await verifyIdToken(msg.idt);
     if (info) {
       email = info.email;
+      googleName = info.name || '';
       role = roleForEmail(email);
     }
   }
@@ -362,6 +383,7 @@ async function handleJoin(client, msg) {
     role = msg.devRole;
     if (typeof msg.devEmail === 'string' && msg.devEmail) {
       email = clampString(msg.devEmail, 120).toLowerCase();
+      googleName = clampString(msg.devName, MAX_NAME_LEN);
     }
   }
   client.role = role;
@@ -382,7 +404,8 @@ async function handleJoin(client, msg) {
   const wantRoom = Number.isInteger(msg.rm) && msg.rm >= 1 && msg.rm <= 999 ? msg.rm : null;
   const roomNumber = wantRoom && roomHasSpace(ev.id, wantRoom) ? wantRoom : assignRoom(ev.id);
 
-  client.n = clampString(msg.n, MAX_NAME_LEN, '名無し');
+  // 名前はサーバーが決める。msg.n は受け取らない（他人の名前を名乗れないようにするため）
+  client.n = resolveDisplayName(email, googleName);
   // ゲストは見た目を固定（自由度を下げる方針。2026-07-29 確定）
   client.av = role === 'guest' ? { ...GUEST_AV } : sanitizeAv(msg.av);
   client.x = 0;
@@ -406,6 +429,8 @@ async function handleJoin(client, msg) {
   send(client.ws, {
     t: 'welcome',
     id: client.id,
+    // 名前はサーバーが決めるので、確定した表示名を本人にも返す
+    n: client.n,
     role: client.role,
     // 動画を操作できるかはサーバーが唯一の判断元（ログイン未設定の間は全員 true）
     canControl: canControlVideo(client.role),
@@ -473,7 +498,7 @@ function handleChat(client, msg) {
   broadcastFrom(client, { t: 'chat', id: client.id, n: client.n, txt, sc: scope }, false);
 }
 
-/** update: アバター/名前の再カスタム */
+/** update: アバターの再カスタム（名前は変えられない） */
 async function handleUpdate(client, msg) {
   if (!client.joined) return;
   if (!canInteract(client.role)) {
@@ -481,7 +506,7 @@ async function handleUpdate(client, msg) {
     return;
   }
 
-  client.n = clampString(msg.n, MAX_NAME_LEN, client.n);
+  // 名前は入場時にサーバーが確定させたものを使い続ける。msg.n は無視する
   client.av = sanitizeAv(msg.av);
 
   broadcastFrom(client, { t: 'peer-update', id: client.id, n: client.n, av: client.av });
