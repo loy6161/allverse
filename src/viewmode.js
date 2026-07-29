@@ -137,7 +137,7 @@ function isTypingTarget(el) {
 
 // controls: initControls の戻り値（setTheater を持つ）
 // slot: 右下の動画パネル内のボタン置き場（あればシアターボタンをそこに入れる）
-export function initViewMode({ controls, slot, onNamesVisible } = {}) {
+export function initViewMode({ controls, slot, onNamesVisible, onTheater } = {}) {
   injectStyle();
 
   // シアター表示ボタン（動画関連なので右下の動画パネルに入れる）
@@ -184,19 +184,21 @@ export function initViewMode({ controls, slot, onNamesVisible } = {}) {
     if (onNamesVisible) onNamesVisible(show);
   }
 
-  function applyTheater(on) {
+  // 見た目の反映。入るときも「移動して自動で抜けたとき」も必ずここを通す
+  // （以前は解除処理が2か所に分かれていて、片方に足した処理が漏れやすかった）
+  function syncTheater(on) {
     theater = on;
     document.body.classList.toggle(THEATER_CLASS, on);
     btn.classList.toggle('is-on', on);
     btn.title = on ? '元の視点に戻す (F)' : 'スクリーンを画面いっぱいに表示 (F)';
+    // 会場の造形を消す/戻す（映像が柱で隠れるのを防ぐ）。CSSでは触れないので外へ渡す
+    if (onTheater) onTheater(on);
+  }
+
+  function applyTheater(on) {
+    syncTheater(on);
     if (controls && controls.setTheater) {
-      controls.setTheater(on, () => {
-        // 移動で自動解除されたとき
-        theater = false;
-        document.body.classList.remove(THEATER_CLASS);
-        btn.classList.remove('is-on');
-        btn.title = 'スクリーンを画面いっぱいに表示 (F)';
-      });
+      controls.setTheater(on, () => syncTheater(false)); // 移動で自動解除されたとき
     }
   }
 

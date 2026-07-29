@@ -137,7 +137,21 @@ function injectStyle() {
          これを付けないと、PCで窓を細くしただけの人が動画操作に触れなくなる */
       body.vc-mobile .vc-video-panel { display: none; }
       body.vc-mobile.vc-m-video-open .vc-video-panel { display: flex; }
-      .vc-vp-vol { width: 56px; }
+
+      /* 横はみ出し対策（2026-07-30）。
+         中身は 再生・ミュート・音量・数値・ボタン4つ で固定幅の合計が約330pxあり、
+         375px幅でも余りが1pxしかなかった。360px幅の端末では右端のボタンが切れる。
+         まず音量つまみを縮ませ、それでも足りなければ折り返して2段にする。
+         こうすると端末の幅に関係なく切れない */
+      .vc-vp-row {
+        flex-wrap: wrap;
+        row-gap: 8px;
+      }
+      .vc-vp-vol {
+        flex: 1 1 40px;
+        width: auto;
+        min-width: 32px;
+      }
     }
   `;
   document.head.appendChild(style);

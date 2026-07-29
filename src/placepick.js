@@ -114,7 +114,16 @@ export async function openPlacePicker({ onDecide, onBack }) {
   const events = Array.isArray(cfg.events) && cfg.events.length ? cfg.events : [];
 
   let selectedEventId = events.length ? events[0].id : '';
-  let selectedRoom = null; // null = おまかせ
+  // 入るルームは必ず明示的に選ばせる（「おまかせ」は 2026-07-30 に廃止）。
+  // 既定は「空きのある一番小さい番号」で、画面を開いた時点で選択済みの状態にする
+  let selectedRoom = null;
+
+  /** そのイベントで空きのある最小番号ルーム（無ければ1） */
+  function firstOpenRoom(ev) {
+    const list = ev && ev.rooms && ev.rooms.length ? ev.rooms : [{ room: 1, full: false }];
+    const open = list.find((r) => !r.full);
+    return (open || list[0]).room;
+  }
 
   const panel = document.createElement('div');
   panel.className = 'vc-place-panel';
@@ -170,19 +179,11 @@ export async function openPlacePicker({ onDecide, onBack }) {
 
       // 選択中のイベントだけルームを開いて見せる（一覧が縦に伸びすぎないように）
       if (ev.id === selectedEventId && !needLogin) {
+        // まだ選んでいなければ、空きのあるルームを選んだ状態にしておく
+        if (selectedRoom === null) selectedRoom = firstOpenRoom(ev);
+
         const rooms = document.createElement('div');
         rooms.className = 'vc-place-rooms';
-
-        const auto = document.createElement('button');
-        auto.type = 'button';
-        auto.className = 'vc-place-chip' + (selectedRoom === null ? ' selected' : '');
-        auto.textContent = 'おまかせ';
-        auto.title = '空いている部屋に自動で入ります';
-        auto.addEventListener('click', () => {
-          selectedRoom = null;
-          render();
-        });
-        rooms.appendChild(auto);
 
         const list = ev.rooms && ev.rooms.length ? ev.rooms : [{ room: 1, count: 0, full: false }];
         for (const r of list) {
@@ -227,6 +228,8 @@ export async function openPlacePicker({ onDecide, onBack }) {
     go.addEventListener('click', () => {
       root.classList.add('hidden');
       root.innerHTML = '';
+      // 満室のルームはボタン自体が押せないので、ここに来る値は必ず入れる番号。
+      // 万一 null のままなら（イベントが空など）サーバー側の自動割り当てに任せる
       onDecide({ eventId: selectedEventId, roomNumber: selectedRoom });
     });
     btns.appendChild(go);

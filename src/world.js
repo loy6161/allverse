@@ -515,5 +515,12 @@ export function createWorld(scene, opts = {}) {
     update,
     bounds: { minX: -35, maxX: 35, minZ: -35, maxZ: 35 },
     spawnPoint: new THREE.Vector3(0, 0, 18),
+    // スクリーンの位置と大きさ。screen.js（映像を重ねる）と
+    // controls.js（シアター表示でここへカメラを寄せる）が参照する。
+    // clubVERSE 側（world_club.js）も同じ形で返すので、ワールドを差し替えても揃う
+    screen: { x: 0, y: 5.4, z: -18.95, width: 14, height: 7 },
+    // setVenueVisible は用意していない。
+    // このワールドはスクリーンの正面が開けているので、シアター表示で下がっても
+    // 映像を遮るものが無い（clubVERSE は柱が入るため向こうだけ持っている）
   };
 }

@@ -5,7 +5,7 @@ import { EYE_Y } from './avatar.js';
 // - WASD / 矢印キー: カメラ基準で移動（アバターは進行方向を向く）
 // - ドラッグ: カメラ旋回、ホイール: ズーム
 // - 三人称の最短からさらに寄せると一人称になる（引くと三人称へ戻る）
-export function initControls(camera, avatar, domElement, { bounds, onJump } = {}) {
+export function initControls(camera, avatar, domElement, { bounds, onJump, screen } = {}) {
   const keys = new Set();
   let yaw = 0; // カメラの水平角（0 = ステージ(-z)方向を向く）
   let pitch = 0.35; // 見下ろし角
@@ -44,9 +44,18 @@ export function initControls(camera, avatar, domElement, { bounds, onJump } = {}
 
   // シアターモード: スクリーンを正面から見て画面いっぱいに映す
   // （OSの全画面ではなく「ウィンドウ内でスクリーンだけを大きく見る」ためのもの）
-  const SCREEN_CENTER = new THREE.Vector3(0, 5.4, -18.95);
-  const SCREEN_W = 14;
-  const SCREEN_H = 7;
+  //
+  // スクリーンの位置と大きさはワールドごとに違うので、外から受け取る。
+  // ここに仮ワールドの値を直接書いていたため、clubVERSE では見当違いの場所へ
+  // カメラが飛んで「押しても何も起きない」ように見えていた（2026-07-30 修正）。
+  // 既定値は仮ワールドの値（world.js / world_club.js のどちらも screen を返す）
+  const SCREEN_CENTER = new THREE.Vector3(
+    screen?.x ?? 0,
+    screen?.y ?? 5.4,
+    screen?.z ?? -18.95
+  );
+  const SCREEN_W = screen?.width ?? 14;
+  const SCREEN_H = screen?.height ?? 7;
   let theater = false;
   let onTheaterExit = null;
 

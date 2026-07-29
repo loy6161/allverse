@@ -223,6 +223,8 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
 
   controls = initControls(camera, player, renderer.domElement, {
     bounds: world.bounds,
+    // シアター表示でカメラを寄せる先。ワールドごとにスクリーンの位置が違う
+    screen: world.screen,
     // 自分は物理でジャンプするが、他の人の画面ではジャンプのモーションとして見せる
     onJump: () => {
       if (net && !demoMode) net.sendEmote('jump');
@@ -495,6 +497,11 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
     slot: videoPanel.slot,
     // ネームプレートと吹き出しは3D空間の中にあるのでCSSでは消えない。個別に切り替える。
     // 「UI非表示(H)」と「ネームプレートだけ非表示(N)」の両方をまとめた結果が来る
+    // シアター表示中は会場の造形を消して、映像が柱で隠れないようにする
+    // （ワールドが対応していれば。仮ワールドは遮るものが無いので持っていない）
+    onTheater: (on) => {
+      if (world.setVenueVisible) world.setVenueVisible(!on);
+    },
     onNamesVisible: (show) => {
       namesHidden = !show;
       if (player && player.userData.setNameVisible) player.userData.setNameVisible(show);

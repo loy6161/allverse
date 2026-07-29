@@ -316,6 +316,16 @@ export function initMobile({ controls, chatRoot }) {
   let chatOpen = false;
   let videoOpen = false;
 
+  // 動画のコントロールの実際の高さを CSS 変数へ書き戻す。
+  // 画面が狭いと中身が2段に折り返して高さが変わる（74px → 112px）ので、
+  // 決め打ちのままだと 📺🚪👥 のパネルがこのパネルに重なってしまう。
+  // （それらは --m-panel2-bottom = このパネルの位置 + この高さ の場所に開く）
+  function syncVideoHeight() {
+    if (!videoOpen) return;
+    const el = document.querySelector('.vc-video-panel');
+    if (el) document.documentElement.style.setProperty('--m-video-h', `${el.offsetHeight}px`);
+  }
+
   function apply() {
     chatRoot.style.display = chatOpen ? '' : 'none';
     chatToggle.textContent = chatOpen ? '✕' : '\u{1F4AC}';
@@ -323,8 +333,11 @@ export function initMobile({ controls, chatRoot }) {
     gear.classList.toggle('is-on', videoOpen);
     document.body.classList.toggle('vc-m-chat-open', chatOpen);
     document.body.classList.toggle('vc-m-video-open', videoOpen);
+    syncVideoHeight();
   }
   apply();
+  // 画面の回転やウィンドウ幅の変化で折り返しが変われば高さも変わる
+  window.addEventListener('resize', syncVideoHeight);
 
   chatToggle.addEventListener('click', () => {
     chatOpen = !chatOpen;

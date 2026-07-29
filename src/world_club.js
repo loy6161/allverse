@@ -397,6 +397,17 @@ export function createClubWorld(scene, { renderer } = {}) {
     ready: loading,
     isLoaded: () => loaded,
     error: () => failed,
+    /**
+     * 会場の造形だけを消す（スクリーン・月・星空は残る）。
+     *
+     * シアター表示でカメラをスクリーン正面へ引くとき、縦画面では16m幅の映像を
+     * 細い画面に収めるために30m下がる必要があり、その間に柱が入って映像が隠れる。
+     * 距離を詰めると今度は画角が極端に広がって映像が小さくなるので、
+     * 「観るときは会場を消す」で解決している（2026-07-30）。
+     */
+    setVenueVisible(v) {
+      if (model) model.visible = v;
+    },
     update() {
       // 会場自体は動かない。動くものを足すならここ
     },
