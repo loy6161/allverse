@@ -1001,8 +1001,45 @@ function buildStatusJson() {
   };
 }
 
+// ------------------------------------------------------------
+// ブラウザ座標 → VRChatワールド座標
+//
+// なぜ必要か: ブラウザ側の会場は VRChat の VERSE CITY2025 から書き出した
+// 同じメッシュだが、変換時に「会場の中心を原点へ寄せる」処理を入れたため、
+// 座標が VRC 本体とズレている。VRC側の定数で吸収してもらう案もあったが、
+// 「あっちは直すの大変」（2026-07-30 loyさん判断）なので、送る直前にこちらで戻す。
+//
+// 寄せ幅は書き出しログ(offset_applied)に残っており、Unityシーンの実測値とも一致した:
+//   会場入口         VRC(-213.90, -61.60) ⇔ ブラウザ(4.90, 10.31)  … 誤差 0.00m
+//   ステージ背面ガラス VRC(-213.92, -99.15) ⇔ ブラウザ(4.92, -27.24) … 基準点の違いのみ
+//
+// X だけ符号が反転するのは、Unity(左手系) から書き出して three.js(右手系) へ
+// 取り込んだため。向きも同じ理由で左右が入れ替わる:
+//   ブラウザの r は three.js の rotation.y（度）で、向き = (sin r, cos r)。
+//   X が反転するので VRC 側の向きは (-sin r, cos r) = 角度 -r になる。
+// ------------------------------------------------------------
+const VRC_ORIGIN_X = -209.0; // 会場中心のVRCワールド座標X
+const VRC_ORIGIN_Z = -71.91; // 会場中心のVRCワールド座標Z
+
+/** ブラウザのx → VRCのX（X軸は反転する） */
+function toVrcX(x) {
+  return Math.round((-x + VRC_ORIGIN_X) * 10) / 10;
+}
+
+/** ブラウザのz → VRCのZ */
+function toVrcZ(z) {
+  return Math.round((z + VRC_ORIGIN_Z) * 10) / 10;
+}
+
+/** ブラウザの向き(度) → VRCの向き(度・0〜359) */
+function toVrcRot(r) {
+  return ((Math.round(-r) % 360) + 360) % 360;
+}
+
 /**
  * presence.json（PRESENCE_SPEC v=1 は凍結。フィールドを増やさない）
+ *
+ * x/z/r は VRChatワールド座標系で出す（2026-07-30 変更。上の変換を参照）。
  *
  * rm はルーム番号なので、イベントをまたぐと番号が衝突して
  * 「別のイベントにいる人が同じ部屋にいる」ように見えてしまう。
@@ -1025,9 +1062,10 @@ function buildPresenceJson() {
       const entry = {
         rm: keyRoomNumber(key),
         n: client.n,
-        x: client.x,
-        z: client.z,
-        r: client.r,
+        // VRC側がそのまま置ける値にして渡す（変換の理由は上のコメント）
+        x: toVrcX(client.x),
+        z: toVrcZ(client.z),
+        r: toVrcRot(client.r),
         av: client.av,
       };
 
