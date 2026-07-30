@@ -54,7 +54,7 @@ export function saveLocalPrefs({ config }) {
 /**
  * サーバーに保存してある設定を取る（ログイン済みのときだけ）。
  * @param {string} idToken
- * @returns {Promise<{name?:string, config?:object, googleName?:string}|null>}
+ * @returns {Promise<{name?:string, config?:object, googleName?:string, role?:string}|null>}
  */
 export async function fetchServerPrefs(idToken) {
   if (!idToken) return null;
@@ -71,6 +71,9 @@ export async function fetchServerPrefs(idToken) {
       name: data.name || '',
       config: data.av || null,
       googleName: data.googleName || '',
+      // 入場画面で「イベントを作る」を出すかの判断に使う。
+      // あくまで表示の出し分けで、実際の可否はサーバーが判定する
+      role: data.role || 'user',
     };
   } catch {
     return null; // 取れなくても入場は続けられる

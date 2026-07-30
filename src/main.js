@@ -98,8 +98,11 @@ const DENY_MESSAGES = {
   'guest-no-emote': 'エモートを使うにはログインが必要です',
   'guest-no-avatar': '見た目を変えるにはログインが必要です',
   'login-required': 'このイベントに入るにはログインが必要です',
-  'event-not-empty': '人が残っているイベントは削除できません',
   'cannot-delete': 'このイベントは削除できません',
+  'no-event': 'いま開いているイベントがありません',
+  'bad-code': '合言葉が違います',
+  'event-full': 'このイベントは満員です',
+  'capacity-too-small': 'いま入っている人数より少ない定員にはできません',
   'too-many-events': 'イベントの数が上限に達しています',
   'staff-only': 'この操作は管理者・VIPのみです',
   'cannot-kick-staff': '管理者・VIPはキックできません',
@@ -200,8 +203,8 @@ function startDemoMode() {
 function startEntryFlow(prev = {}) {
   initJoinScreen((picked) => {
     openPlacePicker({
-      onDecide: ({ eventId, roomNumber }) => {
-        enterWorld({ ...picked, eventId, roomNumber });
+      onDecide: ({ eventId, roomNumber, entryCode }) => {
+        enterWorld({ ...picked, eventId, roomNumber, entryCode });
       },
       // 「← アバター」で1歩目に戻る（選んだ見た目と名前は保つ）
       onBack: () => startEntryFlow({ name: picked.name, config: picked.config }),
@@ -210,7 +213,7 @@ function startEntryFlow(prev = {}) {
 }
 startEntryFlow();
 
-function enterWorld({ name, config, eventId, roomNumber, idToken }) {
+function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   // 入場ボタンのクリック（ユーザー操作）を起点にライブ再生を開始する
   liveScreen.play();
 
@@ -252,6 +255,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
     idToken,
     eventId,
     roomNumber,
+    entryCode,
     handlers: {
       onWelcome: ({ id, name: assignedName, room, peers, count, cap, screen, playback, role, canControl, event, events, blocked }) => {
         myId = id;
@@ -313,7 +317,25 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
         knownEvents = list || [];
         if (roomUI) roomUI.setEvents(knownEvents);
       },
-      onDenied: ({ reason, by, why }) => {
+      onDenied: ({ reason, by, why, min }) => {
+        // 入場そのものを断られたケース。切断を「通信不良」と誤解させないよう理由を残す
+        if (reason === 'no-event' || reason === 'bad-code' || reason === 'event-full') {
+          removedReason =
+            reason === 'no-event'
+              ? 'いま開いているイベントがありません。時間をおいて開き直してください'
+              : reason === 'bad-code'
+                ? '合言葉が違うため入場できませんでした'
+                : 'このイベントは満員のため入場できませんでした';
+          return;
+        }
+        if (reason === 'capacity-too-small') {
+          chat.addMessage(
+            '',
+            `いま入っている人数（${min || '?'}人）より少ない定員にはできません`,
+            { system: true },
+          );
+          return;
+        }
         if (reason === 'banned') {
           // 入場そのものを断られた。理由を画面に出して、デモモードには落とさない
           removedReason = why
@@ -376,6 +398,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
       },
       // 他の人の再生/一時停止/シークを自分の映像にも反映する
       onPlayback: (pb) => liveScreen.player.applySync(pb),
+      // 管理人がイベントを閉じた。会場ごと無くなったので、その旨だけ伝える
+      onClosed: ({ name: evName }) => {
+        removedReason = `「${evName || 'イベント'}」は終了しました`;
+      },
       onDisconnect: () => startDemoMode(),
     },
   });
@@ -440,6 +466,9 @@ function enterWorld({ name, config, eventId, roomNumber, idToken }) {
     },
     onCreateEvent: (payload) => {
       if (net && !demoMode) net.sendEventCreate(payload);
+    },
+    onUpdateEvent: (payload) => {
+      if (net && !demoMode) net.sendEventUpdate(payload);
     },
     onDeleteEvent: (id) => {
       if (net && !demoMode) net.sendEventDelete(id);

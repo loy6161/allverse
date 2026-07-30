@@ -70,6 +70,22 @@ export async function initStore() {
         created_at    INTEGER NOT NULL
       )
     `);
+    // 2026-07-30 追加の列。CREATE TABLE IF NOT EXISTS は既存テーブルを作り替えないので、
+    // 稼働中のDBには ALTER で足す。既に列があればエラーになるだけなので握りつぶす。
+    //   entry_code … 合言葉（空文字＝パブリック）
+    //   capacity   … 1ルームの定員
+    //   vrc_bridge … VRChat連携に出すイベントか
+    for (const ddl of [
+      `ALTER TABLE events ADD COLUMN entry_code TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE events ADD COLUMN capacity INTEGER NOT NULL DEFAULT 30`,
+      `ALTER TABLE events ADD COLUMN vrc_bridge INTEGER NOT NULL DEFAULT 0`,
+    ]) {
+      try {
+        await db.execute(ddl);
+      } catch (e) {
+        // 既にその列がある＝正常。それ以外の失敗も起動は止めない
+      }
+    }
     // ログイン済みユーザーの入場設定。別の端末でも同じ姿で入れるようにするため
     await db.execute(`
       CREATE TABLE IF NOT EXISTS profiles (
@@ -118,12 +134,17 @@ export async function initStore() {
 export async function loadEvents() {
   if (!ready) return [];
   try {
-    const rs = await db.execute('SELECT id, name, video_id, require_login, created_at FROM events');
+    const rs = await db.execute(
+      'SELECT id, name, video_id, require_login, entry_code, capacity, vrc_bridge, created_at FROM events',
+    );
     return rs.rows.map((r) => ({
       id: String(r.id),
       name: String(r.name),
       videoId: String(r.video_id),
       requireLogin: Number(r.require_login) === 1,
+      entryCode: r.entry_code == null ? '' : String(r.entry_code),
+      capacity: r.capacity == null ? 30 : Number(r.capacity),
+      vrcBridge: Number(r.vrc_bridge) === 1,
       createdAt: Number(r.created_at),
     }));
   } catch (e) {
@@ -137,13 +158,25 @@ export async function saveEvent(ev) {
   if (!ready) return false;
   try {
     await db.execute({
-      sql: `INSERT INTO events (id, name, video_id, require_login, created_at)
-            VALUES (?, ?, ?, ?, ?)
+      sql: `INSERT INTO events (id, name, video_id, require_login, entry_code, capacity, vrc_bridge, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               name = excluded.name,
               video_id = excluded.video_id,
-              require_login = excluded.require_login`,
-      args: [ev.id, ev.name, ev.videoId, ev.requireLogin ? 1 : 0, ev.createdAt],
+              require_login = excluded.require_login,
+              entry_code = excluded.entry_code,
+              capacity = excluded.capacity,
+              vrc_bridge = excluded.vrc_bridge`,
+      args: [
+        ev.id,
+        ev.name,
+        ev.videoId,
+        ev.requireLogin ? 1 : 0,
+        ev.entryCode || '',
+        ev.capacity,
+        ev.vrcBridge ? 1 : 0,
+        ev.createdAt,
+      ],
     });
     return true;
   } catch (e) {

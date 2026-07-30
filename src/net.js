@@ -61,7 +61,7 @@ export function avToConfig(av) {
 const WELCOME_TIMEOUT_MS = 3000;
 const POS_INTERVAL_MS = 100; // 最大10Hz
 
-export function initNet({ name, config, handlers, idToken = '', eventId = '', roomNumber = null }) {
+export function initNet({ name, config, handlers, idToken = '', eventId = '', roomNumber = null, entryCode = '' }) {
   const h = handlers || {};
   let ws = null;
   let welcomeTimer = null;
@@ -112,6 +112,8 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
       if (devRole) joinMsg.devRole = devRole;
       if (eventId) joinMsg.ev = eventId;
       if (Number.isInteger(roomNumber)) joinMsg.rm = roomNumber;
+      // 合言葉つきイベント用。照合はサーバーだけが行う
+      if (entryCode) joinMsg.code = entryCode;
       send(joinMsg);
       welcomeTimer = setTimeout(() => {
         welcomeTimer = null;
@@ -179,8 +181,14 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
         case 'event-created':
           if (h.onEventCreated) h.onEventCreated(msg.ev);
           break;
+        case 'closed':
+          // 管理人がイベントを閉じた。会場ごと無くなるので入場画面に戻す
+          if (h.onClosed) h.onClosed({ eventId: msg.ev, name: msg.name });
+          break;
+
         case 'denied':
-          if (h.onDenied) h.onDenied({ reason: msg.reason, eventId: msg.ev, by: msg.by, why: msg.why });
+          if (h.onDenied)
+            h.onDenied({ reason: msg.reason, eventId: msg.ev, by: msg.by, why: msg.why, min: msg.min });
           break;
         // ---- 迷惑行為への対処 ----
         case 'blocked':
@@ -309,9 +317,23 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     send(m);
   }
 
-  function sendEventCreate({ name: evName, videoId, requireLogin }) {
+  function sendEventCreate({ name: evName, videoId, requireLogin, code, cap, vrc }) {
     if (!joined) return;
-    send({ t: 'event-create', name: evName, v: videoId, requireLogin: !!requireLogin });
+    send({
+      t: 'event-create',
+      name: evName,
+      v: videoId,
+      requireLogin: !!requireLogin,
+      code: code || '',
+      cap,
+      vrc: !!vrc,
+    });
+  }
+
+  /** 立てたあとに設定を変える。渡した項目だけが変わる */
+  function sendEventUpdate(payload) {
+    if (!joined) return;
+    send({ t: 'event-update', ...payload });
   }
 
   function sendEventDelete(id) {
@@ -375,6 +397,7 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     sendPlayback,
     sendMove,
     sendEventCreate,
+    sendEventUpdate,
     sendEventDelete,
     requestEvents,
     sendBlock,

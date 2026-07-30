@@ -66,7 +66,7 @@ const MIME_TYPES = {
 const PORT = process.env.PORT || 5179;
 const WS_PATH = '/ws';
 
-const MAX_PER_ROOM = 30;          // 1ルームの定員
+// 1ルームの定員はイベントごとに持つ（DEFAULT_CAPACITY / MIN_CAPACITY / MAX_CAPACITY を参照）
 const RATE_LIMIT_PER_SEC = 20;    // 1クライアントが1秒に送れる最大メッセージ数
 const MAX_NAME_LEN = 12;          // n の最大文字数
 const MAX_TXT_LEN = 200;          // chat.txt の最大文字数
@@ -81,11 +81,18 @@ const DEFAULT_VIDEO_ID = 'unrobrGhlv0';       // 常設イベントの初期動�
 const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;    // YouTube動画IDの形式
 
 // イベント
-const MAIN_EVENT_ID = 'main';                 // 常設イベント（削除不可・必ず存在する）
-const MAIN_EVENT_NAME = 'VERSE CITY';
+//
+// 2026-07-30 変更: 「常設イベント(main)を必ず作る」のをやめた。
+// 常設だと管理人の意思と関係なく常に入れてしまい、調整中でも人が入ってくる。
+// いまは「管理人がイベントを立てている間だけ会場が開く」。
+// パブリックで立てて閉じなければ、結果としてそれが常設になる（loyさん設計 2026-07-30）。
 const MAX_EVENTS = 20;
 const MAX_EVENT_NAME_LEN = 24;
 const EVENT_ID_RE = /^[a-z0-9_-]{1,24}$/;
+const MAX_EVENT_CODE_LEN = 24;                // 合言葉の最大文字数
+const DEFAULT_CAPACITY = 30;                  // 1ルームの既定キャパ
+const MIN_CAPACITY = 1;
+const MAX_CAPACITY = 60;                      // presence.json の web[] 上限に合わせる
 
 // ゲスト（未ログイン）の固定アバター。見た目は後で確定させる（2026-07-29 時点の暫定）
 const GUEST_AV = { h: 'short', o: 'middle', ac: 'none', hc: 12, sc: 12, bc: 0, ec: 0, pl: 9 };
@@ -111,7 +118,13 @@ const ENABLE_CHAT_FIELD = false;
 // サーバー状態
 // ------------------------------------------------------------
 // events: Map<eventId, Event>
-//   Event = { id, name, videoId, playback:{playing,pos,at}, requireLogin, permanent, createdAt }
+//   Event = { id, name, videoId, playback:{playing,pos,at},
+//             requireLogin, entryCode, capacity, vrcBridge, createdAt }
+//     requireLogin … ゲスト（未ログイン）を弾く
+//     entryCode    … '' ならパブリック。文字列なら入場に合言葉が要る
+//                    ⚠ この値はクライアントへ送らない（見られたら意味がない）。管理人にだけ返す
+//     capacity     … 1ルームの定員。あとから変更できるが、いま入っている人数より下げられない
+//     vrcBridge    … presence.json（VRChat連携）に出すイベントか。ONにできるのは1つだけ
 const events = new Map();
 
 // rooms: Map<roomKey, Map<clientId, ClientState>>   roomKey = `${eventId}#${roomNumber}`
@@ -187,25 +200,55 @@ function resolveDisplayName(email, googleName) {
 // イベント
 // ------------------------------------------------------------
 
-function makeEvent({ id, name, videoId, requireLogin = false, permanent = false, createdAt = Date.now() }) {
+function makeEvent({
+  id,
+  name,
+  videoId,
+  requireLogin = false,
+  entryCode = '',
+  capacity = DEFAULT_CAPACITY,
+  vrcBridge = false,
+  createdAt = Date.now(),
+}) {
   return {
     id,
     name,
     videoId,
     requireLogin,
-    permanent,
+    entryCode,
+    capacity: clampCapacity(capacity),
+    vrcBridge,
     createdAt,
     playback: { playing: true, pos: 0, at: Date.now() },
   };
 }
 
-/** 常設イベントを必ず1つ用意する（Tursoが無くても・落ちていても存在する） */
-function ensureMainEvent() {
-  if (!events.has(MAIN_EVENT_ID)) {
-    events.set(
-      MAIN_EVENT_ID,
-      makeEvent({ id: MAIN_EVENT_ID, name: MAIN_EVENT_NAME, videoId: DEFAULT_VIDEO_ID, permanent: true }),
-    );
+/** キャパを許容範囲へ収める */
+function clampCapacity(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return DEFAULT_CAPACITY;
+  return Math.min(MAX_CAPACITY, Math.max(MIN_CAPACITY, Math.trunc(n)));
+}
+
+/** そのイベントで一番人が多いルームの人数（キャパを下げられる下限になる） */
+function maxRoomOccupancy(eventId) {
+  let n = 0;
+  for (const [key, members] of rooms) {
+    if (keyEventId(key) === eventId) n = Math.max(n, members.size);
+  }
+  return n;
+}
+
+/** VRChatへ出すイベント（vrcBridge が立っているもの）。無ければ null */
+function bridgedEvent() {
+  for (const ev of events.values()) if (ev.vrcBridge) return ev;
+  return null;
+}
+
+/** vrcBridge は1つだけ。指定のイベント以外を落とす */
+function makeBridgeExclusive(keepId) {
+  for (const ev of events.values()) {
+    if (ev.id !== keepId && ev.vrcBridge) ev.vrcBridge = false;
   }
 }
 
@@ -225,9 +268,17 @@ function toEventInfo(ev) {
     name: ev.name,
     v: ev.videoId,
     requireLogin: ev.requireLogin,
-    permanent: ev.permanent,
+    // 合言葉そのものは出さない。「要るかどうか」だけ伝える
+    hasCode: Boolean(ev.entryCode),
+    cap: ev.capacity,
+    vrc: ev.vrcBridge,
     count: countInEvent(ev.id),
   };
+}
+
+/** 管理人向け。合言葉の中身も返す（人に伝えるために必要） */
+function toEventInfoAdmin(ev) {
+  return { ...toEventInfo(ev), code: ev.entryCode };
 }
 
 function countInEvent(eventId) {
@@ -238,11 +289,20 @@ function countInEvent(eventId) {
   return n;
 }
 
-/** イベント一覧＋各ルームの人数（入場画面とルーム移動で使う） */
-function buildEventList() {
+/**
+ * イベント一覧＋各ルームの人数（入場画面とルーム移動で使う）
+ *
+ * forAdmin=true のときだけ合言葉の中身を含める。
+ * 管理人の設定画面に現在の合言葉を出すために要る（見えないまま保存すると
+ * 空欄で上書きされて合言葉が消えてしまう）。それ以外へは絶対に渡さない。
+ */
+function buildEventList(forAdmin = false) {
   return Array.from(events.values())
-    .sort((a, b) => (a.permanent === b.permanent ? a.createdAt - b.createdAt : a.permanent ? -1 : 1))
-    .map((ev) => ({ ...toEventInfo(ev), rooms: buildRoomList(ev.id) }));
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .map((ev) => ({
+      ...(forAdmin ? toEventInfoAdmin(ev) : toEventInfo(ev)),
+      rooms: buildRoomList(ev.id),
+    }));
 }
 
 /** そのイベントのルーム一覧。空きのある最小番号を必ず1つは含める */
@@ -250,7 +310,7 @@ function buildRoomList(eventId) {
   const list = [];
   for (const [key, members] of rooms) {
     if (keyEventId(key) !== eventId) continue;
-    list.push({ room: keyRoomNumber(key), count: members.size, full: members.size >= MAX_PER_ROOM });
+    list.push({ room: keyRoomNumber(key), count: members.size, full: members.size >= capacityOf(eventId) });
   }
   list.sort((a, b) => a.room - b.room);
   const next = assignRoom(eventId);
@@ -271,11 +331,17 @@ function keyRoomNumber(key) {
   return Number(key.slice(key.lastIndexOf('#') + 1));
 }
 
+/** そのイベントの定員（イベントが消えていれば既定値） */
+function capacityOf(eventId) {
+  const ev = events.get(eventId);
+  return ev ? ev.capacity : DEFAULT_CAPACITY;
+}
+
 /** 指定ルームが定員未満か */
 function roomHasSpace(eventId, roomNumber) {
   const room = rooms.get(roomKey(eventId, roomNumber));
   if (!room) return true;
-  return room.size < MAX_PER_ROOM;
+  return room.size < capacityOf(eventId);
 }
 
 /** そのイベントで「空きのある最小番号ルーム」 */
@@ -285,6 +351,17 @@ function assignRoom(eventId) {
     if (roomHasSpace(eventId, n)) return n;
     n += 1;
   }
+}
+
+/**
+ * 入れるルームがあるか。
+ * ルーム番号は無限に増やせる作りなので実際には必ず空きがあるが、
+ * 「キャパ0のイベント」など将来の設定ミスで無限ループしないよう上限で打ち切る
+ */
+function assignableRoom(eventId) {
+  if (capacityOf(eventId) < 1) return 0;
+  const n = assignRoom(eventId);
+  return n <= 999 ? n : 0;
 }
 
 // ------------------------------------------------------------
@@ -449,13 +526,33 @@ async function handleJoin(client, msg) {
   }
 
   // ---- イベントの決定 ----
-  ensureMainEvent();
-  const wantEvent = typeof msg.ev === 'string' && events.has(msg.ev) ? msg.ev : MAIN_EVENT_ID;
-  const ev = events.get(wantEvent);
+  // 常設イベントは廃止したので、フォールバック先が無い。
+  // 管理人が何も立てていなければ会場は閉まっている（2026-07-30）
+  if (events.size === 0) {
+    send(client.ws, { t: 'denied', reason: 'no-event' });
+    return;
+  }
+  const ev = typeof msg.ev === 'string' ? events.get(msg.ev) : null;
+  if (!ev) {
+    send(client.ws, { t: 'denied', reason: 'no-event' });
+    return;
+  }
 
   // ログイン必須イベントにゲストは入れない
   if (ev.requireLogin && role === 'guest') {
     send(client.ws, { t: 'denied', reason: 'login-required', ev: ev.id });
+    return;
+  }
+
+  // 合言葉。照合はサーバーだけで行う（クライアントには正解を渡していない）
+  if (ev.entryCode && clampString(msg.code, MAX_EVENT_CODE_LEN) !== ev.entryCode) {
+    send(client.ws, { t: 'denied', reason: 'bad-code', ev: ev.id });
+    return;
+  }
+
+  // 満室なら入れない（キャパはイベントごと）
+  if (!assignableRoom(ev.id)) {
+    send(client.ws, { t: 'denied', reason: 'event-full', ev: ev.id });
     return;
   }
 
@@ -499,10 +596,10 @@ async function handleJoin(client, msg) {
     room: roomNumber,
     peers,
     count: room.size,
-    cap: MAX_PER_ROOM, // クライアントは「定員 − 実在人数」ぶんをNPCで埋める
+    cap: ev.capacity, // クライアントは「定員 − 実在人数」ぶんをNPCで埋める
     screen: ev.videoId,
     playback: currentPlayback(ev.id),
-    events: buildEventList(),
+    events: buildEventList(canControlVideo(role)),
     persistent: isPersistent(),
     blocked: blockedListFor(client), // 「ブロック中の人」を画面から解除できるようにする
   });
@@ -608,7 +705,7 @@ async function handleScreen(client, msg) {
   ev.playback = { playing: true, pos: 0, at: Date.now() }; // 動画が変われば先頭から
 
   broadcastToEvent(client.eventId, { t: 'screen', v: msg.v, by: client.n });
-  broadcastToEvent(client.eventId, { t: 'events', events: buildEventList() });
+  broadcastToEvent(client.eventId, { t: 'events', events: buildEventList(false) });
   await updateEventVideo(ev.id, msg.v);
 }
 
@@ -642,23 +739,99 @@ async function handleEventCreate(client, msg) {
     return;
   }
 
-  const name = clampString(msg.name, MAX_EVENT_NAME_LEN).trim();
-  if (!name) return;
-  const videoId = typeof msg.v === 'string' && VIDEO_ID_RE.test(msg.v) ? msg.v : DEFAULT_VIDEO_ID;
-
-  // idは名前から作らず衝突しない連番にする（日本語名でも安全）
-  let id = `ev${Date.now().toString(36)}`;
-  if (!EVENT_ID_RE.test(id)) id = `ev${events.size + 1}`;
-
-  const ev = makeEvent({ id, name, videoId, requireLogin: Boolean(msg.requireLogin) });
-  events.set(id, ev);
-  await saveEvent(ev);
-
-  send(client.ws, { t: 'event-created', ev: toEventInfo(ev) });
+  const ev = await createEventFrom(msg);
+  if (!ev) return;
+  send(client.ws, { t: 'event-created', ev: toEventInfoAdmin(ev) });
   broadcastAllEvents();
 }
 
-/** event-delete: イベント削除（管理者のみ・常設は消せない・人がいる間は消せない） */
+/**
+ * イベントを1つ作る。WS（入場後の🚪パネル）とHTTP（入場画面）の両方から使う。
+ * 入場画面から作れないと、イベント0件のとき「入れないから作れない」で詰むため
+ * 入口を2つ用意している（2026-07-30）。
+ */
+async function createEventFrom(msg) {
+  const name = clampString(msg && msg.name, MAX_EVENT_NAME_LEN).trim();
+  if (!name) return null;
+  const videoId =
+    typeof msg.v === 'string' && VIDEO_ID_RE.test(msg.v) ? msg.v : DEFAULT_VIDEO_ID;
+
+  // idは名前から作らず衝突しない連番にする（日本語名でも安全）
+  let id = `ev${Date.now().toString(36)}`;
+  if (!EVENT_ID_RE.test(id) || events.has(id)) id = `ev${Date.now().toString(36)}${events.size}`;
+
+  const ev = makeEvent({
+    id,
+    name,
+    videoId,
+    requireLogin: Boolean(msg.requireLogin),
+    entryCode: clampString(msg.code, MAX_EVENT_CODE_LEN).trim(),
+    capacity: msg.cap,
+    vrcBridge: Boolean(msg.vrc),
+  });
+  if (ev.vrcBridge) makeBridgeExclusive(ev.id);
+  events.set(id, ev);
+  await saveEvent(ev);
+  return ev;
+}
+
+/**
+ * event-update: 立てたあとに設定を変える（管理者のみ）
+ *
+ * 変えると壊れるものだけ拒否する方針（loyさん指示 2026-07-30）。
+ * いま拒否しているのは「キャパを現在の在室人数より下げること」だけ。
+ * 名前・合言葉・ログイン必須・VRChat連携は、いつ変えても実害がないので通す
+ * （合言葉を後から付けても、既に入っている人は追い出さない＝次の入場から効く）。
+ */
+async function handleEventUpdate(client, msg) {
+  if (!client.joined) return;
+  if (!canControlVideo(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'admin-only' });
+    return;
+  }
+  const ev = events.get(msg && msg.id);
+  if (!ev) {
+    send(client.ws, { t: 'denied', reason: 'no-event' });
+    return;
+  }
+
+  if (typeof msg.name === 'string') {
+    const name = clampString(msg.name, MAX_EVENT_NAME_LEN).trim();
+    if (name) ev.name = name;
+  }
+  if (typeof msg.code === 'string') {
+    ev.entryCode = clampString(msg.code, MAX_EVENT_CODE_LEN).trim();
+  }
+  if (typeof msg.requireLogin === 'boolean') {
+    ev.requireLogin = msg.requireLogin;
+  }
+  if (typeof msg.vrc === 'boolean') {
+    ev.vrcBridge = msg.vrc;
+    if (ev.vrcBridge) makeBridgeExclusive(ev.id);
+  }
+  if (msg.cap !== undefined) {
+    const want = clampCapacity(msg.cap);
+    const floor = maxRoomOccupancy(ev.id);
+    if (want < floor) {
+      // 減らしすぎ。いま入っている人を弾き出すことになるので拒否する
+      send(client.ws, { t: 'denied', reason: 'capacity-too-small', ev: ev.id, min: floor });
+      return;
+    }
+    ev.capacity = want;
+  }
+
+  await saveEvent(ev);
+  send(client.ws, { t: 'event-updated', ev: toEventInfoAdmin(ev) });
+  broadcastAllEvents();
+}
+
+/**
+ * event-delete: イベントを閉じる（管理者のみ）
+ *
+ * 2026-07-30 変更: 以前は「人がいる間は消せない」だったが、
+ * 「閉じたら何もなくなる」方針に合わせ、中の人を退場させてから消す。
+ * ライブの終演と同じ扱い。誤操作が怖いので、確認はクライアント側で取る。
+ */
 async function handleEventDelete(client, msg) {
   if (!client.joined) return;
   if (!canControlVideo(client.role)) {
@@ -666,13 +839,23 @@ async function handleEventDelete(client, msg) {
     return;
   }
   const ev = events.get(msg.id);
-  if (!ev || ev.permanent) {
+  if (!ev) {
     send(client.ws, { t: 'denied', reason: 'cannot-delete' });
     return;
   }
-  if (countInEvent(ev.id) > 0) {
-    send(client.ws, { t: 'denied', reason: 'event-not-empty' });
-    return;
+
+  // 中にいる人へ「閉まった」ことを伝えて切る（自分も含む）
+  for (const [key, members] of Array.from(rooms)) {
+    if (keyEventId(key) !== ev.id) continue;
+    for (const c of Array.from(members.values())) {
+      send(c.ws, { t: 'closed', ev: ev.id, name: ev.name });
+      try {
+        c.ws.close();
+      } catch (e) {
+        // 既に切れていても構わない
+      }
+    }
+    rooms.delete(key);
   }
 
   events.delete(ev.id);
@@ -684,7 +867,6 @@ async function handleEventDelete(client, msg) {
 function handleMove(client, msg) {
   if (!client.joined) return;
 
-  ensureMainEvent();
   const targetEventId = typeof msg.ev === 'string' && events.has(msg.ev) ? msg.ev : client.eventId;
   const ev = events.get(targetEventId);
   if (!ev) return;
@@ -721,7 +903,7 @@ function handleMove(client, msg) {
     room: targetRoom,
     peers,
     count: room.size,
-    cap: MAX_PER_ROOM,
+    cap: ev.capacity,
     screen: ev.videoId,
     playback: currentPlayback(ev.id),
   });
@@ -733,7 +915,7 @@ function handleMove(client, msg) {
 
 /** events: 一覧の要求 */
 function handleEventsRequest(client) {
-  send(client.ws, { t: 'events', events: buildEventList() });
+  send(client.ws, { t: 'events', events: buildEventList(canControlVideo(client.role)) });
 }
 
 // ------------------------------------------------------------
@@ -921,6 +1103,7 @@ const HANDLERS = {
   screen: handleScreen,
   playback: handlePlayback,
   'event-create': handleEventCreate,
+  'event-update': handleEventUpdate,
   'event-delete': handleEventDelete,
   move: handleMove,
   events: handleEventsRequest,
@@ -934,9 +1117,12 @@ const HANDLERS = {
 
 /** 全員にイベント一覧を配る（人数が変わったとき・イベントが増減したとき） */
 function broadcastAllEvents() {
-  const payload = { t: 'events', events: buildEventList() };
+  const forAll = { t: 'events', events: buildEventList(false) };
+  const forAdmin = { t: 'events', events: buildEventList(true) };
   for (const members of rooms.values()) {
-    for (const client of members.values()) send(client.ws, payload);
+    for (const client of members.values()) {
+      send(client.ws, canControlVideo(client.role) ? forAdmin : forAll);
+    }
   }
 }
 
@@ -986,7 +1172,7 @@ function buildStatusJson() {
   return {
     ok: true,
     rooms: roomList,
-    events: buildEventList(),
+    events: buildEventList(false),
     persistent: isPersistent(),
     login: isLoginEnabled(),
     // 設定ミスを画面から特定できるようにする（トークンは含めない）
@@ -1050,9 +1236,14 @@ function buildPresenceJson() {
   const nowMs = Date.now();
   const web = [];
 
-  const keys = Array.from(rooms.keys())
-    .filter((k) => keyEventId(k) === MAIN_EVENT_ID)
-    .sort((a, b) => keyRoomNumber(a) - keyRoomNumber(b));
+  // VRChatの会場は clubVERSE 1つなので、送るイベントも1つに絞る。
+  // どれを送るかは管理人が「VRChatに出す」設定で選ぶ（2026-07-30。以前は常設main固定だった）
+  const bridged = bridgedEvent();
+  const keys = bridged
+    ? Array.from(rooms.keys())
+        .filter((k) => keyEventId(k) === bridged.id)
+        .sort((a, b) => keyRoomNumber(a) - keyRoomNumber(b))
+    : [];
 
   outer: for (const key of keys) {
     const room = rooms.get(key);
@@ -1165,6 +1356,59 @@ async function handleProfileRequest(req, res) {
   });
 }
 
+/**
+ * 入場画面から管理人がイベントを立てるためのHTTP口。
+ *
+ * 入場後の🚪パネルからも作れる（WSの event-create）が、常設イベントを廃止したことで
+ * 「イベントが0件だと入場できない → 入場できないと作れない」という詰みが起きる。
+ * それを避けるため、WSに繋ぐ前でも作れる入口をここに用意している（2026-07-30）。
+ */
+async function handleAdminEventCreate(req, res) {
+  const reply = (code, obj) => {
+    res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(obj));
+  };
+
+  const body = await readJsonBody(req);
+
+  // 権限の判定。WS側の join と同じ考え方に揃えている:
+  //   ログイン設定済み → Googleのトークンで判定
+  //   ログイン未設定（ローカル開発）→ defaultRole。加えて devRole の指定を許す
+  // devRole は Render 上では絶対に効かない（RENDER環境変数で封じている）。
+  // これが無いと、ログイン未設定の環境でイベントを1つも作れず何もできなくなる
+  let role = defaultRole();
+  if (body && body.idt) {
+    const info = await verifyIdToken(body.idt);
+    if (!info) {
+      reply(401, { ok: false, error: 'not-signed-in' });
+      return;
+    }
+    role = roleForEmail(info.email);
+  } else if (isLoginEnabled()) {
+    reply(401, { ok: false, error: 'not-signed-in' });
+    return;
+  }
+  if (ALLOW_DEV_ROLE && body && typeof body.devRole === 'string' && DEV_ROLES.has(body.devRole)) {
+    role = body.devRole;
+  }
+  if (!canControlVideo(role)) {
+    reply(403, { ok: false, error: 'admin-only' });
+    return;
+  }
+  if (events.size >= MAX_EVENTS) {
+    reply(400, { ok: false, error: 'too-many-events' });
+    return;
+  }
+
+  const ev = await createEventFrom(body);
+  if (!ev) {
+    reply(400, { ok: false, error: 'bad-name' });
+    return;
+  }
+  broadcastAllEvents();
+  reply(200, { ok: true, ev: toEventInfoAdmin(ev) });
+}
+
 const httpServer = http.createServer(async (req, res) => {
   const url = (req.url || '/').split('?')[0];
 
@@ -1187,6 +1431,12 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // 入場画面から管理人がイベントを立てる（イベント0件のときの唯一の入口）
+  if (req.method === 'POST' && url === '/api/admin/event') {
+    await handleAdminEventCreate(req, res);
+    return;
+  }
+
   // 入場画面がログインボタンの出し分けとイベント一覧に使う
   if (req.method === 'GET' && url === '/api/config') {
     const body = JSON.stringify({
@@ -1194,7 +1444,7 @@ const httpServer = http.createServer(async (req, res) => {
       login: isLoginEnabled(),
       clientId: getClientId(),
       persistent: isPersistent(),
-      events: buildEventList(),
+      events: buildEventList(false),
     });
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(body);
@@ -1336,13 +1586,14 @@ wss.on('connection', (ws) => {
 
 async function boot() {
   await initStore();
-  ensureMainEvent();
 
-  // 保存済みイベントを復元（常設は上書きしない）
+  // 保存済みイベントを復元。何も無ければ会場は閉まったまま（管理人が立てるまで誰も入れない）
   for (const row of await loadEvents()) {
-    if (row.id === MAIN_EVENT_ID) continue;
     events.set(row.id, makeEvent(row));
   }
+  // 保存内容が壊れていて2つ以上ONでも、VRChatへ出すのは1つに保つ
+  const firstBridged = bridgedEvent();
+  if (firstBridged) makeBridgeExclusive(firstBridged.id);
 
   // BANはメモリに載せておく。入場のたびにDBを叩かずに済ませるため
   for (const b of await loadBans()) bans.set(b.email, b);

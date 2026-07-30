@@ -7,7 +7,8 @@
 // 「ルーム」はVRChatでいうインスタンス。VRChatを知らない人にも通じる語を選んでいる。
 // ============================================================
 
-import { fetchConfig, isSignedIn } from './login.js';
+import { fetchConfig, isSignedIn, getIdToken } from './login.js';
+import { fetchServerPrefs } from './prefs.js';
 
 const STYLE_ID = 'vc-place-style';
 
@@ -64,6 +65,40 @@ function injectStyle() {
 .vc-place-ev-count { font-size: 12px; color: rgba(220,235,255,0.65); }
 .vc-place-ev-note { font-size: 11px; color: rgba(255,180,120,0.9); margin-top: 4px; }
 
+/* 会場が閉まっているとき */
+.vc-place-closed {
+  text-align: center;
+  padding: 28px 12px;
+  border: 1px dashed rgba(255,255,255,0.2);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+.vc-place-closed-title { font-size: 17px; font-weight: bold; margin-bottom: 8px; }
+.vc-place-closed-note { font-size: 12px; color: rgba(220,235,255,0.6); line-height: 1.7; }
+
+/* 合言葉の入力 */
+.vc-place-code { margin-top: 12px; }
+.vc-place-label { display: block; font-size: 12px; color: rgba(220,235,255,0.75); margin-bottom: 5px; }
+.vc-place-input {
+  width: 100%; box-sizing: border-box;
+  padding: 9px 12px; border-radius: 9px; font-size: 14px;
+  border: 1px solid rgba(0,255,234,0.35); background: rgba(6,8,20,0.6); color: #eaf6ff;
+  outline: none; font-family: inherit;
+}
+.vc-place-input:focus { border-color: rgba(0,255,234,0.9); box-shadow: 0 0 10px rgba(0,255,234,0.3); }
+
+/* 管理人向けの作成フォーム */
+.vc-place-admin {
+  margin-top: 16px; padding: 16px;
+  border: 1px solid rgba(255,209,71,0.4); border-radius: 12px;
+  background: rgba(38,26,4,0.28);
+}
+.vc-place-admin-title { font-size: 13px; font-weight: bold; color: #ffd147; margin-bottom: 12px; }
+.vc-place-row2 { display: flex; gap: 10px; flex-wrap: wrap; }
+.vc-place-row2 > * { flex: 1 1 140px; }
+.vc-place-check { display: flex; align-items: center; gap: 7px; font-size: 12px; margin-top: 10px; cursor: pointer; }
+.vc-place-err { font-size: 12px; color: #ff8b8b; min-height: 16px; margin-top: 8px; }
+
 .vc-place-rooms { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .vc-place-chip {
   padding: 7px 14px; border-radius: 16px; font-size: 13px; cursor: pointer;
@@ -111,12 +146,35 @@ export async function openPlacePicker({ onDecide, onBack }) {
   root.innerHTML = '<div class="vc-place-panel"><p class="vc-place-sub">読み込み中…</p></div>';
 
   const cfg = await fetchConfig();
-  const events = Array.isArray(cfg.events) && cfg.events.length ? cfg.events : [];
+  let events = Array.isArray(cfg.events) && cfg.events.length ? cfg.events : [];
+
+  // 管理人かどうか。イベントを作るUIを出すかの判断だけに使う（可否の判定はサーバー側）
+  let isAdmin = false;
+  if (isSignedIn()) {
+    const prof = await fetchServerPrefs(getIdToken());
+    isAdmin = Boolean(prof && prof.role === 'admin');
+  } else if (cfg.login === false) {
+    // ログイン機能そのものが無効な環境（ローカル開発）では管理機能を誰でも触れる
+    isAdmin = true;
+  }
+
+  /** イベント一覧を取り直す（作成・閉店のあと） */
+  async function reloadEvents() {
+    const fresh = await fetchConfig(true); // キャッシュではなく取り直す
+    events = Array.isArray(fresh.events) ? fresh.events : [];
+    if (!events.some((e) => e.id === selectedEventId)) {
+      selectedEventId = events.length ? events[0].id : '';
+      selectedRoom = null;
+    }
+    render();
+  }
 
   let selectedEventId = events.length ? events[0].id : '';
   // 入るルームは必ず明示的に選ばせる（「おまかせ」は 2026-07-30 に廃止）。
   // 既定は「空きのある一番小さい番号」で、画面を開いた時点で選択済みの状態にする
   let selectedRoom = null;
+  // 合言葉つきイベント用。イベントごとに覚えておく（選び直しても消えないように）
+  const codeByEvent = new Map();
 
   /** そのイベントで空きのある最小番号ルーム（無ければ1） */
   function firstOpenRoom(ev) {
@@ -141,6 +199,27 @@ export async function openPlacePicker({ onDecide, onBack }) {
     sub.textContent = 'イベントとルームを選んでください';
     panel.appendChild(sub);
 
+    // 会場が閉まっている（管理人が何も立てていない）
+    if (events.length === 0) {
+      sub.textContent = '';
+      const closed = document.createElement('div');
+      closed.className = 'vc-place-closed';
+      const ct = document.createElement('div');
+      ct.className = 'vc-place-closed-title';
+      ct.textContent = '🌙 いまは開いていません';
+      const cn = document.createElement('div');
+      cn.className = 'vc-place-closed-note';
+      cn.textContent = isAdmin
+        ? 'イベントを立てると会場が開きます。'
+        : 'イベントが開かれるまでお待ちください。';
+      closed.append(ct, cn);
+      panel.appendChild(closed);
+
+      if (isAdmin) panel.appendChild(buildAdminForm());
+      panel.appendChild(buildButtons(false));
+      return;
+    }
+
     const hint = document.createElement('div');
     hint.className = 'vc-place-hint';
     hint.textContent =
@@ -157,7 +236,7 @@ export async function openPlacePicker({ onDecide, onBack }) {
       head.className = 'vc-place-ev-head';
       const nm = document.createElement('div');
       nm.className = 'vc-place-ev-name';
-      nm.textContent = ev.name + (ev.requireLogin ? ' 🔒' : '');
+      nm.textContent = ev.name + (ev.requireLogin ? ' 🔒' : '') + (ev.hasCode ? ' 🔑' : '');
       const ct = document.createElement('div');
       ct.className = 'vc-place-ev-count';
       ct.textContent = `${ev.count}人`;
@@ -185,6 +264,23 @@ export async function openPlacePicker({ onDecide, onBack }) {
         const rooms = document.createElement('div');
         rooms.className = 'vc-place-rooms';
 
+        // 合言葉が要るイベントは、ここで入力してもらう（照合はサーバー）
+        if (ev.hasCode) {
+          const wrap = document.createElement('div');
+          wrap.className = 'vc-place-code';
+          const lb = document.createElement('label');
+          lb.className = 'vc-place-label';
+          lb.textContent = '合言葉（主催者から聞いてください）';
+          const inp = document.createElement('input');
+          inp.className = 'vc-place-input';
+          inp.type = 'text';
+          inp.value = codeByEvent.get(ev.id) || '';
+          inp.placeholder = '合言葉を入力';
+          inp.addEventListener('input', () => codeByEvent.set(ev.id, inp.value));
+          wrap.append(lb, inp);
+          box.appendChild(wrap);
+        }
+
         const list = ev.rooms && ev.rooms.length ? ev.rooms : [{ room: 1, count: 0, full: false }];
         for (const r of list) {
           const chip = document.createElement('button');
@@ -206,6 +302,12 @@ export async function openPlacePicker({ onDecide, onBack }) {
       panel.appendChild(box);
     }
 
+    if (isAdmin) panel.appendChild(buildAdminForm());
+    panel.appendChild(buildButtons(true));
+  }
+
+  /** 下段のボタン。canEnter=false のときは「入場する」を出さない（会場が閉まっているとき） */
+  function buildButtons(canEnter) {
     const btns = document.createElement('div');
     btns.className = 'vc-place-btns';
 
@@ -221,20 +323,134 @@ export async function openPlacePicker({ onDecide, onBack }) {
       btns.appendChild(back);
     }
 
+    if (canEnter) {
+      const go = document.createElement('button');
+      go.type = 'button';
+      go.className = 'vc-place-go';
+      go.textContent = '入場する';
+      go.addEventListener('click', () => {
+        root.classList.add('hidden');
+        root.innerHTML = '';
+        // 満室のルームはボタン自体が押せないので、ここに来る値は必ず入れる番号
+        onDecide({
+          eventId: selectedEventId,
+          roomNumber: selectedRoom,
+          entryCode: codeByEvent.get(selectedEventId) || '',
+        });
+      });
+      btns.appendChild(go);
+    }
+    return btns;
+  }
+
+  /**
+   * 管理人向け「イベントを立てる」フォーム。
+   * 常設イベントを廃止したので、ここが無いと会場を開く手段が無くなる（2026-07-30）。
+   */
+  function buildAdminForm() {
+    const box = document.createElement('div');
+    box.className = 'vc-place-admin';
+    const title = document.createElement('div');
+    title.className = 'vc-place-admin-title';
+    title.textContent = '👑 イベントを立てる（管理者）';
+    box.appendChild(title);
+
+    const mk = (labelText, el) => {
+      const w = document.createElement('div');
+      const lb = document.createElement('label');
+      lb.className = 'vc-place-label';
+      lb.textContent = labelText;
+      w.append(lb, el);
+      return w;
+    };
+    const input = (ph, value = '') => {
+      const i = document.createElement('input');
+      i.className = 'vc-place-input';
+      i.type = 'text';
+      i.placeholder = ph;
+      i.value = value;
+      return i;
+    };
+
+    const nameI = input('例: 金曜ライブ');
+    const codeI = input('空ならパブリック（誰でも入れる）');
+    const capI = input('30');
+    capI.type = 'number';
+    capI.min = '1';
+    capI.max = '60';
+    capI.value = '30';
+
+    box.appendChild(mk('イベント名', nameI));
+    const row = document.createElement('div');
+    row.className = 'vc-place-row2';
+    row.append(mk('合言葉', codeI), mk('1ルームの定員（1〜60）', capI));
+    box.appendChild(row);
+
+    const loginChk = document.createElement('input');
+    loginChk.type = 'checkbox';
+    const loginLb = document.createElement('label');
+    loginLb.className = 'vc-place-check';
+    loginLb.append(loginChk, document.createTextNode('ログイン必須にする（ゲストを入れない）'));
+    box.appendChild(loginLb);
+
+    const vrcChk = document.createElement('input');
+    vrcChk.type = 'checkbox';
+    const vrcLb = document.createElement('label');
+    vrcLb.className = 'vc-place-check';
+    vrcLb.append(vrcChk, document.createTextNode('VRChatの客席に出す（同時にONにできるのは1つ）'));
+    box.appendChild(vrcLb);
+
+    const err = document.createElement('div');
+    err.className = 'vc-place-err';
+    box.appendChild(err);
+
     const go = document.createElement('button');
     go.type = 'button';
     go.className = 'vc-place-go';
-    go.textContent = '入場する';
-    go.addEventListener('click', () => {
-      root.classList.add('hidden');
-      root.innerHTML = '';
-      // 満室のルームはボタン自体が押せないので、ここに来る値は必ず入れる番号。
-      // 万一 null のままなら（イベントが空など）サーバー側の自動割り当てに任せる
-      onDecide({ eventId: selectedEventId, roomNumber: selectedRoom });
+    go.textContent = 'イベントを立てる';
+    go.addEventListener('click', async () => {
+      const name = nameI.value.trim();
+      if (!name) {
+        err.textContent = 'イベント名を入れてください';
+        return;
+      }
+      go.disabled = true;
+      err.textContent = '';
+      try {
+        const res = await fetch('api/admin/event', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            code: codeI.value.trim(),
+            cap: Number(capI.value) || 30,
+            requireLogin: loginChk.checked,
+            vrc: vrcChk.checked,
+            idt: getIdToken() || undefined,
+            devRole: new URLSearchParams(location.search).get('devRole') || undefined,
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          err.textContent =
+            data.error === 'admin-only'
+              ? 'イベントを立てられるのは管理者だけです'
+              : data.error === 'too-many-events'
+                ? 'イベントの数が上限に達しています'
+                : 'イベントを立てられませんでした';
+          go.disabled = false;
+          return;
+        }
+        selectedEventId = data.ev.id;
+        selectedRoom = null;
+        await reloadEvents();
+      } catch (e) {
+        err.textContent = '通信に失敗しました';
+        go.disabled = false;
+      }
     });
-    btns.appendChild(go);
-
-    panel.appendChild(btns);
+    box.appendChild(go);
+    return box;
   }
 
   render();

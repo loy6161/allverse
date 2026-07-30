@@ -19,8 +19,10 @@ let profile = null; // { email, name, picture }
 let gisReady = null;
 
 /** サーバーの設定（ログインが使えるか・イベント一覧）を取得する */
-export async function fetchConfig() {
-  if (config) return config;
+export async function fetchConfig(force = false) {
+  // 通常はキャッシュを返す（ログイン設定は変わらないので）。
+  // イベント一覧も入っているため、イベントを立てた直後などは force=true で取り直す
+  if (config && !force) return config;
   try {
     const res = await fetch('api/config');
     config = await res.json();

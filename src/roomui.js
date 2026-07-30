@@ -102,6 +102,7 @@ function injectStyle() {
  * @param {() => {eventId:string, room:number|null}} p.getCurrent 今いる場所
  * @param {(eventId:string, room:number|null) => void} p.onMove
  * @param {(payload:{name:string,videoId:string,requireLogin:boolean}) => void} p.onCreateEvent
+ * @param {(payload:object) => void} p.onUpdateEvent 立てたあとの設定変更
  * @param {(id:string) => void} p.onDeleteEvent
  * @param {() => void} p.onRefresh
  * @param {() => number} [p.getNpcCount] NPCの現在数
@@ -114,6 +115,7 @@ export function initRoomUI({
   getCurrent,
   onMove,
   onCreateEvent,
+  onUpdateEvent,
   onDeleteEvent,
   onRefresh,
   getNpcCount,
@@ -154,6 +156,82 @@ export function initRoomUI({
     if (e.key === 'Escape' && open) closePanel();
   });
 
+  // 設定を開いているイベントのid（管理者のみ）
+  let openSettings = '';
+
+  /**
+   * 立てたあとの設定変更。
+   * 変えて壊れるものだけサーバーが拒否する（いまは「定員を在室人数より下げる」だけ）。
+   * 合言葉を後から付けても、既に入っている人は追い出さない＝次の入場から効く。
+   */
+  function buildSettings(ev) {
+    const box = document.createElement('div');
+    box.className = 'vc-room-admin';
+
+    const t = document.createElement('div');
+    t.className = 'vc-room-title';
+    t.textContent = `⚙ ${ev.name} の設定`;
+    box.appendChild(t);
+
+    const nameI = document.createElement('input');
+    nameI.type = 'text';
+    nameI.maxLength = 24;
+    nameI.value = ev.name;
+    nameI.placeholder = 'イベント名';
+    box.appendChild(nameI);
+
+    const codeI = document.createElement('input');
+    codeI.type = 'text';
+    codeI.maxLength = 24;
+    // 合言葉の中身はサーバーが管理者にだけ返す。届いていなければ空欄から入れ直す
+    codeI.value = ev.code || '';
+    codeI.placeholder = ev.hasCode ? '合言葉（空にするとパブリック）' : '合言葉（空ならパブリック）';
+    box.appendChild(codeI);
+
+    const capI = document.createElement('input');
+    capI.type = 'number';
+    capI.min = '1';
+    capI.max = '60';
+    capI.value = String(ev.cap ?? 30);
+    box.appendChild(capI);
+
+    const capNote = document.createElement('div');
+    capNote.className = 'vc-room-hint';
+    capNote.textContent = `定員（1〜60）。いま ${ev.count}人 入っているので、それより少なくはできません。`;
+    box.appendChild(capNote);
+
+    const loginLb = document.createElement('label');
+    const loginC = document.createElement('input');
+    loginC.type = 'checkbox';
+    loginC.checked = Boolean(ev.requireLogin);
+    loginLb.append(loginC, document.createTextNode('ログインした人だけ入れるようにする'));
+    box.appendChild(loginLb);
+
+    const vrcLb = document.createElement('label');
+    const vrcC = document.createElement('input');
+    vrcC.type = 'checkbox';
+    vrcC.checked = Boolean(ev.vrc);
+    vrcLb.append(vrcC, document.createTextNode('VRChatの客席に出す（ONにできるのは1つ）'));
+    box.appendChild(vrcLb);
+
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.textContent = '保存';
+    save.addEventListener('click', () => {
+      onUpdateEvent({
+        id: ev.id,
+        name: nameI.value.trim() || ev.name,
+        code: codeI.value.trim(),
+        cap: Number(capI.value) || ev.cap,
+        requireLogin: loginC.checked,
+        vrc: vrcC.checked,
+      });
+      openSettings = '';
+    });
+    box.appendChild(save);
+    return box;
+  }
+
   function render() {
     const role = getRole();
     const cur = getCurrent();
@@ -184,17 +262,39 @@ export function initRoomUI({
       head.className = 'vc-room-event-head';
       const name = document.createElement('div');
       name.className = 'vc-room-event-name' + (ev.id === cur.eventId ? ' current' : '');
-      name.textContent = `${ev.name}（${ev.count}人）` + (ev.requireLogin ? ' 🔒' : '');
+      name.textContent =
+        `${ev.name}（${ev.count}/${ev.cap ?? '?'}人）` +
+        (ev.requireLogin ? ' 🔒' : '') +
+        (ev.hasCode ? ' 🔑' : '') +
+        (ev.vrc ? ' 🥽' : '');
       head.appendChild(name);
 
-      if (role === 'admin' && !ev.permanent) {
+      if (role === 'admin') {
+        const gear = document.createElement('button');
+        gear.className = 'vc-room-del';
+        gear.textContent = '設定';
+        gear.addEventListener('click', () => {
+          openSettings = openSettings === ev.id ? '' : ev.id;
+          render();
+        });
+        head.appendChild(gear);
+
         const del = document.createElement('button');
         del.className = 'vc-room-del';
-        del.textContent = '削除';
-        del.addEventListener('click', () => onDeleteEvent(ev.id));
+        del.textContent = '閉じる';
+        del.addEventListener('click', () => {
+          const n = ev.count || 0;
+          const msg =
+            n > 0
+              ? `「${ev.name}」を閉じます。いま入っている${n}人も退場になります。よろしいですか？`
+              : `「${ev.name}」を閉じます。よろしいですか？`;
+          if (window.confirm(msg)) onDeleteEvent(ev.id);
+        });
         head.appendChild(del);
       }
       box.appendChild(head);
+
+      if (role === 'admin' && openSettings === ev.id) box.appendChild(buildSettings(ev));
 
       const list = document.createElement('div');
       list.className = 'vc-room-list';
@@ -235,12 +335,33 @@ export function initRoomUI({
       videoInput.placeholder = 'YouTubeのURL または 動画ID（後からでも設定できます）';
       admin.appendChild(videoInput);
 
+      const codeInput = document.createElement('input');
+      codeInput.type = 'text';
+      codeInput.placeholder = '合言葉（空ならパブリック＝誰でも入れる）';
+      codeInput.maxLength = 24;
+      admin.appendChild(codeInput);
+
+      const capInput = document.createElement('input');
+      capInput.type = 'number';
+      capInput.min = '1';
+      capInput.max = '60';
+      capInput.value = '30';
+      capInput.placeholder = '1ルームの定員';
+      admin.appendChild(capInput);
+
       const loginLabel = document.createElement('label');
       const loginCheck = document.createElement('input');
       loginCheck.type = 'checkbox';
       loginLabel.appendChild(loginCheck);
       loginLabel.appendChild(document.createTextNode('ログインした人だけ入れるようにする'));
       admin.appendChild(loginLabel);
+
+      const vrcLabel = document.createElement('label');
+      const vrcCheck = document.createElement('input');
+      vrcCheck.type = 'checkbox';
+      vrcLabel.appendChild(vrcCheck);
+      vrcLabel.appendChild(document.createTextNode('VRChatの客席に出す（ONにできるのは1つ）'));
+      admin.appendChild(vrcLabel);
 
       const createBtn = document.createElement('button');
       createBtn.type = 'button';
@@ -252,10 +373,16 @@ export function initRoomUI({
           name: nm,
           videoId: extractVideoId(videoInput.value.trim()),
           requireLogin: loginCheck.checked,
+          code: codeInput.value.trim(),
+          cap: Number(capInput.value) || 30,
+          vrc: vrcCheck.checked,
         });
         nameInput.value = '';
         videoInput.value = '';
+        codeInput.value = '';
+        capInput.value = '30';
         loginCheck.checked = false;
+        vrcCheck.checked = false;
       });
       admin.appendChild(createBtn);
       panel.appendChild(admin);

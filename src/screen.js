@@ -121,9 +121,13 @@ export function initLiveScreen(camera, scene, place = {}) {
     // enablejsapi=1 と origin 指定で、postMessage による再生・音量操作が有効になる。
     // ミュート中は mute=1 で読み込む（postMessageが届く前に音が出るのを防ぐ）
     const origin = encodeURIComponent(location.origin);
+    // cc_load_policy=0 … 字幕を既定でONにしない（2026-07-30 指摘。ライブ会場では邪魔になる）。
+    //   視聴者が自分でONにするのは従来どおり可能
+    // cc_lang_pref … 字幕を出すときの言語。0指定と併記しておくと自動翻訳が勝手に乗りにくい
     iframe.src =
       `https://www.youtube.com/embed/${videoId}` +
-      `?autoplay=1&mute=${prefs.muted ? 1 : 0}&playsinline=1&rel=0&enablejsapi=1&origin=${origin}`;
+      `?autoplay=1&mute=${prefs.muted ? 1 : 0}&playsinline=1&rel=0&enablejsapi=1` +
+      `&cc_load_policy=0&cc_lang_pref=ja&origin=${origin}`;
     iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
     holder.appendChild(iframe);
     // 読み込み後に listening を送ると再生位置などが届くようになる。
