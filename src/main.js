@@ -11,6 +11,7 @@ import { initChat } from './chat.js';
 import { initSimPlayers } from './players.js';
 import { initControls } from './controls.js';
 import { initLiveScreen } from './screen.js';
+import { initSoundGate } from './soundgate.js';
 import { initNet } from './net.js';
 import { initRemotePlayers } from './remote.js';
 import { initEmoteBar } from './emotebar.js';
@@ -63,7 +64,8 @@ if (WORLD_KIND === 'club') {
   renderer.toneMappingExposure = 1.0;
 }
 
-const liveScreen = initLiveScreen(camera, scene, world.screen || {});
+// タッチ端末は音ありの自動再生が禁止されているので、消音で始めて本人のタップで音を出す
+const liveScreen = initLiveScreen(camera, scene, world.screen || {}, { startMuted: IS_TOUCH });
 
 let player = null;
 let controls = null;
@@ -478,6 +480,14 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   if (WANT_NPC) {
     npcAuto = false;
     sim.setCount(7);
+  }
+
+  // スマホは消音で始まるので、音を出すための案内を出す
+  if (IS_TOUCH) {
+    initSoundGate({
+      player: liveScreen.player,
+      onTap: () => chat.addMessage('', '音を出しました', { system: true }),
+    });
   }
 
   updateCount(null);

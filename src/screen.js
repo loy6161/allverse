@@ -21,7 +21,17 @@ const VIDEO_ID = 'unrobrGhlv0'; // clubVERSE関連動画（loyさん指定）
  * @param {Object} [place] スクリーンの場所と大きさ。ワールドによって違うので外から渡す。
  *   既定は仮ワールドのLED位置（幅14×高さ7・world(0, 5.4, -18.95)）。
  */
-export function initLiveScreen(camera, scene, place = {}) {
+/**
+ * @param {THREE.Camera} camera
+ * @param {THREE.Scene} scene
+ * @param {object} place スクリーンの位置と大きさ（world.screen）
+ * @param {{startMuted?: boolean}} opts
+ *   startMuted … 消音で始める。スマホ・タブレットは「音ありの自動再生」が
+ *   ブラウザに禁止されており、音ありで始めようとすると再生自体が始まらない
+ *   （2026-07-31 loyさん報告「スマホだと再生はじまらない」）。
+ *   消音での自動再生は許されているので、まず消音で流して、音は本人のタップで出す。
+ */
+export function initLiveScreen(camera, scene, place = {}, opts = {}) {
   const SC = {
     x: place.x != null ? place.x : 0,
     y: place.y != null ? place.y : 5.4,
@@ -102,7 +112,7 @@ export function initLiveScreen(camera, scene, place = {}) {
   // 動画を差し替えるとプレイヤーが作り直されるため、
   // ユーザーの設定（ミュート・音量・再生状態）を覚えておいて毎回復元する。
   // ※これは各自の手元の設定であり、他の人には同期しない
-  const prefs = { muted: false, volume: 70, playing: true };
+  const prefs = { muted: Boolean(opts.startMuted), volume: 70, playing: true };
 
   function applyPrefs() {
     command('setVolume', [prefs.volume]);
@@ -124,9 +134,15 @@ export function initLiveScreen(camera, scene, place = {}) {
     // cc_load_policy=0 … 字幕を既定でONにしない（2026-07-30 指摘。ライブ会場では邪魔になる）。
     //   視聴者が自分でONにするのは従来どおり可能
     // cc_lang_pref … 字幕を出すときの言語。0指定と併記しておくと自動翻訳が勝手に乗りにくい
+    // タッチ端末では**常に消音で読み込む**。
+    // 音ありで始めようとするとブラウザが自動再生ごと止めてしまい、再生が始まらない。
+    // 本人が既に音を出していた場合は、読み込み後に applyPrefs が unMute を投げて戻す
+    // （その時点では画面を触ったあとなので、音を出すのは許可される）。
+    // これが無いと、音を出したあとに 🔄 を押すたび止まってしまう
+    const startMutedParam = prefs.muted || opts.startMuted ? 1 : 0;
     iframe.src =
       `https://www.youtube.com/embed/${videoId}` +
-      `?autoplay=1&mute=${prefs.muted ? 1 : 0}&playsinline=1&rel=0&enablejsapi=1` +
+      `?autoplay=1&mute=${startMutedParam}&playsinline=1&rel=0&enablejsapi=1` +
       `&cc_load_policy=0&cc_lang_pref=ja&origin=${origin}`;
     iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
     holder.appendChild(iframe);
