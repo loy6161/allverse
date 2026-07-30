@@ -122,8 +122,9 @@ function injectStyle() {
       /* 右上の隅。アバター変更ボタンはこの真下に並ぶ（style.css 側で位置指定） */
       .vc-ui-toggle { top: 12px; right: 12px; width: 34px; height: 34px; }
       .vc-name-toggle { top: 12px; right: 54px; width: 34px; height: 34px; }
-      /* シアター中の案内。画面下端は操作キーとチャットが使うので、その上へ */
-      .vc-theater-hint { bottom: var(--m-panel-bottom); }
+      /* シアター中の案内。動画のコントロールを開いたまま入ると同じ高さで重なるので、
+         その1段上に出す（--m-panel-bottom だと衝突する。2026-07-30 修正） */
+      .vc-theater-hint { bottom: var(--m-panel2-bottom); }
     }
   `;
   document.head.appendChild(style);
