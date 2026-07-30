@@ -714,7 +714,10 @@ async function handleScreen(client, msg) {
   ev.playback = { playing: true, pos: 0, at: Date.now() }; // 動画が変われば先頭から
 
   broadcastToEvent(client.eventId, { t: 'screen', v: msg.v, by: client.n });
-  broadcastToEvent(client.eventId, { t: 'events', events: buildEventList(false) });
+  // 権限ごとに中身が違う（管理者には合言葉が入る）ので、配り分けを持つ共通関数を使う。
+  // ここで合言葉なしの一覧を管理者へ送ってしまうと、設定画面の合言葉欄が空になり、
+  // そのまま保存した拍子に合言葉が消える（2026-07-31 実際に本番で消えた）
+  broadcastAllEvents();
   await updateEventVideo(ev.id, msg.v);
 }
 

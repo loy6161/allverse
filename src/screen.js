@@ -331,6 +331,17 @@ export function initLiveScreen(camera, scene, place = {}) {
     if (started) mountIframe(currentVideoId);
   }
 
+  /**
+   * いまの動画を読み込み直す（Resync）。
+   * ライブ配信は回線が詰まると配信の最前から遅れていき、そのまま戻らないことがある。
+   * 読み込み直すと最前から再生し直せる。通常動画では頭出しになる。
+   */
+  function reload() {
+    if (!started || !currentVideoId) return;
+    hasState = false;
+    mountIframe(currentVideoId);
+  }
+
   function getVideo() {
     return currentVideoId;
   }
@@ -343,5 +354,5 @@ export function initLiveScreen(camera, scene, place = {}) {
     cssRenderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  return { play, setVideo, getVideo, update, setInteractive, toggleInteractive, player };
+  return { play, setVideo, getVideo, reload, update, setInteractive, toggleInteractive, player };
 }

@@ -111,6 +111,55 @@ const DENY_MESSAGES = {
   'too-many-blocks': 'ブロックできる人数の上限に達しています',
 };
 
+/**
+ * 入場できなかったことを画面いっぱいに伝える。
+ *
+ * 入場処理はワールドの描画を先に始めるので、断られたことに気づかないと
+ * 「入れたのに誰もいない会場」に見える。そこで入場画面の上に理由を出す。
+ * 入り直しはページの読み込み直しで行う（ワールドを途中まで作った状態から
+ * 安全に巻き戻すより確実。見た目の設定はブラウザに保存してあるので選び直しにはならない）。
+ */
+function showEntryBlocked(title, note) {
+  const root = document.getElementById('join-screen');
+  if (!root) return;
+  // ワールド用のUI（エモート・動画パネル・操作キー等）を全部隠す。
+  // viewmode.js の「UI非表示」と同じ仕組みに相乗りする
+  document.body.classList.add('vc-ui-hidden');
+  // 上の一括非表示に含まれない表示トグル自身も隠す（押しても意味がないため）
+  for (const sel of ['.vc-ui-toggle', '.vc-name-toggle']) {
+    const el = document.querySelector(sel);
+    if (el) el.style.display = 'none';
+  }
+
+  root.classList.remove('hidden');
+  root.innerHTML = '';
+  const panel = document.createElement('div');
+  panel.className = 'vc-place-panel';
+  const h = document.createElement('h1');
+  h.className = 'vc-place-title';
+  h.textContent = '入場できませんでした';
+  const t = document.createElement('div');
+  t.className = 'vc-place-closed-title';
+  t.style.textAlign = 'center';
+  t.style.marginTop = '18px';
+  t.textContent = title;
+  const n = document.createElement('div');
+  n.className = 'vc-place-closed-note';
+  n.style.textAlign = 'center';
+  n.style.marginTop = '8px';
+  n.textContent = note || '';
+  const btns = document.createElement('div');
+  btns.className = 'vc-place-btns';
+  const again = document.createElement('button');
+  again.type = 'button';
+  again.className = 'vc-place-go';
+  again.textContent = '入り直す';
+  again.addEventListener('click', () => location.reload());
+  btns.appendChild(again);
+  panel.append(h, t, n, btns);
+  root.appendChild(panel);
+}
+
 // 現在のプレイヤー情報（再カスタムで書き換わる）
 const session = { name: '', config: null };
 
@@ -318,14 +367,27 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         if (roomUI) roomUI.setEvents(knownEvents);
       },
       onDenied: ({ reason, by, why, min }) => {
-        // 入場そのものを断られたケース。切断を「通信不良」と誤解させないよう理由を残す
+        // ---- 入場そのものを断られたケース ----
+        // ワールドは既に描き始めているので、何もしないと「入れたのに人が誰もいない」
+        // ように見えてしまう（2026-07-31 loyさん報告: 合言葉なしで入れる＋NPCが全員消える）。
+        // 実際は弾かれているので、画面を出して入り直してもらう
         if (reason === 'no-event' || reason === 'bad-code' || reason === 'event-full') {
-          removedReason =
+          showEntryBlocked(
             reason === 'no-event'
-              ? 'いま開いているイベントがありません。時間をおいて開き直してください'
+              ? 'いま開いているイベントがありません'
               : reason === 'bad-code'
-                ? '合言葉が違うため入場できませんでした'
-                : 'このイベントは満員のため入場できませんでした';
+                ? '合言葉が違います'
+                : 'このイベントは満員です',
+            reason === 'bad-code'
+              ? '主催者から聞いた合言葉をもう一度確かめてください。'
+              : reason === 'event-full'
+                ? '別のルームが空いていることがあります。少し待ってからお試しください。'
+                : '管理者がイベントを開くまでお待ちください。',
+          );
+          return;
+        }
+        if (reason === 'login-required') {
+          showEntryBlocked('ログインが必要です', 'このイベントに入るにはGoogleログインが必要です。');
           return;
         }
         if (reason === 'capacity-too-small') {
@@ -398,9 +460,13 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
       },
       // 他の人の再生/一時停止/シークを自分の映像にも反映する
       onPlayback: (pb) => liveScreen.player.applySync(pb),
-      // 管理人がイベントを閉じた。会場ごと無くなったので、その旨だけ伝える
+      // 管理人がイベントを閉じた。会場ごと無くなったので入場画面へ戻す
       onClosed: ({ name: evName }) => {
         removedReason = `「${evName || 'イベント'}」は終了しました`;
+        showEntryBlocked(
+          `「${evName || 'イベント'}」は終了しました`,
+          'ご参加ありがとうございました。',
+        );
       },
       onDisconnect: () => startDemoMode(),
     },
@@ -435,6 +501,12 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   videoPanel = initPlayerControls({
     player: liveScreen.player,
     // 再生/一時停止/シークはイベント全体で揃える（音量・ミュートは各自の設定なので送らない）
+    // 自分の画面だけ映像を読み込み直す。他の人には通知しない
+    // （ライブが遅れて止まった人だけが復帰できればよいため）
+    onReload: () => {
+      liveScreen.reload();
+      chat.addMessage('', '映像を読み込み直しました', { system: true });
+    },
     onAction: (type, pos) => {
       if (!canControlVideo) return; // 権限が無ければ共有状態を動かさない
       // ライブ配信かどうかも伝える。サーバーはライブなら位置を持たない

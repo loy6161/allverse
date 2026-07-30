@@ -165,7 +165,8 @@ function formatTime(sec) {
 // player: screen.js が返す { play, pause, mute, unMute, setVolume, seekTo, onState }
 // onAction: ユーザーが再生/一時停止/シークを操作したときに呼ばれる ('play'|'pause'|'seek', 位置秒)
 //           → 会場の全員に同じ操作を伝えるために使う（音量とミュートは各自の設定なので通知しない）
-export function initPlayerControls({ player, onAction }) {
+// onReload: 🔄 を押したとき。映像を読み込み直す（自分の画面だけ・他の人には影響しない）
+export function initPlayerControls({ player, onAction, onReload }) {
   const notify = (type, pos) => {
     if (onAction) onAction(type, pos);
   };
@@ -208,6 +209,16 @@ export function initPlayerControls({ player, onAction }) {
   muteBtn.textContent = '🔊';
   muteBtn.title = 'ミュート切替';
 
+  // 映像の読み込み直し。ライブが遅れて止まったときの復帰手段（2026-07-31 追加）
+  const reloadBtn = document.createElement('button');
+  reloadBtn.className = 'vc-vp-btn';
+  reloadBtn.type = 'button';
+  reloadBtn.textContent = '🔄';
+  reloadBtn.title = '映像を読み込み直す（自分の画面だけ）';
+  reloadBtn.addEventListener('click', () => {
+    if (onReload) onReload();
+  });
+
   const vol = document.createElement('input');
   vol.className = 'vc-vp-range vc-vp-vol';
   vol.type = 'range';
@@ -224,7 +235,7 @@ export function initPlayerControls({ player, onAction }) {
   const slot = document.createElement('div');
   slot.className = 'vc-vp-slot';
 
-  row.append(playBtn, muteBtn, vol, volLabel, slot);
+  row.append(playBtn, reloadBtn, muteBtn, vol, volLabel, slot);
   panel.append(seekRow, row);
   document.body.appendChild(panel);
 

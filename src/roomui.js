@@ -183,9 +183,17 @@ export function initRoomUI({
     const codeI = document.createElement('input');
     codeI.type = 'text';
     codeI.maxLength = 24;
-    // 合言葉の中身はサーバーが管理者にだけ返す。届いていなければ空欄から入れ直す
+    // 合言葉の中身はサーバーが管理者にだけ返す
     codeI.value = ev.code || '';
     codeI.placeholder = ev.hasCode ? '合言葉（空にするとパブリック）' : '合言葉（空ならパブリック）';
+    // 触っていない合言葉は送らない。
+    // 何かの理由で中身が届かず空欄のまま保存すると、合言葉が消えてしまうため
+    // （2026-07-31 実際に本番で消えた）。パブリックに戻したいときは
+    // 空欄にする＝「触った」ことになるので、意図した変更だけが通る
+    let codeTouched = false;
+    codeI.addEventListener('input', () => {
+      codeTouched = true;
+    });
     box.appendChild(codeI);
 
     const capI = document.createElement('input');
@@ -218,14 +226,15 @@ export function initRoomUI({
     save.type = 'button';
     save.textContent = '保存';
     save.addEventListener('click', () => {
-      onUpdateEvent({
+      const payload = {
         id: ev.id,
         name: nameI.value.trim() || ev.name,
-        code: codeI.value.trim(),
         cap: Number(capI.value) || ev.cap,
         requireLogin: loginC.checked,
         vrc: vrcC.checked,
-      });
+      };
+      if (codeTouched) payload.code = codeI.value.trim();
+      onUpdateEvent(payload);
       openSettings = '';
     });
     box.appendChild(save);
