@@ -437,7 +437,9 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     // 再生/一時停止/シークはイベント全体で揃える（音量・ミュートは各自の設定なので送らない）
     onAction: (type, pos) => {
       if (!canControlVideo) return; // 権限が無ければ共有状態を動かさない
-      if (net && !demoMode) net.sendPlayback(type === 'pause' ? 'pause' : 'play', pos);
+      // ライブ配信かどうかも伝える。サーバーはライブなら位置を持たない
+      const live = Boolean(liveScreen.player.getState().live);
+      if (net && !demoMode) net.sendPlayback(type === 'pause' ? 'pause' : 'play', pos, live);
     },
   });
 

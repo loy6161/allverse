@@ -219,7 +219,7 @@ function makeEvent({
     capacity: clampCapacity(capacity),
     vrcBridge,
     createdAt,
-    playback: { playing: true, pos: 0, at: Date.now() },
+    playback: { playing: true, pos: 0, at: Date.now(), live: false },
   };
 }
 
@@ -252,11 +252,20 @@ function makeBridgeExclusive(keepId) {
   }
 }
 
-/** 現在の再生位置を求める（pos は at 時点の位置なので、再生中なら経過分を足す） */
+/**
+ * 現在の再生位置を求める（pos は at 時点の位置なので、再生中なら経過分を足す）
+ *
+ * ライブ配信のときは **pos を返さない**。
+ * ライブの「再生位置」は配信の時刻そのもので、こちらが持っている経過秒とは無関係。
+ * それを渡すと受け取った側が視聴可能範囲の外へシークして配信が止まる
+ * （2026-07-30 の「生配信が途中で止まる」不具合の原因）。
+ * クライアント側にもガードはあるが、古い版が繋いでも壊れないよう元から渡さない。
+ */
 function currentPlayback(eventId) {
   const ev = events.get(eventId);
-  if (!ev) return { st: 'play', pos: 0 };
+  if (!ev) return { st: 'play' };
   const pb = ev.playback;
+  if (pb.live) return { st: pb.playing ? 'play' : 'pause' };
   const elapsed = pb.playing ? (Date.now() - pb.at) / 1000 : 0;
   return { st: pb.playing ? 'play' : 'pause', pos: Math.max(0, pb.pos + elapsed) };
 }
@@ -722,9 +731,13 @@ function handlePlayback(client, msg) {
 
   const ev = events.get(client.eventId);
   if (!ev) return;
-  ev.playback = { playing: msg.st === 'play', pos, at: Date.now() };
+  // ライブ配信なら位置は保存しない（上の currentPlayback のコメント参照）
+  const live = msg.live === true;
+  ev.playback = { playing: msg.st === 'play', pos: live ? 0 : pos, at: Date.now(), live };
 
-  broadcastToEvent(client.eventId, { t: 'playback', id: client.id, st: msg.st, pos }, client.id);
+  const out = { t: 'playback', id: client.id, st: msg.st };
+  if (!live) out.pos = pos;
+  broadcastToEvent(client.eventId, out, client.id);
 }
 
 /** event-create: イベント作成（管理者のみ） */

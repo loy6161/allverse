@@ -304,9 +304,11 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     send({ t: 'screen', v: videoId });
   }
 
-  function sendPlayback(st, pos) {
+  // live=true のときサーバーは位置を保存・配信しない。
+  // ライブ配信の「再生位置」は他の人にとって意味が無く、渡すと配信が止まるため
+  function sendPlayback(st, pos, live) {
     if (!joined) return;
-    send({ t: 'playback', st, pos: Math.max(0, Number(pos) || 0) });
+    send({ t: 'playback', st, pos: Math.max(0, Number(pos) || 0), live: !!live });
   }
 
   function sendMove(targetEventId, targetRoom) {
