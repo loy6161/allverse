@@ -111,7 +111,7 @@
    Google同意画面の「アプリを公開」だけ**（SETUP_AUTH.md D・B-5）
 3. ~~ブロック／キック／BAN~~ ~~Unityワールドの取り込み~~ **完了（2026-07-30）**。
    次は clubVERSE を実際に歩いてみて、当たり判定・明るさ・スクリーン位置を詰める
-4. **結合テスト**: Unity側がWorker環境変数にpresence.json URLを設定 → Workerモック → Render実データ の順（Unity側と合意済み）。**Unity側チャットへのURL共有が次のアクション**
+4. **結合テスト**: Unity側がWorker環境変数にpresence.json URLを設定 → Workerモック → Render実データ の順（Unity側と合意済み）。**申し送り②を発行済み（`docs/HANDOFF_UNITY_2.md`）。Unity側チャットにこれを読んでもらうのが次のアクション**
 5. フェイズ1期間の機能育成（**着手には都度ユーザーOKが必要**）: VRM対応（レギュラー）、ボイチャ、テクスチャカスタム（承認制）
 6. ALLVERSE Phase 1（ポータル設計）合流時: ワールド内チャット→YouTubeクロスポスト実装、VERSE COIN資金決済法整理
 7. ポイント制（設計のみ確定・実装保留）: 無料ポイントの獲得上限設計、有料ポイントは資金決済法の調査後
