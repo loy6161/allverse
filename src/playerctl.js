@@ -234,6 +234,7 @@ export function initPlayerControls({ player, onAction }) {
   let adjustingVolume = false;
   let duration = 0;
   let live = false;
+  let canSeek = true;
 
   player.setVolume(Number(vol.value));
 
@@ -281,7 +282,8 @@ export function initPlayerControls({ player, onAction }) {
   const endSeek = () => {
     if (!seeking) return;
     seeking = false;
-    if (duration > 0 && !live) {
+    // ライブ配信ではシークしない（配信が止まるため）
+    if (duration > 0 && !live && canSeek) {
       const pos = (Number(seek.value) / 1000) * duration;
       player.seekTo(pos);
       notify(playing ? 'play' : 'pause', pos); // 全員を同じ位置へ
@@ -295,6 +297,7 @@ export function initPlayerControls({ player, onAction }) {
   player.onState((s) => {
     duration = s.duration;
     live = s.live;
+    canSeek = s.canSeek !== false;
 
     playing = s.playing;
     playBtn.textContent = playing ? '⏸' : '▶';

@@ -180,7 +180,16 @@ export function initLiveScreen(camera, scene, place = {}) {
 
   // YouTubeから再生位置・長さ・再生状態を受け取る（listening を送ると定期的に届く）
   const stateListeners = new Set();
-  const state = { currentTime: 0, duration: 0, playing: true, live: false, muted: false, volume: 70 };
+  // canSeek … シークが許されるか。ライブ配信は基本的に不可
+  const state = {
+    currentTime: 0,
+    duration: 0,
+    playing: true,
+    live: false,
+    canSeek: true,
+    muted: false,
+    volume: 70,
+  };
 
   let hasState = false; // プレイヤーから情報が届いた＝操作を受け付けられる合図
 
@@ -196,10 +205,30 @@ export function initLiveScreen(camera, scene, place = {}) {
     hasState = true;
     const info = data.info;
     if (typeof info.currentTime === 'number') state.currentTime = info.currentTime;
-    if (typeof info.duration === 'number') {
+
+    // ---- ライブ配信かどうかの判定 ----
+    //
+    // 以前は「duration が 0 か 86400超ならライブ」としていたが、これが誤りだった。
+    // 実測（2026-07-30・実際の配信 uivHn9u0ggA）では duration = 13905秒 が返ってきて、
+    // 0でも86400超でもないため**ライブ配信を通常動画と誤認**していた。
+    // その結果 applySync が seekTo を投げ、配信が途中で止まっていた。
+    //
+    // YouTube は progressState で正確な情報をくれるので、そちらを正とする:
+    //   ingestionTime … ライブ取り込みの時刻。ライブ配信のときだけ入る
+    //   isAtLiveHead  … 配信の最前にいるか
+    //   allowSeeking  … シークして良いか（ライブは false のことが多い）
+    //   seekableEnd   … 実際にシークできる終端（duration とは別物）
+    const ps = info.progressState;
+    if (ps && typeof ps === 'object') {
+      if (typeof ps.duration === 'number') state.duration = ps.duration;
+      state.live =
+        (typeof ps.ingestionTime === 'number' && ps.ingestionTime > 0) || ps.isAtLiveHead === true;
+      state.canSeek = ps.allowSeeking !== false;
+    } else if (typeof info.duration === 'number') {
+      // progressState が来ないプレイヤー向けの保険（従来の判定）
       state.duration = info.duration;
-      // ライブ配信は duration が 0 や極端に大きい値になる
       state.live = !info.duration || info.duration > 86400;
+      state.canSeek = !state.live;
     }
     if (typeof info.playerState === 'number') state.playing = info.playerState === 1;
     // 実際のプレイヤーの音量・ミュート状態（UIの表示をここに合わせる）
@@ -272,7 +301,12 @@ export function initLiveScreen(camera, scene, place = {}) {
           setTimeout(run, 700);
           return;
         }
-        if (typeof pos === 'number' && !state.live) command('seekTo', [Math.max(0, pos), true]);
+        // ライブ配信では位置合わせをしない。
+        // 配信の再生位置は「いま流れている時刻」なので、サーバーが持つ経過秒に
+        // 飛ばすと配信が止まる（2026-07-30 の不具合の原因）
+        if (typeof pos === 'number' && !state.live && state.canSeek) {
+          command('seekTo', [Math.max(0, pos), true]);
+        }
         if (st === 'pause') {
           prefs.playing = false;
           command('pauseVideo');
