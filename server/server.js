@@ -12,7 +12,7 @@ import http from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 
 import {
@@ -31,7 +31,19 @@ import {
   loadBans,
   saveBan,
   deleteBan,
+  logRunOpen,
+  logRunRename,
+  logRunClose,
+  logVisitStart,
+  logVisitEnd,
+  closeOpenVisits,
+  touchHeartbeat,
+  listRuns,
+  getRun,
+  listVisits,
+  listVisitsForRuns,
 } from './store.js';
+import { summarize, gridSeries, autoStepMs, visitsCsv, seriesCsv } from './stats.js';
 import {
   verifyIdToken,
   roleForEmail,
@@ -114,6 +126,13 @@ const PRESENCE_CHAT_TXT_MAX = 40; // c[0] の最大文字数（30KB制約対応�
 // 「直近チャット」フィールド(c)は実装済みだが、運用判断が済むまで既定は無効。
 const ENABLE_CHAT_FIELD = false;
 
+// イベントログ（2026-07-31追加）
+const HEARTBEAT_LOG_MS = 60 * 1000; // 「生きている印」を打つ間隔＝再起動時のズレの上限
+const MAX_LOG_RUNS = 200;           // 記録画面と外部APIが返す開催の最大件数
+// PORTAL（Supabase側）が集計を取りに来るための合言葉。
+// 未設定なら外部APIは開かない（無効が既定。うっかり全世界に公開しないため）
+const STATS_TOKEN = process.env.STATS_TOKEN || '';
+
 // ------------------------------------------------------------
 // サーバー状態
 // ------------------------------------------------------------
@@ -176,6 +195,67 @@ function resolveDisplayName(email, googleName) {
   return clampString(base, MAX_NAME_LEN, 'メンバー');
 }
 
+// ------------------------------------------------------------
+// イベントログ（2026-07-31 追加）
+//
+// 記録するのは「誰が・いつ入って・いつ出たか」の1行だけ。
+// 同接の経過も累計も滞在時間も、あとからこの1本で計算できる（server/stats.js）。
+//
+// ★累計の数え方は「案A」（2026-07-31 loyさん決定）
+//   ログイン済み … Googleアカウント単位。別の端末でも同じ人として数える
+//   ゲスト       … ブラウザに保存した匿名の番号。同じブラウザなら同じ人
+// どちらもメールアドレスや個人情報そのものは残さない。ログイン済みは
+// メールのハッシュにして、記録から本人を逆算できないようにしている。
+//
+// NPC（賑やかし）はクライアント側だけの存在でサーバーに繋いでいないため、
+// ここには最初から入らない＝人数の水増しは起きない。
+// ------------------------------------------------------------
+
+const VISITOR_ID_RE = /^[a-f0-9]{8,32}$/; // クライアントが持つ匿名IDの形式
+
+/** 匿名の訪問者id。ログイン済みはメールのハッシュ、ゲストはブラウザ保存の番号 */
+function visitorIdOf(client, rawVid) {
+  if (client.email) {
+    return `u:${createHash('sha256').update(client.email).digest('hex').slice(0, 16)}`;
+  }
+  const vid = typeof rawVid === 'string' ? rawVid.toLowerCase() : '';
+  if (VISITOR_ID_RE.test(vid)) return `g:${vid.slice(0, 32)}`;
+  // 匿名IDを送ってこない（保存できない）ブラウザ。その接続かぎりの扱いになる
+  return `g:conn-${client.id}`;
+}
+
+/**
+ * 入場を記録する。書き込みは待たず、行のidだけ client に持たせておく。
+ * 記録の失敗で入場が遅れたり失敗したりしてはいけないので、すべて非同期・握り潰し。
+ */
+function startVisitLog(client, ev) {
+  const joinedAt = Date.now();
+  client.visitRunId = ev.runId;
+  client.visitEnded = false;
+  client.visitRow = logVisitStart({
+    runId: ev.runId,
+    eventId: ev.id,
+    visitor: client.visitor,
+    kind: client.role,
+    name: client.n,
+    room: client.room,
+    joinedAt,
+  }).catch(() => null);
+}
+
+/**
+ * 退場を記録する。
+ * 閉店と切断がほぼ同時に走るので、client側とDB側の両方で二重書き込みを防いでいる。
+ */
+function endVisitLog(client, closedBy = '') {
+  if (!client.visitRow || client.visitEnded) return;
+  client.visitEnded = true;
+  const leftAt = Date.now();
+  const p = client.visitRow;
+  client.visitRow = null;
+  p.then((id) => (id == null ? null : logVisitEnd(id, leftAt, closedBy))).catch(() => {});
+}
+
 /**
  * クライアント1人分の状態
  * @typedef {Object} ClientState
@@ -219,6 +299,9 @@ function makeEvent({
     capacity: clampCapacity(capacity),
     vrcBridge,
     createdAt,
+    // 記録用の開催id。イベントidが将来使い回されても過去の記録と混ざらないように
+    // 「id＋立てた時刻」で一意にする
+    runId: `${id}-${createdAt}`,
     playback: { playing: true, pos: 0, at: Date.now(), live: false },
   };
 }
@@ -516,6 +599,8 @@ async function handleJoin(client, msg) {
   }
   client.role = role;
   client.email = email;
+  // 記録用の匿名id。入場を断られた場合は記録しないので、ここでは決めるだけ
+  client.visitor = visitorIdOf(client, msg.vid);
 
   // BANされた人は入れない。名前を割り当てる前に弾く
   if (email && bans.has(email)) {
@@ -616,6 +701,9 @@ async function handleJoin(client, msg) {
   // 管理者・VIPはイベント全体に、一般は自室にだけ現れる
   broadcastFrom(client, { t: 'peer-join', p: toPeerInfo(client) });
   broadcastCount(ev.id, roomNumber);
+
+  // 入場ログ（断られた人は通らないので、実際に入れた人だけが記録される）
+  startVisitLog(client, ev);
 
   // 次回そのまま入れるように、ログイン済みなら名前と姿を覚えておく
   if (client.email) await saveProfile(client.email, client.n, client.av);
@@ -788,6 +876,8 @@ async function createEventFrom(msg) {
   if (ev.vrcBridge) makeBridgeExclusive(ev.id);
   events.set(id, ev);
   await saveEvent(ev);
+  // 開催の記録を開始（閉じるまでの入退場がこの runId にぶら下がる）
+  await logRunOpen({ runId: ev.runId, eventId: ev.id, name: ev.name, openedAt: ev.createdAt });
   return ev;
 }
 
@@ -813,7 +903,11 @@ async function handleEventUpdate(client, msg) {
 
   if (typeof msg.name === 'string') {
     const name = clampString(msg.name, MAX_EVENT_NAME_LEN).trim();
-    if (name) ev.name = name;
+    if (name && name !== ev.name) {
+      ev.name = name;
+      // 記録側の名前も合わせる。あとから改名しても記録が同じ名前で追えるように
+      await logRunRename(ev.runId, name);
+    }
   }
   if (typeof msg.code === 'string') {
     ev.entryCode = clampString(msg.code, MAX_EVENT_CODE_LEN).trim();
@@ -864,6 +958,8 @@ async function handleEventDelete(client, msg) {
   for (const [key, members] of Array.from(rooms)) {
     if (keyEventId(key) !== ev.id) continue;
     for (const c of Array.from(members.values())) {
+      // 記録は切断より先に閉じる。理由が '' ではなく「閉店」として残るようにするため
+      endVisitLog(c, 'event-closed');
       send(c.ws, { t: 'closed', ev: ev.id, name: ev.name });
       try {
         c.ws.close();
@@ -876,6 +972,9 @@ async function handleEventDelete(client, msg) {
 
   events.delete(ev.id);
   await deleteEvent(ev.id);
+  // 記録は残す。イベント定義を消しても「いつ開いて、いつ閉じたか」は後から見たいので
+  // （消えたら記録の意味がない。2026-07-31 の設計方針）
+  await logRunClose(ev.runId, Date.now());
   broadcastAllEvents();
 }
 
@@ -894,6 +993,11 @@ function handleMove(client, msg) {
   const wantRoom = Number.isInteger(msg.rm) && msg.rm >= 1 && msg.rm <= 999 ? msg.rm : null;
   const targetRoom = wantRoom && roomHasSpace(ev.id, wantRoom) ? wantRoom : assignRoom(ev.id);
   if (targetEventId === client.eventId && targetRoom === client.room) return; // 同じ場所なら何もしない
+
+  // イベントをまたぐ移動だけが記録上の「退場→入場」。
+  // 同じイベント内でルームを移っただけなら1回の滞在として続ける
+  // （ルームはVRChatのインスタンスに相当するもので、来場としては同じ1回）
+  const changedEvent = targetEventId !== client.eventId;
 
   // 元の場所から抜ける
   leaveCurrentRoom(client);
@@ -923,6 +1027,11 @@ function handleMove(client, msg) {
     screen: ev.videoId,
     playback: currentPlayback(ev.id),
   });
+
+  if (changedEvent) {
+    endVisitLog(client, 'moved');
+    startVisitLog(client, ev);
+  }
 
   broadcastFrom(client, { t: 'peer-join', p: toPeerInfo(client) });
   broadcastCount(ev.id, targetRoom);
@@ -1162,6 +1271,7 @@ function leaveCurrentRoom(client) {
 /** 切断時処理 */
 function handleDisconnect(client) {
   if (!client.joined) return;
+  endVisitLog(client, '');
   leaveCurrentRoom(client);
   client.joined = false;
   client.eventId = null;
@@ -1191,6 +1301,8 @@ function buildStatusJson() {
     events: buildEventList(false),
     persistent: isPersistent(),
     login: isLoginEnabled(),
+    // PORTAL連携APIが開いているか（合言葉そのものは出さない）
+    statsApi: Boolean(STATS_TOKEN),
     // 設定ミスを画面から特定できるようにする（トークンは含めない）
     store: getStoreStatus(),
     uptime: Math.floor((Date.now() - startedAt) / 1000),
@@ -1379,6 +1491,33 @@ async function handleProfileRequest(req, res) {
  * 「イベントが0件だと入場できない → 入場できないと作れない」という詰みが起きる。
  * それを避けるため、WSに繋ぐ前でも作れる入口をここに用意している（2026-07-30）。
  */
+/**
+ * HTTPの本文から管理者かどうかを判定する（イベント作成と記録画面で共通）。
+ *
+ * 判定の考え方はWS側の join と同じに揃えている:
+ *   ログイン設定済み → Googleのトークンで判定
+ *   ログイン未設定（ローカル開発）→ defaultRole。加えて devRole の指定を許す
+ * devRole は Render 上では絶対に効かない（RENDER環境変数で封じている）。
+ * これが無いと、ログイン未設定の環境でイベントを1つも作れず何もできなくなる。
+ *
+ * @returns {Promise<{ok:true, role:string} | {ok:false, code:number, error:string}>}
+ */
+async function authAdminBody(body) {
+  let role = defaultRole();
+  if (body && body.idt) {
+    const info = await verifyIdToken(body.idt);
+    if (!info) return { ok: false, code: 401, error: 'not-signed-in' };
+    role = roleForEmail(info.email);
+  } else if (isLoginEnabled()) {
+    return { ok: false, code: 401, error: 'not-signed-in' };
+  }
+  if (ALLOW_DEV_ROLE && body && typeof body.devRole === 'string' && DEV_ROLES.has(body.devRole)) {
+    role = body.devRole;
+  }
+  if (!canControlVideo(role)) return { ok: false, code: 403, error: 'admin-only' };
+  return { ok: true, role };
+}
+
 async function handleAdminEventCreate(req, res) {
   const reply = (code, obj) => {
     res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -1386,29 +1525,9 @@ async function handleAdminEventCreate(req, res) {
   };
 
   const body = await readJsonBody(req);
-
-  // 権限の判定。WS側の join と同じ考え方に揃えている:
-  //   ログイン設定済み → Googleのトークンで判定
-  //   ログイン未設定（ローカル開発）→ defaultRole。加えて devRole の指定を許す
-  // devRole は Render 上では絶対に効かない（RENDER環境変数で封じている）。
-  // これが無いと、ログイン未設定の環境でイベントを1つも作れず何もできなくなる
-  let role = defaultRole();
-  if (body && body.idt) {
-    const info = await verifyIdToken(body.idt);
-    if (!info) {
-      reply(401, { ok: false, error: 'not-signed-in' });
-      return;
-    }
-    role = roleForEmail(info.email);
-  } else if (isLoginEnabled()) {
-    reply(401, { ok: false, error: 'not-signed-in' });
-    return;
-  }
-  if (ALLOW_DEV_ROLE && body && typeof body.devRole === 'string' && DEV_ROLES.has(body.devRole)) {
-    role = body.devRole;
-  }
-  if (!canControlVideo(role)) {
-    reply(403, { ok: false, error: 'admin-only' });
+  const auth = await authAdminBody(body);
+  if (!auth.ok) {
+    reply(auth.code, { ok: false, error: auth.error });
     return;
   }
   if (events.size >= MAX_EVENTS) {
@@ -1423,6 +1542,140 @@ async function handleAdminEventCreate(req, res) {
   }
   broadcastAllEvents();
   reply(200, { ok: true, ev: toEventInfoAdmin(ev) });
+}
+
+// ------------------------------------------------------------
+// イベントの記録（管理者向け）と、PORTALへの受け渡し
+//
+// 記録画面のAPIをPOSTにしているのは、IDトークンをURLに載せないため
+// （履歴・アクセスログ・リファラに残る）。既存の /api/profile と同じ考え方。
+// CSVもPOSTで本文を受け取り、ダウンロードはブラウザ側でBlobにして行う。
+// ------------------------------------------------------------
+
+/** 開催一覧＋それぞれの要約。往復を増やさないよう訪問ログは1クエリでまとめて取る */
+async function buildRunSummaries(limit = MAX_LOG_RUNS) {
+  const runs = await listRuns(limit);
+  const byRun = await listVisitsForRuns(runs.map((r) => r.runId));
+  const now = Date.now();
+  return runs.map((run) => summarizeRun(run, byRun.get(run.runId) || [], now));
+}
+
+function summarizeRun(run, visits, now) {
+  return {
+    runId: run.runId,
+    eventId: run.eventId,
+    name: run.name,
+    ...summarize(run, visits, now),
+  };
+}
+
+async function handleAdminLogs(req, res) {
+  const reply = (code, obj) => {
+    res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(obj));
+  };
+  const body = await readJsonBody(req);
+  const auth = await authAdminBody(body);
+  if (!auth.ok) {
+    reply(auth.code, { ok: false, error: auth.error });
+    return;
+  }
+  reply(200, {
+    ok: true,
+    persistent: isPersistent(),
+    runs: await buildRunSummaries(Number(body && body.limit) || MAX_LOG_RUNS),
+  });
+}
+
+async function handleAdminLogDetail(req, res) {
+  const body = await readJsonBody(req);
+  const auth = await authAdminBody(body);
+  if (!auth.ok) {
+    res.writeHead(auth.code, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ ok: false, error: auth.error }));
+    return;
+  }
+
+  const runId = body && typeof body.runId === 'string' ? body.runId : '';
+  const run = await getRun(runId);
+  if (!run) {
+    res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ ok: false, error: 'no-run' }));
+    return;
+  }
+  const visits = await listVisits(runId);
+  const now = Date.now();
+  const format = body && typeof body.format === 'string' ? body.format : 'json';
+
+  if (format === 'csv-visits' || format === 'csv-series') {
+    const text = format === 'csv-visits' ? visitsCsv(run, visits, now) : seriesCsv(run, visits, { now });
+    res.writeHead(200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${format}-${runId.replace(/[^\w.-]/g, '')}.csv"`,
+    });
+    res.end(text);
+    return;
+  }
+
+  const to = run.closedAt == null ? now : run.closedAt;
+  // 画面のグラフ用に間引いた同接の経過。刻みは開催時間から決める
+  // （1分固定だと短いイベントの山が消える。ピークの数値は要約側が正確に持つ）
+  const stepMs = autoStepMs(to - run.openedAt);
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(
+    JSON.stringify({
+      ok: true,
+      run: summarizeRun(run, visits, now),
+      stepMs,
+      series: gridSeries(visits, { from: run.openedAt, to, stepMs }),
+      visits,
+    }),
+  );
+}
+
+/**
+ * GET /api/stats.json — PORTAL（Supabase側）が集計を取りに来る口。
+ *
+ * 方式は「案1: こちらがAPIを出し、PORTAL側が取りに来る」（2026-07-31）。
+ * 本番DBの書き込み鍵をこちらに置かずに済むのが理由。VRChat連携と同じ考え方。
+ *
+ * 返すのは集計値だけで、訪問者ごとの行は出さない。PORTALに必要なのは
+ * 「ピーク・累計・滞在」であって、誰が来たかではないため。
+ * 合言葉(STATS_TOKEN)が未設定なら、この口は開かない。
+ */
+async function handleStatsJson(req, res) {
+  const cors = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  };
+  const reply = (code, obj) => {
+    res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', ...cors });
+    res.end(JSON.stringify(obj));
+  };
+
+  if (!STATS_TOKEN) {
+    reply(403, { ok: false, error: 'stats-api-disabled' });
+    return;
+  }
+  const auth = String(req.headers.authorization || '');
+  const given = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  // 長さが違うだけで falseになるので、まず長さを合わせてから定数時間で比べる
+  const okToken =
+    given.length === STATS_TOKEN.length &&
+    timingSafeEqual(Buffer.from(given), Buffer.from(STATS_TOKEN));
+  if (!okToken) {
+    reply(401, { ok: false, error: 'bad-token' });
+    return;
+  }
+
+  const q = new URLSearchParams((req.url || '').split('?')[1] || '');
+  const since = Number(q.get('since'));
+  const limit = Number(q.get('limit')) || MAX_LOG_RUNS;
+  let runs = await buildRunSummaries(limit);
+  if (Number.isFinite(since) && since > 0) runs = runs.filter((r) => r.openedAt >= since);
+
+  reply(200, { ok: true, source: 'allverse-web', generatedAt: Date.now(), events: runs });
 }
 
 const httpServer = http.createServer(async (req, res) => {
@@ -1451,6 +1704,33 @@ const httpServer = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url === '/api/admin/event') {
     await handleAdminEventCreate(req, res);
     return;
+  }
+
+  // イベントの記録（管理者向け）。POSTなのはIDトークンをURLに載せないため
+  if (req.method === 'POST' && url === '/api/admin/logs') {
+    await handleAdminLogs(req, res);
+    return;
+  }
+  if (req.method === 'POST' && url === '/api/admin/log') {
+    await handleAdminLogDetail(req, res);
+    return;
+  }
+
+  // PORTALが集計を取りに来る口（Authorization: Bearer <STATS_TOKEN>）
+  if (url === '/api/stats.json') {
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      });
+      res.end();
+      return;
+    }
+    if (req.method === 'GET') {
+      await handleStatsJson(req, res);
+      return;
+    }
   }
 
   // 入場画面がログインボタンの出し分けとイベント一覧に使う
@@ -1600,12 +1880,25 @@ wss.on('connection', (ws) => {
 // 起動
 // ------------------------------------------------------------
 
+/** いま誰か会場に入っているか（heartbeatを打つ必要があるかの判定） */
+function anyoneInside() {
+  for (const members of rooms.values()) if (members.size > 0) return true;
+  return false;
+}
+
 async function boot() {
   await initStore();
 
+  // 前回サーバーが落ちたときに「退場が書かれないまま」残った記録を閉じる。
+  // heartbeat を読むので、新しい heartbeat を打ち始める前に済ませる
+  const fixed = await closeOpenVisits('restart');
+
   // 保存済みイベントを復元。何も無ければ会場は閉まったまま（管理人が立てるまで誰も入れない）
   for (const row of await loadEvents()) {
-    events.set(row.id, makeEvent(row));
+    const ev = makeEvent(row);
+    events.set(row.id, ev);
+    // 記録の開始行が無ければ足す（ログ機能より前から動いていたイベントを拾うため）
+    await logRunOpen({ runId: ev.runId, eventId: ev.id, name: ev.name, openedAt: ev.createdAt });
   }
   // 保存内容が壊れていて2つ以上ONでも、VRChatへ出すのは1つに保つ
   const firstBridged = bridgedEvent();
@@ -1614,11 +1907,19 @@ async function boot() {
   // BANはメモリに載せておく。入場のたびにDBを叩かずに済ませるため
   for (const b of await loadBans()) bans.set(b.email, b);
 
+  // サーバーが生きている印。人がいる間だけ打つ（誰もいない時間に書き込みを増やさない）。
+  // 次に落ちたとき、この時刻で「閉じ忘れ」を閉じるので、記録のズレは最大1分に収まる
+  setInterval(() => {
+    if (anyoneInside()) touchHeartbeat(Date.now()).catch(() => {});
+  }, HEARTBEAT_LOG_MS).unref?.();
+
   httpServer.listen(PORT, () => {
     console.log(`[VERSE CITY Web Server] listening on port ${PORT} (ws path: ${WS_PATH})`);
     console.log(`  ログイン: ${isLoginEnabled() ? '有効' : '無効（GOOGLE_CLIENT_ID 未設定）'}`);
     console.log(`  イベント永続化: ${isPersistent() ? '有効（Turso）' : '無効（メモリのみ）'}`);
     console.log(`  イベント数: ${events.size} ／ BAN: ${bans.size}件`);
+    console.log(`  イベントログ: 有効${fixed ? `（前回の閉じ忘れ ${fixed}件を補正）` : ''}`);
+    console.log(`  PORTAL連携API: ${STATS_TOKEN ? '有効（/api/stats.json）' : '無効（STATS_TOKEN 未設定）'}`);
   });
 }
 

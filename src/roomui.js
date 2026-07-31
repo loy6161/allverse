@@ -108,6 +108,9 @@ function injectStyle() {
  * @param {() => number} [p.getNpcCount] NPCの現在数
  * @param {() => boolean} [p.isNpcAuto] 自動補充中かどうか
  * @param {(n:number|null) => void} [p.onNpcCount] NPCの人数を指定する（null で自動補充に戻す）
+ * @param {{element:HTMLElement, refresh:() => void}} [p.adminExtra]
+ *        管理者のときだけパネル末尾に差し込むセクション（イベントの記録）。
+ *        中身はそちらが持ち、こちらは置き場所を貸すだけにしている
  */
 export function initRoomUI({
   slot,
@@ -121,6 +124,7 @@ export function initRoomUI({
   getNpcCount,
   isNpcAuto,
   onNpcCount,
+  adminExtra = null,
 }) {
   injectStyle();
 
@@ -149,6 +153,7 @@ export function initRoomUI({
     panel.classList.remove('vc-room-hidden');
     if (onRefresh) onRefresh();
     render();
+    if (adminExtra && adminExtra.refresh) adminExtra.refresh();
   }
 
   btn.addEventListener('click', () => (open ? closePanel() : openPanel()));
@@ -458,6 +463,9 @@ export function initRoomUI({
       }
       test.appendChild(presets);
       panel.appendChild(test);
+
+      // イベントの記録（logsui.js が中身を持つ）。管理者のときだけ末尾に置く
+      if (adminExtra && adminExtra.element) panel.appendChild(adminExtra.element);
     }
   }
 

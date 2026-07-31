@@ -19,6 +19,7 @@ import { initScreenUI } from './screenui.js';
 import { initViewMode } from './viewmode.js';
 import { initPlayerControls } from './playerctl.js';
 import { initRoomUI } from './roomui.js';
+import { initLogsUI } from './logsui.js';
 import { initPeopleUI } from './people.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
@@ -539,6 +540,12 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   });
   screenUI.setCurrent(liveScreen.getVideo());
 
+  // イベントの記録（管理者だけ。🚪パネルの末尾に差し込む）
+  const logsUI = initLogsUI({
+    getRole: () => (canControlVideo ? 'admin' : myRole),
+    getIdToken: () => idToken || '',
+  });
+
   // イベント／ルームの移動パネル（管理者はイベント作成もここから）
   roomUI = initRoomUI({
     slot: videoPanel.slot,
@@ -569,6 +576,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
       if (!npcAuto) ensureSim().setCount(n);
       updateCount(); // サーバー人数は据え置きでNPCぶんだけ数え直す
     },
+    adminExtra: logsUI,
   });
   roomUI.setEvents(knownEvents);
 

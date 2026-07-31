@@ -116,6 +116,13 @@ function injectStyle() {
   font-size: 11px; line-height: 1.6; color: rgba(220,235,255,0.5);
   margin: 6px 0 16px;
 }
+/* 入場ボタンの真上に置く記録の断り書き。
+   読ませたいが入場の邪魔にはしたくないので、ヒントより一段小さく暗くする */
+.vc-place-terms {
+  font-size: 10.5px; line-height: 1.65; color: rgba(220,235,255,0.42);
+  margin: 14px 0 6px; padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
 .vc-place-btns { display: flex; gap: 10px; margin-top: 8px; }
 .vc-place-go {
   flex: 1 1 auto; padding: 14px 20px; font-size: 17px; font-weight: bold; letter-spacing: 4px;
@@ -306,8 +313,27 @@ export async function openPlacePicker({ onDecide, onBack }) {
     panel.appendChild(buildButtons(true));
   }
 
-  /** 下段のボタン。canEnter=false のときは「入場する」を出さない（会場が閉まっているとき） */
+  /**
+   * 下段のボタン。canEnter=false のときは「入場する」を出さない（会場が閉まっているとき）。
+   *
+   * 入場ボタンの真上に、記録についての断り書きを置く（2026-07-31）。
+   * イベントの動員を記録するようになり、ブラウザに匿名の番号を保存するため、
+   * 「入る前に読める場所」に書いておく必要がある。
+   * ※ 文面はloyさんが決める領域。ここにあるのは事実だけを並べた暫定文
+   */
   function buildButtons(canEnter) {
+    const frag = document.createDocumentFragment();
+
+    if (canEnter) {
+      const terms = document.createElement('div');
+      terms.className = 'vc-place-terms';
+      terms.textContent =
+        '入場すると、イベントの動員を記録するために、このブラウザに匿名の番号を保存し、' +
+        '入退場の時刻と表示名を記録します。メールアドレスそのものは保存しません。' +
+        '記録は主催者がイベントの人数を把握するために使います。';
+      frag.appendChild(terms);
+    }
+
     const btns = document.createElement('div');
     btns.className = 'vc-place-btns';
 
@@ -340,7 +366,8 @@ export async function openPlacePicker({ onDecide, onBack }) {
       });
       btns.appendChild(go);
     }
-    return btns;
+    frag.appendChild(btns);
+    return frag;
   }
 
   /**

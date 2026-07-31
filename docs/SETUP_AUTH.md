@@ -203,6 +203,21 @@ Bと同じ「Environment」画面で追加します。
 
 ---
 
+## C-3. PORTAL連携の合言葉（2026-07-31追加・**いまはやらなくていい**）
+
+イベントの記録を PORTAL 側から取りに来られるようにするための合言葉です。
+**PORTAL側の取り込み方式が決まるまで設定しないでください**（未設定の間、この口は閉じたままです）。
+
+| Key | Value |
+|---|---|
+| `STATS_TOKEN` | 長いランダムな文字列（例: `openssl rand -hex 32` の出力） |
+
+設定すると `GET /api/stats.json` が開き、`Authorization: Bearer <この値>` を付けた相手だけが
+集計を取れるようになります。返すのは集計値だけで、誰が来たかの行は出しません。
+詳細は `docs/HANDOFF_PORTAL.md`。
+
+---
+
 ## D. 動作確認
 
 ブラウザで次を開くと、状態がそのまま出ます。
@@ -213,6 +228,7 @@ https://allverse.onrender.com/api/status
 
 - `"login": true` … Googleログインが有効
 - `"persistent": true` … イベントが保存されるようになった
+- `"statsApi": true` … PORTAL連携の口が開いている（C-3を設定したときだけ）
 - `"store"` … 繋がらないときの原因がここに出る
   （`urlSet` / `tokenSet` が環境変数の有無、`error` が接続エラーの内容。トークンは出ない）
 

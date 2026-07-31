@@ -116,6 +116,45 @@ export async function initStore() {
         created_at INTEGER NOT NULL
       )
     `);
+    // ---- イベントログ（2026-07-31 追加）----
+    // イベントを立ててから閉じるまでを1回の「開催」として残す。
+    // run_id を id と分けているのは、イベントidが将来使い回された場合に
+    // 過去の開催と記録が混ざらないようにするため（run_id = `${eventId}-${createdAt}`）。
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS event_runs (
+        run_id    TEXT PRIMARY KEY,
+        event_id  TEXT NOT NULL,
+        name      TEXT NOT NULL,
+        opened_at INTEGER NOT NULL,
+        closed_at INTEGER
+      )
+    `);
+    // 入退場ログ。1行 = 1回の入場（退場時に left_at を埋める）。
+    // 同接の経過・累計ユニーク・滞在時間は、この1本から全部あとで計算する
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS visits (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id    TEXT NOT NULL,
+        event_id  TEXT NOT NULL,
+        visitor   TEXT NOT NULL,
+        kind      TEXT NOT NULL,
+        name      TEXT NOT NULL,
+        room      INTEGER NOT NULL,
+        joined_at INTEGER NOT NULL,
+        left_at   INTEGER,
+        closed_by TEXT NOT NULL DEFAULT ''
+      )
+    `);
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_visits_run ON visits(run_id, joined_at)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_visits_open ON visits(left_at)');
+    // サーバーが最後に生きていた時刻。再起動で「退場が書かれないまま」残った行を
+    // どの時刻で閉じるかの根拠になる（詳細は closeOpenVisits）
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS meta (
+        k TEXT PRIMARY KEY,
+        v TEXT NOT NULL
+      )
+    `);
     ready = true;
     lastError = '';
     console.log('[store] Turso に接続しました（イベントは永続化されます）');
@@ -364,5 +403,327 @@ export async function deleteBan(email) {
   } catch (e) {
     console.warn('[store] BANの解除に失敗:', e.message);
     return false;
+  }
+}
+
+// ------------------------------------------------------------
+// イベントログ（開催記録と入退場ログ）
+//
+// Turso未設定でも機能自体は動くようにメモリ版を持つ。
+// 「ローカルで試したら記録画面が空っぽ」を避けるため。
+// ただしメモリ版は再起動で消える（イベント定義と同じ扱い）。
+// ------------------------------------------------------------
+
+const MAX_MEM_VISITS = 20000; // メモリ運用時の上限（古い順に捨てる）
+const memRuns = new Map(); // runId -> run
+const memVisits = [];
+let memVisitSeq = 1;
+let memHeartbeat = 0;
+
+/** 行→オブジェクト（列名はSQL側、キャメルケースはJS側で統一する） */
+function toRun(r) {
+  return {
+    runId: String(r.run_id),
+    eventId: String(r.event_id),
+    name: String(r.name),
+    openedAt: Number(r.opened_at),
+    closedAt: r.closed_at == null ? null : Number(r.closed_at),
+  };
+}
+
+function toVisit(r) {
+  return {
+    id: Number(r.id),
+    runId: String(r.run_id),
+    eventId: String(r.event_id),
+    visitor: String(r.visitor),
+    kind: String(r.kind),
+    name: String(r.name),
+    room: Number(r.room),
+    joinedAt: Number(r.joined_at),
+    leftAt: r.left_at == null ? null : Number(r.left_at),
+    closedBy: r.closed_by == null ? '' : String(r.closed_by),
+  };
+}
+
+/**
+ * 開催を1件記録する（イベントを立てたとき／起動時の取りこぼし補完）。
+ * 既にあれば何もしない＝ログ機能より前から動いていたイベントも拾える。
+ */
+export async function logRunOpen(run) {
+  if (!run || !run.runId) return false;
+  if (!ready) {
+    if (!memRuns.has(run.runId)) {
+      memRuns.set(run.runId, { ...run, closedAt: run.closedAt ?? null });
+    }
+    return true;
+  }
+  try {
+    await db.execute({
+      sql: `INSERT INTO event_runs (run_id, event_id, name, opened_at, closed_at)
+            VALUES (?, ?, ?, ?, NULL)
+            ON CONFLICT(run_id) DO NOTHING`,
+      args: [run.runId, run.eventId, String(run.name || ''), run.openedAt],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] 開催記録の作成に失敗:', e.message);
+    return false;
+  }
+}
+
+/** イベント名が変わったら記録側も合わせる（後から名前を変えても記録が追える） */
+export async function logRunRename(runId, name) {
+  if (!runId) return false;
+  if (!ready) {
+    const r = memRuns.get(runId);
+    if (r) r.name = String(name || '');
+    return true;
+  }
+  try {
+    await db.execute({
+      sql: 'UPDATE event_runs SET name = ? WHERE run_id = ?',
+      args: [String(name || ''), runId],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] 開催名の更新に失敗:', e.message);
+    return false;
+  }
+}
+
+/** 閉店を記録する。既に閉じている記録は上書きしない */
+export async function logRunClose(runId, closedAt) {
+  if (!runId) return false;
+  if (!ready) {
+    const r = memRuns.get(runId);
+    if (r && r.closedAt == null) r.closedAt = closedAt;
+    return true;
+  }
+  try {
+    await db.execute({
+      sql: 'UPDATE event_runs SET closed_at = ? WHERE run_id = ? AND closed_at IS NULL',
+      args: [closedAt, runId],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] 閉店の記録に失敗:', e.message);
+    return false;
+  }
+}
+
+/**
+ * 入場を記録し、その行のidを返す（退場時にこのidで閉じる）。
+ * 失敗しても入場自体は通す（記録はサービスを止める理由にならない）。
+ * @returns {Promise<number|null>}
+ */
+export async function logVisitStart(v) {
+  if (!v || !v.runId) return null;
+  if (!ready) {
+    const row = { ...v, id: memVisitSeq++, leftAt: null, closedBy: '' };
+    memVisits.push(row);
+    if (memVisits.length > MAX_MEM_VISITS) memVisits.splice(0, memVisits.length - MAX_MEM_VISITS);
+    return row.id;
+  }
+  try {
+    const rs = await db.execute({
+      sql: `INSERT INTO visits (run_id, event_id, visitor, kind, name, room, joined_at, left_at, closed_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, '')`,
+      args: [v.runId, v.eventId, v.visitor, v.kind, String(v.name || ''), v.room, v.joinedAt],
+    });
+    // libSQL は BigInt で返す
+    return rs.lastInsertRowid == null ? null : Number(rs.lastInsertRowid);
+  } catch (e) {
+    console.warn('[store] 入場ログの記録に失敗:', e.message);
+    return null;
+  }
+}
+
+/**
+ * 退場を記録する。
+ * `left_at IS NULL` の行だけを更新するので、二重に呼ばれても最初の1回が残る
+ * （閉店処理と切断処理がほぼ同時に走るため、この条件が要る）。
+ */
+export async function logVisitEnd(id, leftAt, closedBy = '') {
+  if (id == null) return false;
+  if (!ready) {
+    const row = memVisits.find((r) => r.id === id);
+    if (row && row.leftAt == null) {
+      row.leftAt = leftAt;
+      row.closedBy = closedBy;
+    }
+    return true;
+  }
+  try {
+    await db.execute({
+      sql: 'UPDATE visits SET left_at = ?, closed_by = ? WHERE id = ? AND left_at IS NULL',
+      args: [leftAt, String(closedBy || ''), id],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] 退場ログの記録に失敗:', e.message);
+    return false;
+  }
+}
+
+/**
+ * 起動時の補正。前回のサーバーが落ちたとき、退場が書かれないまま残った行を閉じる。
+ *
+ * 閉じる時刻には「サーバーが最後に生きていた時刻」(heartbeat) を使う。
+ * 今の時刻で閉じると、スリープしていた時間ぶん滞在時間が水増しされてしまう
+ * （Render無料プランは15分アクセスが無いと寝るので、実際に何時間もズレる）。
+ */
+export async function closeOpenVisits(closedBy = 'restart') {
+  const at = await readHeartbeat();
+  if (!ready) {
+    let n = 0;
+    for (const row of memVisits) {
+      if (row.leftAt == null) {
+        row.leftAt = Math.max(row.joinedAt, at || row.joinedAt);
+        row.closedBy = closedBy;
+        n++;
+      }
+    }
+    return n;
+  }
+  try {
+    // heartbeat が無い（初回起動・古いDB）ときは入場時刻で閉じる＝滞在0秒。
+    // 実際より短く出るが、水増しするよりは安全
+    const rs = await db.execute({
+      sql: `UPDATE visits
+               SET left_at = CASE WHEN ? > joined_at THEN ? ELSE joined_at END,
+                   closed_by = ?
+             WHERE left_at IS NULL`,
+      args: [at || 0, at || 0, String(closedBy)],
+    });
+    return Number(rs.rowsAffected || 0);
+  } catch (e) {
+    console.warn('[store] 閉じ忘れの補正に失敗:', e.message);
+    return 0;
+  }
+}
+
+/** サーバーが生きている印。人が入っている間だけ定期的に呼ぶ */
+export async function touchHeartbeat(ts) {
+  if (!ready) {
+    memHeartbeat = ts;
+    return true;
+  }
+  try {
+    await db.execute({
+      sql: `INSERT INTO meta (k, v) VALUES ('heartbeat', ?)
+            ON CONFLICT(k) DO UPDATE SET v = excluded.v`,
+      args: [String(ts)],
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function readHeartbeat() {
+  if (!ready) return memHeartbeat;
+  try {
+    const rs = await db.execute("SELECT v FROM meta WHERE k = 'heartbeat'");
+    if (!rs.rows.length) return 0;
+    const n = Number(rs.rows[0].v);
+    return Number.isFinite(n) ? n : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+/** 開催の一覧（新しい順） */
+export async function listRuns(limit = 100) {
+  const lim = Math.min(500, Math.max(1, Math.trunc(limit) || 100));
+  if (!ready) {
+    return Array.from(memRuns.values())
+      .sort((a, b) => b.openedAt - a.openedAt)
+      .slice(0, lim)
+      .map((r) => ({ ...r }));
+  }
+  try {
+    const rs = await db.execute({
+      sql: `SELECT run_id, event_id, name, opened_at, closed_at
+              FROM event_runs ORDER BY opened_at DESC LIMIT ?`,
+      args: [lim],
+    });
+    return rs.rows.map(toRun);
+  } catch (e) {
+    console.warn('[store] 開催一覧の読み込みに失敗:', e.message);
+    return [];
+  }
+}
+
+export async function getRun(runId) {
+  if (!runId) return null;
+  if (!ready) {
+    const r = memRuns.get(runId);
+    return r ? { ...r } : null;
+  }
+  try {
+    const rs = await db.execute({
+      sql: 'SELECT run_id, event_id, name, opened_at, closed_at FROM event_runs WHERE run_id = ?',
+      args: [runId],
+    });
+    return rs.rows.length ? toRun(rs.rows[0]) : null;
+  } catch (e) {
+    console.warn('[store] 開催の読み込みに失敗:', e.message);
+    return null;
+  }
+}
+
+/**
+ * 複数の開催ぶんをまとめて読む。
+ * 一覧画面で開催ごとにクエリを投げると、Turso（Singapore）への往復が件数ぶん積み上がって
+ * 表示が数秒かかる。1回のクエリで全部取ってJS側で振り分ける。
+ * @returns {Promise<Map<string, Array>>} runId -> visits
+ */
+export async function listVisitsForRuns(runIds) {
+  const ids = Array.from(new Set((runIds || []).filter(Boolean)));
+  const map = new Map(ids.map((id) => [id, []]));
+  if (!ids.length) return map;
+  if (!ready) {
+    for (const v of memVisits) {
+      const arr = map.get(v.runId);
+      if (arr) arr.push({ ...v });
+    }
+    return map;
+  }
+  try {
+    const holes = ids.map(() => '?').join(',');
+    const rs = await db.execute({
+      sql: `SELECT id, run_id, event_id, visitor, kind, name, room, joined_at, left_at, closed_by
+              FROM visits WHERE run_id IN (${holes}) ORDER BY joined_at ASC`,
+      args: ids,
+    });
+    for (const row of rs.rows) {
+      const v = toVisit(row);
+      const arr = map.get(v.runId);
+      if (arr) arr.push(v);
+    }
+    return map;
+  } catch (e) {
+    console.warn('[store] 訪問ログの一括読み込みに失敗:', e.message);
+    return map;
+  }
+}
+
+/** 1開催ぶんの入退場ログ（時刻順） */
+export async function listVisits(runId) {
+  if (!runId) return [];
+  if (!ready) {
+    return memVisits.filter((v) => v.runId === runId).map((v) => ({ ...v }));
+  }
+  try {
+    const rs = await db.execute({
+      sql: `SELECT id, run_id, event_id, visitor, kind, name, room, joined_at, left_at, closed_by
+              FROM visits WHERE run_id = ? ORDER BY joined_at ASC`,
+      args: [runId],
+    });
+    return rs.rows.map(toVisit);
+  } catch (e) {
+    console.warn('[store] 訪問ログの読み込みに失敗:', e.message);
+    return [];
   }
 }

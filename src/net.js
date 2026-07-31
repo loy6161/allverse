@@ -1,4 +1,5 @@
 import { AVATAR_PARTS } from './avatar.js';
+import { getVisitorId } from './visitorid.js';
 
 // ------------------------------------------------------------------
 // アバターconfig（hex色形式） ⇔ av（プリセット番号形式）の相互変換
@@ -107,6 +108,10 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     ws.addEventListener('open', () => {
       const joinMsg = { t: 'join', n: name, av: configToAv(config) };
       if (idToken) joinMsg.idt = idToken; // Googleログイン済みなら権限判定に使われる
+      // イベントの累計人数を数えるための匿名ID（ゲスト用。中身はランダムな数字だけ）。
+      // ログイン済みの人はサーバー側でアカウント単位に数えるので、この値は使われない
+      const vid = getVisitorId();
+      if (vid) joinMsg.vid = vid;
       // 開発用: ?devRole=guest などで権限を試せる。本番サーバーは無視する
       const devRole = new URLSearchParams(location.search).get('devRole');
       if (devRole) joinMsg.devRole = devRole;
