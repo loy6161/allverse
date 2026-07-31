@@ -119,6 +119,49 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     if (prefs.muted) command('mute');
     else command('unMute');
     if (!prefs.playing) command('pauseVideo');
+    disableCaptions();
+  }
+
+  /**
+   * 字幕を出さない（2026-07-31 loyさん指示「字幕は現状は無くていい」）。
+   *
+   * URLの `cc_load_policy=0` は「既定ではONにしない」という意味しかなく、強制力がない。
+   * 実際、7/30にこれを入れたあとも本番で字幕が出続けた。
+   * 併記していた `cc_lang_pref=ja` はむしろ「日本語字幕を使う」という意思表示として
+   * 解釈されるため、こちらは削除した（mountIframe を参照）。
+   *
+   * 確実に消すには、プレイヤーから**字幕モジュール自体を降ろす**。
+   * モジュール名はYouTubeの世代で 'cc'（旧）と 'captions'（現行）の2つがあり、
+   * どちらが使われるかは動画やプレイヤーの版で変わるので両方に投げる。
+   * 存在しない方は黙って無視されるだけなので、両方送って害はない。
+   *
+   * ※ これは各自の手元のプレイヤーへの指示で、他の人には同期しない（音量・ミュートと同じ）
+   */
+  function disableCaptions() {
+    command('unloadModule', ['captions']);
+    command('unloadModule', ['cc']);
+  }
+
+  /**
+   * 字幕を消し続ける。
+   *
+   * 読み込み直後に1回投げるだけでは足りなかった（2026-07-31 実機で確認）。
+   * プレイヤーは**字幕モジュールを後から読み込む**ので、まだ無いものを降ろしても
+   * 何も起きず、あとから読み込まれた時点で字幕が出てしまう。
+   * 実際 bhyRIVxvw1Q の10分頃で出続け、手で unloadModule を投げ直したら消えた
+   * ＝「命令は効くが、投げる時機が早すぎる」ことが分かった。
+   *
+   * 正攻法は YouTube IFrame API のプレイヤーオブジェクトから onApiChange を拾うことだが、
+   * ここは postMessage で直接やりとりしている（APIの読み込みを増やしたくない）ため、
+   * 短い間隔で投げ続ける形にした。1回あたりの中身は空メッセージ2通で、負荷は無視できる。
+   * ライブ配信は途中から自動字幕が入ることもあるので、止めずに投げ続ける。
+   */
+  const CC_RETRY_MS = 2000;
+  let ccTimer = null;
+  function keepCaptionsOff() {
+    if (ccTimer) clearInterval(ccTimer);
+    disableCaptions();
+    ccTimer = setInterval(disableCaptions, CC_RETRY_MS);
   }
 
   function mountIframe(videoId) {
@@ -131,9 +174,11 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     // enablejsapi=1 と origin 指定で、postMessage による再生・音量操作が有効になる。
     // ミュート中は mute=1 で読み込む（postMessageが届く前に音が出るのを防ぐ）
     const origin = encodeURIComponent(location.origin);
-    // cc_load_policy=0 … 字幕を既定でONにしない（2026-07-30 指摘。ライブ会場では邪魔になる）。
-    //   視聴者が自分でONにするのは従来どおり可能
-    // cc_lang_pref … 字幕を出すときの言語。0指定と併記しておくと自動翻訳が勝手に乗りにくい
+    // cc_load_policy=0 … 字幕を既定でONにしない。ただし**これだけでは消えない**
+    //   （7/30に入れたが本番で出続けた）。実際に消しているのは disableCaptions()。
+    // ⚠ cc_lang_pref は付けない（2026-07-31 削除）。「字幕を出すときの言語」の指定だが、
+    //   付けること自体が「字幕を使う」意思表示として扱われ、逆にONになる原因になっていた。
+    //   7/30のコメントには「併記すると自動翻訳が乗りにくい」とあったが、これは誤りだった
     // タッチ端末では**常に消音で読み込む**。
     // 音ありで始めようとするとブラウザが自動再生ごと止めてしまい、再生が始まらない。
     // 本人が既に音を出していた場合は、読み込み後に applyPrefs が unMute を投げて戻す
@@ -143,7 +188,7 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     iframe.src =
       `https://www.youtube.com/embed/${videoId}` +
       `?autoplay=1&mute=${startMutedParam}&playsinline=1&rel=0&enablejsapi=1` +
-      `&cc_load_policy=0&cc_lang_pref=ja&origin=${origin}`;
+      `&cc_load_policy=0&origin=${origin}`;
     iframe.allow = 'autoplay; encrypted-media; picture-in-picture';
     holder.appendChild(iframe);
     // 読み込み後に listening を送ると再生位置などが届くようになる。
@@ -153,6 +198,7 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
       applyPrefs();
       setTimeout(applyPrefs, 1000);
       setTimeout(applyPrefs, 2500);
+      keepCaptionsOff(); // 字幕モジュールは後から読み込まれるので投げ続ける
     });
   }
 
