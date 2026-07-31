@@ -133,6 +133,22 @@ const MAX_LOG_RUNS = 200;           // 記録画面と外部APIが返す開催�
 // 未設定なら外部APIは開かない（無効が既定。うっかり全世界に公開しないため）
 const STATS_TOKEN = process.env.STATS_TOKEN || '';
 
+// 会場を開く鍵（2026-07-31追加）。
+//
+// 開発中のものに直リンクで来られたくない、という要望への対処。
+// 転送サービス（short.gy）経由でしか入れないようにする案が出たが、
+// 302転送は「どこから来たか」をこちらに伝えないうえ、転送後は本物のURLが
+// アドレスバーに出るため、経由の判定は原理的にできない（実測で確認）。
+// そこで「案内するURLに鍵を付ける」形にした:
+//   https://allverse.onrender.com/?k=<ENTRY_KEY>
+// 鍵を変えれば、配ったURLもブックマークも一斉に無効になる＝いつでも閉じられる。
+//
+// ⚠ これは「うっかり来た人を止める」ためのもので、秘密を守る仕組みではない。
+//   鍵つきURLをそのまま転送されれば入れる。守りたいのは公開の可否であって中身ではない。
+// 未設定なら鍵は無効＝今までどおり誰でも入れる（ローカル開発と移行の安全策。
+// GOOGLE_CLIENT_ID や STATS_TOKEN と同じ考え方）。
+const ENTRY_KEY = process.env.ENTRY_KEY || '';
+
 // ------------------------------------------------------------
 // サーバー状態
 // ------------------------------------------------------------
@@ -1303,6 +1319,9 @@ function buildStatusJson() {
     login: isLoginEnabled(),
     // PORTAL連携APIが開いているか（合言葉そのものは出さない）
     statsApi: Boolean(STATS_TOKEN),
+    // 入口に鍵がかかっているか（鍵そのものは出さない）。
+    // 鍵を変えたのに反映されない、を画面から切り分けるための手がかり
+    entryGate: Boolean(ENTRY_KEY),
     // 設定ミスを画面から特定できるようにする（トークンは含めない）
     store: getStoreStatus(),
     uptime: Math.floor((Date.now() - startedAt) / 1000),
@@ -1678,6 +1697,42 @@ async function handleStatsJson(req, res) {
   reply(200, { ok: true, source: 'allverse-web', generatedAt: Date.now(), events: runs });
 }
 
+// ------------------------------------------------------------
+// 会場の鍵（ENTRY_KEY）
+// ------------------------------------------------------------
+
+/** 入口のHTMLか（ここだけ鍵で守る。中の部品は単体では意味を持たない） */
+function isEntryDocument(safePath) {
+  return safePath === '' || safePath.toLowerCase().endsWith('.html');
+}
+
+/** URLの ?k= が鍵と一致するか。鍵が未設定なら常に true（＝誰でも入れる） */
+function hasValidEntryKey(rawUrl) {
+  if (!ENTRY_KEY) return true;
+  const q = new URLSearchParams((rawUrl || '').split('?')[1] || '');
+  const k = q.get('k') || '';
+  // 長さが違えば timingSafeEqual が例外を投げるので、先に揃えてから比べる
+  return (
+    k.length === ENTRY_KEY.length && timingSafeEqual(Buffer.from(k), Buffer.from(ENTRY_KEY))
+  );
+}
+
+/**
+ * 鍵が合わないときの応答。
+ *
+ * loyさんの要望は「直リンクを叩いても**何も表示されない**」なので、
+ * 案内文もサービス名も出さない。404にしているのは、
+ * 白紙よりも「そこには何も無い」という自然な見え方になるため。
+ * 会場が開いているかどうかも、この応答からは分からない。
+ */
+function sendClosedDoor(res) {
+  res.writeHead(404, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store', // 鍵を変えたあとも古い応答が残らないように
+  });
+  res.end('<!doctype html><meta charset="utf-8"><title>Not Found</title>');
+}
+
 const httpServer = http.createServer(async (req, res) => {
   const url = (req.url || '/').split('?')[0];
 
@@ -1764,6 +1819,13 @@ const httpServer = http.createServer(async (req, res) => {
     if (safePath.startsWith('..') || safePath.startsWith('server')) {
       res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ ok: false, error: 'forbidden' }));
+      return;
+    }
+    // 鍵が要るのは入口のHTMLだけ。JSや3Dモデル単体では会場に入れないので、
+    // ここを閉じれば「直リンクを叩いても何も出ない」は成立する。
+    // ⚠ presence.json は絶対に閉じない（VRChat側のWorkerが取りに来ている）
+    if (isEntryDocument(safePath) && !hasValidEntryKey(req.url)) {
+      sendClosedDoor(res);
       return;
     }
     const filePath = path.join(CLIENT_ROOT, safePath === '' ? 'index.html' : safePath);
@@ -1920,6 +1982,7 @@ async function boot() {
     console.log(`  イベント数: ${events.size} ／ BAN: ${bans.size}件`);
     console.log(`  イベントログ: 有効${fixed ? `（前回の閉じ忘れ ${fixed}件を補正）` : ''}`);
     console.log(`  PORTAL連携API: ${STATS_TOKEN ? '有効（/api/stats.json）' : '無効（STATS_TOKEN 未設定）'}`);
+    console.log(`  入口の鍵: ${ENTRY_KEY ? '有効（?k= が必要）' : '無効（ENTRY_KEY 未設定＝誰でも入れる）'}`);
   });
 }
 
