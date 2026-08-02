@@ -27,9 +27,14 @@ function injectStyle() {
   style.textContent = `
 .vc-yt {
   position: fixed;
-  right: 16px; bottom: 16px;
+  right: 16px;
+  /* ⚠ 右下の操作ボタン（❓ヘルプ / 🚪イベント / 👥参加者 / 全画面）と
+     動画のコントロールがここに並んでいる。bottom:16px にすると
+     **その上に覆いかぶさってボタンが押せなくなる**（2026-08-03 本番で発覚。
+     設定画面を閉じられない状態になった）。ボタン列の上まで持ち上げる */
+  bottom: 110px;
   width: min(340px, calc(100vw - 32px));
-  height: min(460px, calc(100vh - 180px));
+  height: min(460px, calc(100vh - 260px));
   display: flex; flex-direction: column;
   border-radius: 12px; overflow: hidden;
   background: rgba(12,12,28,0.96);
