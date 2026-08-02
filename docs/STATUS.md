@@ -216,6 +216,36 @@
 - 原本はこのdocs/のmd（Notionは写し）: PROTOCOL.md / PRESENCE_SPEC.md(v0.3) / HANDOFF_UNITY 系 /
   HANDOFF_PORTAL.md（2026-07-31追加）/ DEPLOY.md / SETUP_AUTH.md / STATUS・SPEC・WHY（本棚卸し3枚）
 
+### 担当の線引き（2026-08-02 変更）
+
+**Cloudflare Worker（`allverse-worker`）の担当を、Unity側からこちらへ移した。**
+
+> ここがいつもめんどくさいんだけど、UNITYは基本的にUNITYを直接触る作業をしてるから、
+> 裏側はこっちが担当したほうが効率よくない？（loyさん 2026-08-02）
+
+調べたところ Worker は **JavaScript 255行＋設定ファイルだけ**で、Unityのファイルは1つも無かった。
+Unityプロジェクトの**外**（`project/allverse/worker`）に置いてあり、
+作った人の都合でUnityフォルダの隣にあっただけだった。
+
+| 担当 | 範囲 |
+|---|---|
+| **こちら（ALLVERSE WEB）** | Worker / harvester / API / DB / presence ＝**画面の外側すべて** |
+| Unity側 | Udon / シーン / プレハブ / アバター配置 ＝**Unityを開く作業** |
+
+- ワールド側の**仕様の決定権はUnity側のまま**。`Docs/ALLVERSE_DESIGN.md` も引き続きあちらが正本
+- 申し送りは `docs/HANDOFF_UNITY_5_WORKER.md`（**Unity側チャットへ渡すこと**）
+- **フェイズ2の2cは、この移管なしには進まない**（合言葉の照合はチャットを読むWorkerでしかできない）
+
+### デプロイはこちらで行う（2026-08-02 確定）
+
+> Renderもだけど、君ができるならやってくれた方が良いと思う。
+> 僕は実装が始まったらあくまで最後の確認をするのが仕事。（loyさん）
+
+- **Render**: `git push origin master` で自動デプロイ（従来どおり）
+- **Cloudflare Worker**: `npx wrangler deploy`。**loyさんのアカウントで認証済み**
+  （`workers (write)` 権限あり・`--dry-run` でビルド確認済み）。こちらから直接デプロイできる
+- ⚠ **デプロイしたら必ず報告する**（何を出したか・本番で何を確認したか）
+
 ## 次にやること（優先順）
 
 1. ~~Renderデプロイ~~ **完了（2026-07-26）**。URLは ALLVERSE 統一に伴い移行中（詳細 DEPLOY_URL.md）
