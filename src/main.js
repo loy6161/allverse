@@ -414,9 +414,12 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     bounds: world.bounds,
     // シアター表示でカメラを寄せる先。ワールドごとにスクリーンの位置が違う
     screen: world.screen,
-    // 自分は物理でジャンプするが、他の人の画面ではジャンプのモーションとして見せる
+    // 自分は物理でジャンプするが、高さは誰にも送っていない（presence も x/z/向き だけ）。
+    // なので他の人の画面には「1回だけ跳ぶエモート(hop)」として見せる。
+    // ⤴️ボタンの jump（3回跳ねる）を使うと、1回しか跳んでいないのに
+    // 他人からは3回跳ねて見えてしまうため、専用のものを分けた（2026-08-03）
     onJump: () => {
-      if (net && !demoMode) net.sendEmote('jump');
+      if (net && !demoMode) net.sendEmote('hop');
     },
   });
 

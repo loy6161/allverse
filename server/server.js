@@ -98,7 +98,22 @@ const MAX_TXT_LEN = 200;          // chat.txt の最大文字数
 const MAX_COORD_ABS = 100;        // 座標の絶対値上限（これを超える/非数は破棄）
 
 // エモートの既定リスト（docs/PROTOCOL.md と一致させること。ここにないidは破棄）
-const EMOTE_IDS = new Set(['wave', 'clap', 'jump', 'dance', 'heart', 'penlight']);
+// hop … Spaceキーで実際に跳んだことを他の人へ見せるための1回だけのジャンプ。
+//        エモートバーには出さない内部専用のid（2026-08-03追加）
+const EMOTE_IDS = new Set(['wave', 'clap', 'jump', 'dance', 'heart', 'penlight', 'hop']);
+
+// 各エモートの長さ（秒）。src/avatar_glb.js の EMOTE_DURATIONS と同じ値。
+// presence.json に「あと何秒再生するか」を載せるために、サーバー側でも持つ必要がある。
+// ⚠ 片方だけ直すとVRChat側の再生時間がズレるので、必ず両方そろえること
+const EMOTE_DURATIONS = {
+  wave: 2.5,
+  clap: 2.5,
+  jump: 2.0,
+  dance: 4.0,
+  heart: 3.0,
+  penlight: 4.0,
+  hop: 0.72,
+};
 const EMOTE_MIN_INTERVAL_MS = 500; // 1クライアントあたりのエモート最小間隔（連打防止）
 
 // スクリーン
@@ -975,6 +990,10 @@ function handleEmote(client, msg) {
   const now = Date.now();
   if (client.lastEmoteAt && now - client.lastEmoteAt < EMOTE_MIN_INTERVAL_MS) return;
   client.lastEmoteAt = now;
+
+  // VRChatの客席で同じエモートを再生できるように、状態を持っておく（2026-08-03追加）。
+  // 以前は受け取って配るだけで捨てていたので、presence.json に載せられなかった
+  client.emote = { id: msg.e, at: now };
 
   broadcastFrom(client, { t: 'emote', id: client.id, e: msg.e });
 }
@@ -1863,6 +1882,21 @@ function buildPresenceJson() {
         r: toVrcRot(client.r),
         av: client.av,
       };
+
+      // 再生中のエモート（2026-08-03追加・VRChat側からの依頼）。
+      // 「終わった」という合図は送らない。再生が終わればこの項目自体が消えるので、
+      // VRChat側は「em が無い＝通常」と読めばよい（既存の c[] と同じ考え方）。
+      // ⚠ ブラウザ会場のエモートは6種すべて「決まった長さで1回」なので、
+      //   押している間ずっと、という状態は存在しない
+      const em = client.emote;
+      if (em && EMOTE_DURATIONS[em.id]) {
+        const durMs = EMOTE_DURATIONS[em.id] * 1000;
+        if (nowMs - em.at <= durMs) {
+          entry.em = em.id;
+          entry.emt = Math.floor(em.at / 1000);
+          entry.emd = EMOTE_DURATIONS[em.id];
+        }
+      }
 
       if (ENABLE_CHAT_FIELD && client.lastChat && nowMs - client.lastChat.ts <= PRESENCE_CHAT_WINDOW_MS) {
         entry.c = [

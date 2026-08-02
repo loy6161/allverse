@@ -411,7 +411,14 @@ export function createGlbAvatar(config) {
   }
 
   // ---- エモート ----
-  const EMOTE_DURATIONS = { wave: 2.5, clap: 2.5, jump: 2.0, dance: 4.0, heart: 3.0, penlight: 4.0 };
+  // hop … Spaceキーで実際に跳んだことを他の人へ見せるための1回だけのジャンプ。
+  //        エモートバーには出さない（内部専用・2026-08-03追加）。
+  //        長さ 0.72秒 は controls.js の物理そのまま（初速5.0 / 重力14.0 → 滞空 10/14秒）。
+  //        ここを合わせないと、本人の画面と他人の画面で跳び方が食い違う
+  const EMOTE_DURATIONS = { wave: 2.5, clap: 2.5, jump: 2.0, dance: 4.0, heart: 3.0, penlight: 4.0, hop: 0.72 };
+  // 他人のジャンプを再現するための値（controls.js と同じ）
+  const HOP_V0 = 5.0;
+  const HOP_G = 14.0;
   let emoteId = null;
   let emoteT = 0;
   let lastBeat = -1; // 拍手音を1打につき1回だけ鳴らすための直前の拍番号
@@ -513,6 +520,18 @@ export function createGlbAvatar(config) {
           lastBeat = beatIndex;
           playClap();
         }
+        break;
+      }
+      // Spaceキーで実際に跳んだとき、他の人の画面で同じ弧を描かせる。
+      // ⤴️ボタンの jump（2秒で3回跳ねる）とは別物なので、混ぜないこと
+      case 'hop': {
+        const h = Math.max(0, HOP_V0 * t - 0.5 * HOP_G * t * t);
+        body.position.y = h;
+        // 踏み切りと着地で潰す。跳んでいる間は少し伸ばす
+        const stretch = h / (HOP_V0 * HOP_V0 / (2 * HOP_G)); // 0=地面 1=頂点
+        root.scale.set(1 - stretch * 0.05, 1 + stretch * 0.08, 1 - stretch * 0.05);
+        if (armL) armL.rotation.x = stretch * 0.7;
+        if (armR) armR.rotation.x = stretch * 0.7;
         break;
       }
       case 'jump': {
