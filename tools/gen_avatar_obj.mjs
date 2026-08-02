@@ -12,7 +12,8 @@
 // 使い方: node tools/gen_avatar_obj.mjs <part>
 //   part: hair_long | hair_short | hair_twin | hair_bun | hair_pony
 //       | body_long | body_middle | body_short
-//       | acc_kemo | acc_ahoge
+//       | acc_kemo | acc_ahoge | acc_tail | acc_wing | acc_halo | acc_ribbon
+//       | acc_glasses | acc_sunglasses
 
 const PART = process.argv[2] || 'hair_long';
 
@@ -77,6 +78,40 @@ function ball(part, cx, cy, cz, r, seg = 7, rings = 5) {
       const b1 = rs[k + 1][j], b2 = rs[k + 1][(j + 1) % seg];
       F(part, a1, b1, b2);
       F(part, a1, b2, a2);
+    }
+  }
+}
+
+
+// 汎用: 平たい板（メガネのレンズ・羽・リボンの帯などに使う）。
+// 4点を渡して2枚の三角形にする。裏からも見えるよう両面ぶん張る
+function quad(part, a, b, c, d) {
+  const ia = V(...a), ib = V(...b), ic = V(...c), id = V(...d);
+  F(part, ia, ib, ic);
+  F(part, ia, ic, id);
+  F(part, ic, ib, ia);
+  F(part, id, ic, ia);
+}
+
+// 汎用: 輪（天使の輪）。細いドーナツを水平に置く
+function torus(part, cx, cy, cz, R, r, seg = 12, side = 5) {
+  const grid = [];
+  for (let i = 0; i < seg; i++) {
+    const a = rad(i * (360 / seg));
+    const row = [];
+    for (let j = 0; j < side; j++) {
+      const b = rad(j * (360 / side));
+      const rr = R + r * Math.cos(b);
+      row.push(V(cx + rr * Math.cos(a), cy + r * Math.sin(b), cz + rr * Math.sin(a)));
+    }
+    grid.push(row);
+  }
+  for (let i = 0; i < seg; i++) {
+    const i2 = (i + 1) % seg;
+    for (let j = 0; j < side; j++) {
+      const j2 = (j + 1) % side;
+      F(part, grid[i][j], grid[i2][j], grid[i2][j2]);
+      F(part, grid[i][j], grid[i2][j2], grid[i][j2]);
     }
   }
 }
@@ -323,6 +358,71 @@ const PARTS = {
   },
   acc_ahoge() {
     ahoge();
+  },
+  // ---- 2026-08-03 追加のアクセサリー（loyさん指示） ----
+  // 色は avatar_glb.js のマテリアル名で塗り分ける。
+  //   hair … 髪と同じ色（しっぽ・羽は本人の髪色に馴染ませる）
+  //   dark … 黒っぽい固定色（メガネのフレーム・サングラス）
+  //   cloth … 服と同じ色（リボン）
+  //   glow … 光る固定色（天使の輪）
+  acc_tail() {
+    // しっぽ。腰の後ろから下へ垂らし、先を軽く跳ね上げる
+    cone3('hair', [0, 0.34, -0.11], [0.02, 0.14, -0.3], 0.075);
+    cone3('hair', [0.02, 0.15, -0.29], [0.06, 0.17, -0.44], 0.045);
+  },
+  acc_wing() {
+    // 羽。背中から左右へ。板2枚ずつで「大小の羽根」に見せる
+    for (const sx of [-1, 1]) {
+      quad(
+        'glow',
+        [sx * 0.08, 0.62, -0.06],
+        [sx * 0.42, 0.78, -0.16],
+        [sx * 0.46, 0.55, -0.2],
+        [sx * 0.1, 0.46, -0.08],
+      );
+      quad(
+        'glow',
+        [sx * 0.08, 0.56, -0.07],
+        [sx * 0.34, 0.5, -0.17],
+        [sx * 0.3, 0.33, -0.19],
+        [sx * 0.09, 0.38, -0.09],
+      );
+    }
+  },
+  acc_halo() {
+    // 天使の輪。頭のかなり上に浮かせる（髪型が変わっても埋まらない高さ）
+    torus('glow', 0, 1.33, 0, 0.13, 0.018, 14, 5);
+  },
+  acc_ribbon() {
+    // リボン。頭の右側に結び目＋羽根2枚
+    ball('cloth', 0.19, 1.13, 0.02, 0.032, 6, 4);
+    quad('cloth', [0.19, 1.15, 0.02], [0.34, 1.21, 0.03], [0.36, 1.09, 0.03], [0.2, 1.1, 0.02]);
+    quad('cloth', [0.19, 1.15, 0.02], [0.28, 1.22, -0.1], [0.3, 1.1, -0.11], [0.2, 1.1, 0.02]);
+  },
+  acc_glasses() {
+    // メガネ。細いフレームだけ（レンズは透明にすると遠目で消えるので線で見せる）
+    for (const sx of [-1, 1]) {
+      // レンズの枠を4本の細い板で囲む
+      const cx = sx * 0.095, cy = 0.79, cz = 0.245;
+      const w = 0.072, h = 0.052, t = 0.008;
+      quad('dark', [cx - w, cy + h, cz], [cx + w, cy + h, cz], [cx + w, cy + h - t, cz], [cx - w, cy + h - t, cz]);
+      quad('dark', [cx - w, cy - h + t, cz], [cx + w, cy - h + t, cz], [cx + w, cy - h, cz], [cx - w, cy - h, cz]);
+      quad('dark', [cx - w, cy + h, cz], [cx - w + t, cy + h, cz], [cx - w + t, cy - h, cz], [cx - w, cy - h, cz]);
+      quad('dark', [cx + w - t, cy + h, cz], [cx + w, cy + h, cz], [cx + w, cy - h, cz], [cx + w - t, cy - h, cz]);
+      // つる
+      quad('dark', [sx * 0.167, cy + 0.012, cz], [sx * 0.2, cy + 0.012, cz - 0.12], [sx * 0.2, cy - 0.002, cz - 0.12], [sx * 0.167, cy - 0.002, cz]);
+    }
+    // ブリッジ
+    quad('dark', [-0.023, 0.802, 0.245], [0.023, 0.802, 0.245], [0.023, 0.79, 0.245], [-0.023, 0.79, 0.245]);
+  },
+  acc_sunglasses() {
+    // サングラス。メガネと同じ位置に、塗りつぶした板を置く
+    for (const sx of [-1, 1]) {
+      const cx = sx * 0.095, cy = 0.79, cz = 0.246;
+      quad('dark', [cx - 0.075, cy + 0.05, cz], [cx + 0.075, cy + 0.05, cz], [cx + 0.075, cy - 0.05, cz], [cx - 0.075, cy - 0.05, cz]);
+      quad('dark', [sx * 0.167, cy + 0.014, cz], [sx * 0.2, cy + 0.014, cz - 0.12], [sx * 0.2, cy, cz - 0.12], [sx * 0.167, cy, cz]);
+    }
+    quad('dark', [-0.025, 0.804, 0.246], [0.025, 0.804, 0.246], [0.025, 0.79, 0.246], [-0.025, 0.79, 0.246]);
   },
 };
 

@@ -27,10 +27,23 @@ const OUTFIT_LABELS = {
   short: 'ショート',
 };
 
+const HEIGHT_LABELS = {
+  small: 'SMALL',
+  mid: 'MID',
+  big: 'BIG',
+};
+
 const ACCESSORY_LABELS = {
   none: 'なし',
   kemo: 'けもみみ',
   ahoge: 'アホ毛',
+  // 2026-08-03 追加
+  tail: 'しっぽ',
+  wing: '羽',
+  halo: '天使の輪',
+  ribbon: 'リボン',
+  sunglasses: 'サングラス',
+  glasses: 'メガネ',
 };
 
 const STYLE_ID = 'join-screen-style';
@@ -456,6 +469,10 @@ function buildCustomizeScreen({
               <div class="hairstyle-buttons" id="accessory-buttons"></div>
             </div>
             <div class="customize-row">
+              <div class="customize-label">身長</div>
+              <div class="hairstyle-buttons" id="height-buttons"></div>
+            </div>
+            <div class="customize-row">
               <div class="customize-label">肌色</div>
               <div class="swatch-row" id="bodycolor-swatches"></div>
             </div>
@@ -535,6 +552,8 @@ function buildCustomizeScreen({
   if (!AVATAR_PARTS.hairStyles.includes(config.hairStyle)) config.hairStyle = AVATAR_PARTS.hairStyles[0];
   if (!AVATAR_PARTS.outfits.includes(config.outfit)) config.outfit = AVATAR_PARTS.outfits[0];
   if (!AVATAR_PARTS.accessories.includes(config.accessory)) config.accessory = 'none';
+  // 身長は 2026-08-03 追加。それ以前の保存データには入っていないので既定へ倒す
+  if (!AVATAR_PARTS.heights.includes(config.height)) config.height = 'mid';
   if (!AVATAR_PARTS.hairColors.includes(config.hairColor)) config.hairColor = AVATAR_PARTS.hairColors[1];
   if (!AVATAR_PARTS.shirtColors.includes(config.shirtColor)) config.shirtColor = AVATAR_PARTS.shirtColors[13];
   if (!AVATAR_PARTS.eyeColors.includes(config.eyeColor)) config.eyeColor = AVATAR_PARTS.eyeColors[1];
@@ -631,6 +650,7 @@ function buildCustomizeScreen({
   buildButtonRow('hairstyle-buttons', AVATAR_PARTS.hairStyles, HAIR_LABELS, 'hairStyle');
   buildButtonRow('outfit-buttons', AVATAR_PARTS.outfits, OUTFIT_LABELS, 'outfit');
   buildButtonRow('accessory-buttons', AVATAR_PARTS.accessories, ACCESSORY_LABELS, 'accessory');
+  buildButtonRow('height-buttons', AVATAR_PARTS.heights, HEIGHT_LABELS, 'height');
 
   // ---- 色スウォッチ ----
   function buildSwatchRow(containerId, colors, configKey) {
@@ -687,7 +707,7 @@ function buildCustomizeScreen({
       guestPreviewBackup = null;
       rebuildPreviewAvatar();
     }
-    const rows = ['hairstyle-buttons', 'outfit-buttons', 'accessory-buttons'];
+    const rows = ['hairstyle-buttons', 'outfit-buttons', 'accessory-buttons', 'height-buttons'];
     for (const id of rows) {
       const el = document.getElementById(id);
       if (!el) continue;

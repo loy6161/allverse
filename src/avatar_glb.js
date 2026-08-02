@@ -21,7 +21,18 @@ import { bubbleMs } from './bubbletime.js';
 export const GLB_STYLES = ['long', 'bob', 'short', 'twin', 'bun', 'pony'];
 // ※ ゲスト専用の「髪なし」は選択肢に入れない（選べてしまうと見分けにならない）
 export const GLB_OUTFITS = ['middle', 'long', 'short'];
-export const GLB_ACCESSORIES = ['none', 'kemo', 'ahoge'];
+export const GLB_ACCESSORIES = [
+  'none', 'kemo', 'ahoge',
+  // 2026-08-03 追加（loyさん指示）
+  'tail', 'wing', 'halo', 'ribbon', 'sunglasses', 'glasses',
+];
+
+/**
+ * 身長（2026-08-03追加）。3Dパーツは増やさず、アバター全体の拡大率で表す。
+ * ⚠ 目の高さ（一人称）とネームプレートの高さもこの倍率で動くので、
+ *   ここだけで完結する（各所に散らさない）
+ */
+export const GLB_HEIGHTS = { small: 0.88, mid: 1.0, big: 1.13 };
 
 // ネームプレートの見た目。ひと目で「誰が運営で、誰がNPCか」が分かるようにする。
 // 色だけだと色覚の差で伝わらないことがあるので、必ず記号もセットで付ける。
@@ -82,8 +93,9 @@ function partsFor(config) {
 export function preloadAvatars() {
   for (const o of GLB_OUTFITS) loadPart(`body_${o}`);
   for (const h of GLB_STYLES) loadPart(`hair_${h}`);
-  loadPart('acc_kemo');
-  loadPart('acc_ahoge');
+  for (const a of GLB_ACCESSORIES) {
+    if (a !== 'none') loadPart(`acc_${a}`);
+  }
 }
 
 // メッシュを「回転の支点」付きのグループで包む（腕=付け根、脚=腰）
@@ -111,12 +123,19 @@ export function createGlbAvatar(config) {
     shirtColor = '#f2f2f4',
     eyeColor = '',
     penlightColor = '',
+    height = 'mid',
     name = '',
     badge = '', // '' | 'admin' | 'vip' | 'npc' … ネームプレートの見た目を変える
   } = config || {};
 
   const root = new THREE.Group();
   root.name = 'avatar';
+  // 身長（2026-08-03追加）。root ごと拡大縮小するので、
+  // 頭の上のネームプレート・吹き出し・持ち物も一緒に付いてくる。
+  // ⚠ エモートの中で root.scale を触っている箇所（jump/hop の潰し）があるので、
+  //   そこは「身長 × 潰し」になるよう resetPose 側で基準に戻している
+  const heightScale = GLB_HEIGHTS[height] || 1;
+  root.scale.setScalar(heightScale);
   const body = new THREE.Group(); // 上下バウンド・傾き用
   root.add(body);
 
@@ -141,6 +160,17 @@ export function createGlbAvatar(config) {
     MatEyeC: () => toon(eyeIrisColor, 0.45),
     MatEyeGlint: () => new THREE.MeshBasicMaterial({ color: '#ffffff' }),
     MatCheek: () => toon('#ff96a0', 0.5),
+    // 2026-08-03追加のアクセサリー用。
+    // MatAcc … メガネ・サングラスのフレーム（服の色に引っ張られない固定の黒）
+    // MatGlow … 天使の輪・羽（光って見える固定色）
+    MatAcc: () => toon('#14141c', 0.15),
+    MatGlow: () =>
+      new THREE.MeshBasicMaterial({
+        color: '#ffffff',
+        transparent: true,
+        opacity: 0.82,
+        side: THREE.DoubleSide,
+      }),
   };
 
   // ---- 可動パーツ参照（読み込み後に埋まる） ----
@@ -577,7 +607,7 @@ export function createGlbAvatar(config) {
   function resetPose() {
     body.rotation.set(0, 0, 0);
     body.position.set(0, 0, 0);
-    root.scale.set(1, 1, 1);
+    root.scale.setScalar(heightScale);
     for (const p of [armL, armR, legL, legR]) {
       if (p) {
         p.rotation.set(0, 0, 0);
@@ -683,7 +713,13 @@ export function createGlbAvatar(config) {
         body.position.y = h;
         // 踏み切りと着地で潰す。跳んでいる間は少し伸ばす
         const stretch = h / (HOP_V0 * HOP_V0 / (2 * HOP_G)); // 0=地面 1=頂点
-        root.scale.set(1 - stretch * 0.05, 1 + stretch * 0.08, 1 - stretch * 0.05);
+        // 身長の倍率に「潰し」を掛け合わせる。
+        // 1 を基準にすると、背の高い/低い人がジャンプした瞬間だけ標準の背丈に戻ってしまう
+        root.scale.set(
+          heightScale * (1 - stretch * 0.05),
+          heightScale * (1 + stretch * 0.08),
+          heightScale * (1 - stretch * 0.05),
+        );
         if (armL) armL.rotation.x = stretch * 0.7;
         if (armR) armR.rotation.x = stretch * 0.7;
         break;
@@ -693,7 +729,11 @@ export function createGlbAvatar(config) {
         const phase = (t % period) / period;
         const h = Math.sin(Math.PI * phase);
         body.position.y = h * 0.3;
-        root.scale.set(1 + (0.3 - h) * 0.08, 1 + (h - 0.3) * 0.12, 1 + (0.3 - h) * 0.08);
+        root.scale.set(
+          heightScale * (1 + (0.3 - h) * 0.08),
+          heightScale * (1 + (h - 0.3) * 0.12),
+          heightScale * (1 + (0.3 - h) * 0.08),
+        );
         // 腕は後ろへ流す（万歳は頭に埋まって見えない）
         if (armL) armL.rotation.x = h * 0.7;
         if (armR) armR.rotation.x = h * 0.7;

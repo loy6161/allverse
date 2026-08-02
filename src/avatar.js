@@ -15,14 +15,27 @@ const COLOR14 = [
 ];
 
 export const AVATAR_PARTS = {
-  bodyColors: ['#ffdbac', '#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#3a2a1e', '#7fe6ff', '#ff8fe6'],
+  // ⚠ **末尾にだけ足す**こと。途中に入れると番号がずれ、
+  //   既に保存されている見た目やVRChat側の解釈が全部狂う。
+  //   '#fdf1e6'（白）は 2026-08-03 追加（loyさん指示）
+  bodyColors: [
+    '#ffdbac', '#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#3a2a1e', '#7fe6ff', '#ff8fe6',
+    '#fdf1e6',
+  ],
   // GLBアバター（Blender製）のパーツ一覧。wireには文字列がそのまま乗り、
   // 未知のidを受けた側は先頭にフォールバックする（net.js）ので追加は後方互換
   // ※「long」は承認済みボブ形状の名前（旧bobをリネーム。旧ロングは廃止）
   //   「bob」はあご下丈、「short」は耳が出る短さ（2026-07-29 追加）
   hairStyles: ['long', 'bob', 'short', 'twin', 'bun', 'pony'],
   outfits: ['middle', 'long', 'short'],
-  accessories: ['none', 'kemo', 'ahoge'],
+  // 2026-08-03 追加: しっぽ・羽・天使の輪・リボン・サングラス・メガネ
+  accessories: [
+    'none', 'kemo', 'ahoge',
+    'tail', 'wing', 'halo', 'ribbon', 'sunglasses', 'glasses',
+  ],
+  // 身長（2026-08-03追加）。3Dパーツは増やさず、アバター全体の拡大率で表す。
+  // 実寸: small=1.06m / mid=1.21m / big=1.36m 相当
+  heights: ['small', 'mid', 'big'],
   hairColors: COLOR14,
   shirtColors: COLOR14,
   eyeColors: COLOR14,
@@ -44,6 +57,7 @@ export function randomConfig() {
     shirtColor: pick(AVATAR_PARTS.shirtColors),
     eyeColor: pick(AVATAR_PARTS.eyeColors),
     penlightColor: pick(AVATAR_PARTS.penlightColors),
+    height: 'mid',
   };
 }
 

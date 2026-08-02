@@ -19,6 +19,9 @@ export function configToAv(config) {
   const ec = AVATAR_PARTS.eyeColors.indexOf(cfg.eyeColor);
   const pl = AVATAR_PARTS.penlightColors.indexOf(cfg.penlightColor);
   const h = AVATAR_PARTS.hairStyles.includes(cfg.hairStyle) ? cfg.hairStyle : AVATAR_PARTS.hairStyles[0];
+  // 身長（2026-08-03追加）。未指定は 'mid'（従来と同じ背丈）なので、
+  // 古いクライアント・古い保存データでも見た目は変わらない
+  const ht = AVATAR_PARTS.heights.includes(cfg.height) ? cfg.height : 'mid';
   const o = AVATAR_PARTS.outfits.includes(cfg.outfit) ? cfg.outfit : AVATAR_PARTS.outfits[0];
   const ac = AVATAR_PARTS.accessories.includes(cfg.accessory) ? cfg.accessory : AVATAR_PARTS.accessories[0];
   return {
@@ -30,6 +33,7 @@ export function configToAv(config) {
     bc: bc >= 0 ? bc : 0,
     ec: ec >= 0 ? ec : 0,
     pl: pl >= 0 ? pl : 0,
+    ht,
   };
 }
 
@@ -46,7 +50,10 @@ export function avToConfig(av) {
     a.h === GUEST_HAIR || AVATAR_PARTS.hairStyles.includes(a.h) ? a.h : AVATAR_PARTS.hairStyles[0];
   const outfit = AVATAR_PARTS.outfits.includes(a.o) ? a.o : AVATAR_PARTS.outfits[0];
   const accessory = AVATAR_PARTS.accessories.includes(a.ac) ? a.ac : AVATAR_PARTS.accessories[0];
+  // 知らない値・未指定はすべて 'mid' に倒す（受け取り側の後方互換）
+  const height = AVATAR_PARTS.heights.includes(a.ht) ? a.ht : 'mid';
   return {
+    height,
     bodyColor: AVATAR_PARTS.bodyColors[bcIdx],
     hairStyle,
     outfit,
