@@ -82,11 +82,21 @@ function injectStyle() {
   background: rgba(0,255,234,0.2);
 }
 
-/* アバター変更だけは文字ボタンなので幅を広げる */
+/* アバター変更だけは文字ボタンなので幅を広げる。
+   ⚠ #avatar-btn は style.css で ID指定 の position:fixed / top / right を持っている。
+   クラス+要素の指定ではIDに負けて上書きできず、バーの中に入らずに
+   元の位置へ浮いたままになっていた（2026-08-03 loyさん指摘）。
+   ここはID込みの指定にして必ず勝たせる */
+.vc-topbar #avatar-btn,
 .vc-topbar .vc-topbar-wide {
+  position: static;
+  top: auto; right: auto; bottom: auto; left: auto;
+  margin: 0;
   width: auto;
+  height: 34px;
   padding: 0 12px;
   font-size: 12px;
+  flex: 0 0 auto;
 }
 
 /* UI非表示（Hキー）に追従する。
