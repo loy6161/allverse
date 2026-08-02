@@ -100,8 +100,23 @@ function injectStyle() {
 }
 
 /* UI非表示（Hキー）に追従する。
-   ⚠ 表示トグル自身は消さない。消すと戻す手段が無くなる（viewmode.js 側で制御） */
-body.vc-ui-hidden .vc-topbar { display: none; }
+   ⚠ ただし **👁だけは残す**。バーごと消すと、Hキーを知らない人が
+   UIを戻す手段を失う（2026-08-03 loyさん指摘）。
+   枠と背景も消して、撮影の邪魔にならない「小さな目玉だけ」の状態にする */
+body.vc-ui-hidden .vc-topbar {
+  background: none;
+  border-color: transparent;
+  backdrop-filter: none;
+  padding: 6px 8px;
+}
+body.vc-ui-hidden .vc-topbar > *:not(.vc-topbar-tail) { display: none; }
+body.vc-ui-hidden .vc-topbar .vc-name-toggle { display: none; }
+/* 残した目玉も控えめに。押せることは分かる程度の濃さにする */
+body.vc-ui-hidden .vc-topbar .vc-ui-toggle {
+  opacity: 0.45;
+  background: rgba(10, 10, 30, 0.5);
+}
+body.vc-ui-hidden .vc-topbar .vc-ui-toggle:hover { opacity: 1; }
 
 @media (max-width: 640px) {
   .vc-topbar {
@@ -143,8 +158,11 @@ export function initTopBar() {
   const sep = document.createElement('div');
   sep.className = 'vc-topbar-sep';
 
-  // 表示の切り替え（🏷👁）が入る場所。仕切り線の右側
+  // 表示の切り替え（🏷👁）が入る場所。仕切り線の右側。
+  // UI非表示のときはここだけ残す（👁を押せなくなると戻せないため）ので、
+  // CSSから指せるようクラスを付けておく
   const tail = document.createElement('div');
+  tail.className = 'vc-topbar-tail';
   tail.style.display = 'flex';
   tail.style.alignItems = 'center';
   tail.style.gap = '8px';

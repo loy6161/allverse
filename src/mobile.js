@@ -138,10 +138,7 @@ function injectStyle() {
         height: 130px;
       }
 
-      /* キーボード操作説明は不要／室内情報は小さく */
-      #controls-help {
-        display: none;
-      }
+      /* 室内情報は小さく */
       #room-info {
         padding: 5px 10px;
         gap: 8px;

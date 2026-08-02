@@ -33,10 +33,12 @@ html, body {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  /* 2026-08-03: #hud の幅は下の操作ヒント（長文・583px）で決まるため、
-     ブロック要素の #room-info がそこまで引き伸ばされて
+  /* 2026-08-03: 中身のぶんだけの幅に留める。
+     以前ここに操作ヒント（長文583px）が同居していて、#hud の幅がそれで決まり、
+     ブロック要素の #room-info まで引き伸ばされて
      「会場名の枠だけ異様に横長」になっていた（loyさん指摘）。
-     中身のぶんだけの幅に留める */
+     ヒント自体はヘルプに同じ内容があるので廃止したが、
+     将来また下に何かを足したときに同じことが起きないよう、この指定は残す */
   width: fit-content;
   background: rgba(10, 10, 30, 0.6);
   border: 1px solid rgba(0, 255, 234, 0.35);
@@ -56,16 +58,6 @@ html, body {
 #player-count {
   font-size: 13px;
   color: #ccc;
-}
-
-#controls-help {
-  margin-top: 8px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.55);
-  background: rgba(10, 10, 30, 0.45);
-  border-radius: 6px;
-  padding: 4px 10px;
-  display: inline-block;
 }
 
 /* join-screen / chat-root の中身は各モジュールがスタイルごと注入する */
