@@ -10,6 +10,8 @@
 // ============================================================
 
 import { createClient } from '@libsql/client';
+// ゲスト専用の髪型id。アカウントの記録に混ぜないための判定に使う（saveProfile 参照）
+import { GUEST_HAIR } from '../src/guestlook.js';
 
 const URL_ENV = process.env.TURSO_DATABASE_URL || '';
 const TOKEN_ENV = process.env.TURSO_AUTH_TOKEN || '';
@@ -355,6 +357,10 @@ export async function loadProfile(email) {
     } catch {
       av = {};
     }
+    // ⚠ 既に混ざってしまった記録の後始末。
+    //   保存側は塞いだが、それ以前に書かれた「髪なし」がDBに残っている人がいる。
+    //   読むときに落としておけば、次に入ったとき既定の髪型に戻る（2026-08-03）
+    if (av && av.h === GUEST_HAIR) delete av.h;
     return { name: String(row.name), av };
   } catch (e) {
     console.warn('[store] プロフィール読み込みに失敗:', e.message);
@@ -365,6 +371,13 @@ export async function loadProfile(email) {
 /** 設定を保存（同じメールなら上書き） */
 export async function saveProfile(email, name, av) {
   if (!ready || !email) return false;
+  // ⚠ ゲスト専用の姿（髪なし）はアカウントの記録に混ぜない。
+  //   混ざると「一度ゲストで入ったら、次にログインしても髪なしのまま」になる
+  //   （2026-08-03 loyさん指摘）。ゲストの姿はサーバーが毎回 visitor から作るので、
+  //   保存しなくても何も失われない
+  if (av && av.h === GUEST_HAIR) {
+    return false;
+  }
   try {
     await db.execute({
       sql: `INSERT INTO profiles (email, name, av, updated_at)

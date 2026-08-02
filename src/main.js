@@ -24,6 +24,7 @@ import { initPeopleUI } from './people.js';
 import { initHelpUI } from './helpui.js';
 import { initNoticeBar } from './noticebar.js';
 import { initTopBar } from './topbar.js';
+import { initSettingsUI } from './settingsui.js';
 import { initConnBanner } from './connbanner.js';
 import { initYouTubeChat } from './ytchat.js';
 
@@ -103,6 +104,7 @@ let banList = []; // BAN一覧（管理者のみサーバーから届く）
 let kickLog = []; // キックの履歴（管理者のみ）。あとでBANするかの判断材料
 let noticeBar = null; // 運営メッセージの固定枠
 let topBar = null; // 右上のツールバー（会場と自分に関するボタン）
+let settingsUI = null; // ⚙設定パネル（表示設定・参加者・NPC設定）
 // 接続が切れていることを出すバナー（2026-08-03追加）。
 // initNet より先に作る必要がある（繋がらないと分かるのが接続直後のため）
 let connBanner = null;
@@ -903,6 +905,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
       }
     },
   });
+
+  // ⚙設定パネル（2026-08-03追加）。表示設定・参加者・NPC設定をここへ集めた。
+  // ヘルプ（読むところ）と設定（変えるところ）を分けるため
+  settingsUI = initSettingsUI({ slot: topBar.slot, people: peopleUI, rooms: roomUI });
 
   // welcomeが先に来ている場合に備えて、権限の反映をここでもう一度実行する
   applyRoleToUi();

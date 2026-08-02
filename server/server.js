@@ -111,7 +111,9 @@ const EMOTE_DURATIONS = {
   jump: 2.0,
   dance: 4.0,
   heart: 3.0,
-  penlight: 4.0,
+  // 2026-08-03: 4.0秒（持ち上げ＋2往復）→ 0.6秒（1往復だけ）に変更。
+  // 連打で振り続けられるようにするため。VRChat側は emd を見るので自動で追随する
+  penlight: 0.6,
   hop: 0.72,
 };
 const EMOTE_MIN_INTERVAL_MS = 500; // 1クライアントあたりのエモート最小間隔（連打防止）

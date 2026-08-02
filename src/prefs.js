@@ -13,6 +13,8 @@
 // こうすると「オフラインでも前回のまま」「別PCでもログインすれば同じ姿」の両方が成立する。
 // ============================================================
 
+import { GUEST_HAIR } from './guestlook.js';
+
 const KEY = 'allverse.prefs.v1';
 
 /** localStorage が使えない環境（プライベートモード等）でも落ちないようにする */
@@ -42,13 +44,23 @@ export function loadLocalPrefs() {
   const p = safeRead();
   if (!p || typeof p !== 'object') return null;
   if (!p.config || typeof p.config !== 'object') return null;
-  return { config: p.config };
+  const config = { ...p.config };
+  // ⚠ ゲスト専用の髪型（髪なし）が保存に混ざっていたら捨てる。
+  //   これはサーバーがゲストに割り当てる姿であって、本人が選んだものではない。
+  //   残っていると「一度ゲストで入ったら、ログインしても髪なしのまま」になる
+  //   （2026-08-03 loyさん指摘）。選択肢に無い値なので、消せば既定の髪型に戻る
+  if (config.hairStyle === GUEST_HAIR) delete config.hairStyle;
+  return { config };
 }
 
 /** アバターの見た目を保存する（名前は保存しない） */
 export function saveLocalPrefs({ config }) {
   if (!config || typeof config !== 'object') return;
-  safeWrite({ config, savedAt: Date.now() });
+  // ゲスト用に割り当てられた姿は「本人の好み」ではないので保存しない。
+  // ここを通してしまうと、次にログインしたときまで引き継がれる
+  const clean = { ...config };
+  if (clean.hairStyle === GUEST_HAIR) delete clean.hairStyle;
+  safeWrite({ config: clean, savedAt: Date.now() });
 }
 
 /**

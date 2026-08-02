@@ -418,7 +418,7 @@ export function createGlbAvatar(config) {
   //        エモートバーには出さない（内部専用・2026-08-03追加）。
   //        長さ 0.72秒 は controls.js の物理そのまま（初速5.0 / 重力14.0 → 滞空 10/14秒）。
   //        ここを合わせないと、本人の画面と他人の画面で跳び方が食い違う
-  const EMOTE_DURATIONS = { wave: 2.5, clap: 2.5, jump: 2.0, dance: 4.0, heart: 3.0, penlight: 4.0, hop: 0.72 };
+  const EMOTE_DURATIONS = { wave: 2.5, clap: 2.5, jump: 2.0, dance: 4.0, heart: 3.0, penlight: 0.6, hop: 0.72 };
   // 他人のジャンプを再現するための値（controls.js と同じ）
   const HOP_V0 = 5.0;
   const HOP_G = 14.0;
@@ -579,15 +579,25 @@ export function createGlbAvatar(config) {
         break;
       }
       case 'penlight': {
-        // ライブの客席の振り方。腕を高く上げ、肩からゆっくり大きく左右に振る。
-        // 速く小刻みに振ると何をしているか読めないので、拍に乗る速さにする。
-        const env = ease(t, dur, 0.3);
-        const swing = Math.sin(t * 4.0);
-        // 腕を高く上げ、拍に乗せて大きく左右に振る（内側に入れると頭の裏に回る）
-        aimArm(armR, 1, [0.66 + swing * 0.4, 0.88, 0.3], env);
-        // 体を軽く沈めて拍を取る
-        body.position.y = -Math.abs(Math.cos(t * 4.0)) * 0.02 * env;
-        body.rotation.z = -swing * 0.055 * env;
+        // ライブの客席の振り方。腕は**最初から上がっている**状態で、左右に1往復する。
+        //
+        // 2026-08-03 変更（loyさん）:
+        //   > 持ち上げるのをなくして、振るアニメーションだけなら
+        //   > 連打すれば振り続けられるからライブっぽくなるんじゃない？
+        //   以前は 4秒かけて「下から持ち上げてゆっくり2往復」だったので、
+        //   連打しても持ち上げからやり直しになり、振り続けられなかった。
+        //   いまは 0.6秒＝**ちょうど1往復**。押すたびに1振りぶん進む。
+        //
+        // ⚠ 立ち上がり（ease）を掛けない。掛けると押すたびに腕が下がって上がるので、
+        //   連打しても「振り続けている」ようには見えない。
+        // ⚠ sin は t=0 と t=dur の両方で 0（＝中央）になるようにしてある。
+        //   始まりと終わりの姿勢が同じなので、連打しても繋ぎ目が目立たない
+        const cycle = (t / dur) * Math.PI * 2;
+        const swing = Math.sin(cycle);
+        aimArm(armR, 1, [0.66 + swing * 0.4, 0.88, 0.3], 1);
+        // 体を軽く沈めて拍を取る（振りの折り返しでいちばん沈む）
+        body.position.y = -Math.abs(Math.cos(cycle)) * 0.02;
+        body.rotation.z = -swing * 0.055;
         break;
       }
       default:

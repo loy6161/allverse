@@ -569,6 +569,16 @@ export function initRoomUI({
       events = Array.isArray(list) ? list : [];
       if (open) render();
     },
+    /**
+     * NPCの調整だけを別の場所（⚙設定パネル）へ描く（2026-08-03追加）。
+     * loyさんの整理方針に合わせて、設定系はまとめて⚙の中から触れるようにした。
+     * 中身は🚪パネルのものと同じ部品なので、どちらから触っても同じ結果になる。
+     */
+    renderNpcInto(host) {
+      if (!host) return;
+      host.innerHTML = '';
+      host.appendChild(buildNpcSection());
+    },
     /** 自動補充でNPCが増減したときに、開いているパネルの人数表示を合わせる */
     refreshNpc() {
       if (!open || !npcNumEl) return;

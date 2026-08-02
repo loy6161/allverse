@@ -141,20 +141,21 @@ export function initPeopleUI({
   btn.textContent = '👥';
   slot.appendChild(btn);
 
-  const panel = document.createElement('div');
-  panel.className = 'vc-people-panel vc-people-hidden';
-  document.body.appendChild(panel);
+  const ownPanel = document.createElement('div');
+  ownPanel.className = 'vc-people-panel vc-people-hidden';
+  document.body.appendChild(ownPanel);
 
   let open = false;
 
   function closePanel() {
     open = false;
-    panel.classList.add('vc-people-hidden');
+    ownPanel.classList.add('vc-people-hidden');
   }
 
   function openPanel() {
     open = true;
-    panel.classList.remove('vc-people-hidden');
+    host = null; // 自前のパネルへ描く
+    ownPanel.classList.remove('vc-people-hidden');
     if (onRefresh) onRefresh();
     render();
   }
@@ -169,9 +170,16 @@ export function initPeopleUI({
     return window.confirm(message);
   }
 
+  /**
+   * 描き先。既定は自前のパネルだが、⚙設定パネルの中へ描くこともできる
+   * （2026-08-03追加。設定系を⚙にまとめる整理のため）
+   */
+  let host = null;
+
   function render() {
     const role = getRole();
     const isStaff = role === 'admin' || role === 'vip';
+    const panel = host || ownPanel;
     panel.innerHTML = '';
 
     const title = document.createElement('div');
@@ -356,6 +364,20 @@ export function initPeopleUI({
     /** 一覧の中身が変わったとき（人の出入り・ブロック・BAN）に呼ぶ */
     refresh() {
       if (open) render();
+      else if (host) render(); // ⚙設定パネルの中に出しているときも追従させる
+    },
+    /**
+     * 参加者一覧を別の場所（⚙設定パネル）へ描く（2026-08-03追加）。
+     * 中身も操作も👥パネルと同じ部品なので、どちらから触っても同じ結果になる。
+     */
+    renderInto(el) {
+      host = el || null;
+      if (onRefresh) onRefresh();
+      render();
+    },
+    /** ⚙設定パネルを閉じたときに呼ぶ。以後は自前のパネルへ描くように戻す */
+    detach() {
+      host = null;
     },
     close: closePanel,
   };
