@@ -1033,4 +1033,6 @@ window.addEventListener('resize', () => {
 
 // 開発用の覗き口。見た目の不具合を「パーツを消して切り分ける」ために使う。
 // 参照を渡すだけで挙動は変えない。
-window.__vc = { scene, camera, renderer, world };
+// 動作確認用の入口。描画が止まる環境（ブラウザのタブが裏など）でも
+// controls.update(dt) を手で回して挙動を確かめられるようにしてある
+window.__vc = { scene, camera, renderer, world, get controls() { return controls; }, get player() { return player; } };

@@ -336,6 +336,43 @@ export function createGlbAvatar(config) {
     penlight = stick;
   }
 
+  // ---- 小道具: ビールジョッキ（乾杯エモート用・2026-08-03追加） ----
+  // ペンライトと同じで、右手の先に置いて腕の向きに合わせる。
+  // 3Dアセットは増やさず、円柱と板だけで作る（遠目ではシルエットで読めれば十分）
+  let mug = null;
+  function ensureMug() {
+    if (mug || !armR) return;
+    const g = new THREE.Group();
+    const glassMat = new THREE.MeshBasicMaterial({ color: 0xf0c24a });
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.05, 0.13, 8), glassMat);
+    cup.position.y = 0.075;
+    g.add(cup);
+    // 泡
+    const foam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.06, 0.058, 0.035, 8),
+      new THREE.MeshBasicMaterial({ color: 0xfff6e2 }),
+    );
+    foam.position.y = 0.155;
+    g.add(foam);
+    // 取っ手
+    const handle = new THREE.Mesh(
+      new THREE.TorusGeometry(0.042, 0.011, 5, 10, Math.PI * 1.2),
+      glassMat,
+    );
+    handle.position.set(0.062, 0.075, 0);
+    handle.rotation.z = Math.PI / 2;
+    handle.rotation.y = Math.PI / 2;
+    g.add(handle);
+
+    const hand = new THREE.Vector3(0.075, -0.235, 0.015);
+    const dir = new THREE.Vector3(0.15, -0.2, 0.03).normalize();
+    g.position.copy(hand);
+    g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    g.visible = false;
+    armR.add(g);
+    mug = g;
+  }
+
   // ---- 小道具: ハート（ふわふわ浮かぶ） ----
   const hearts = [];
   let heartTexture = null;
@@ -358,6 +395,104 @@ export function createGlbAvatar(config) {
     heartTexture.colorSpace = THREE.SRGBColorSpace;
     return heartTexture;
   }
+  // ---- スペシャルエモート用の絵柄（2026-08-03追加） ----
+  //
+  // ハートと同じ「Canvasに描いた絵をスプライトで飛ばす」方式にした。
+  // Blenderで3Dパーツを作る手もあるが、
+  //   ・読み込むファイルが増えて入場が遅くなる
+  //   ・遠目では結局シルエットしか見えない
+  // ので、軽さと視認性の両方でこちらが有利。色も自由に変えられる。
+  const spriteTextures = new Map();
+  function makeSpriteTexture(kind) {
+    if (spriteTextures.has(kind)) return spriteTextures.get(kind);
+    const S = 64;
+    const cv = document.createElement('canvas');
+    cv.width = S;
+    cv.height = S;
+    const c = cv.getContext('2d');
+
+    if (kind === 'star') {
+      // 五角の星。ライブでよく振られる「星」の見立て
+      c.fillStyle = '#ffd84a';
+      c.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 === 0 ? S * 0.46 : S * 0.19;
+        const a = -Math.PI / 2 + (i * Math.PI) / 5;
+        const x = S / 2 + Math.cos(a) * r;
+        const y = S / 2 + Math.sin(a) * r;
+        if (i === 0) c.moveTo(x, y);
+        else c.lineTo(x, y);
+      }
+      c.closePath();
+      c.fill();
+    } else if (kind === 'smile') {
+      // ニコニコマーク
+      c.fillStyle = '#ffdc3c';
+      c.beginPath();
+      c.arc(S / 2, S / 2, S * 0.44, 0, Math.PI * 2);
+      c.fill();
+      c.fillStyle = '#2a2118';
+      c.beginPath();
+      c.arc(S * 0.36, S * 0.4, S * 0.07, 0, Math.PI * 2);
+      c.fill();
+      c.beginPath();
+      c.arc(S * 0.64, S * 0.4, S * 0.07, 0, Math.PI * 2);
+      c.fill();
+      c.lineWidth = S * 0.08;
+      c.strokeStyle = '#2a2118';
+      c.lineCap = 'round';
+      c.beginPath();
+      c.arc(S / 2, S * 0.52, S * 0.24, 0.15 * Math.PI, 0.85 * Math.PI);
+      c.stroke();
+    } else if (kind === 'spark') {
+      // 花火の粒。中心が白く、外へいくほど色が薄くなる点
+      const g = c.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+      g.addColorStop(0, 'rgba(255,255,255,1)');
+      g.addColorStop(0.35, 'rgba(255,220,120,0.95)');
+      g.addColorStop(1, 'rgba(255,120,60,0)');
+      c.fillStyle = g;
+      c.fillRect(0, 0, S, S);
+    }
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    spriteTextures.set(kind, tex);
+    return tex;
+  }
+
+  /**
+   * 絵柄を1つ飛ばす（ハートの仕組みを他の絵柄でも使えるようにしたもの）。
+   * @param {'star'|'smile'|'spark'} kind
+   * @param {object} opt 動きの調整
+   */
+  function spawnSprite(kind, opt = {}) {
+    const mat = new THREE.SpriteMaterial({
+      map: makeSpriteTexture(kind),
+      transparent: true,
+      depthWrite: false,
+      opacity: 1,
+      blending: kind === 'spark' ? THREE.AdditiveBlending : THREE.NormalBlending,
+    });
+    const sp = new THREE.Sprite(mat);
+    sp.scale.set(0.01, 0.01, 1);
+    const px = opt.x !== undefined ? opt.x : (Math.random() - 0.5) * 0.5;
+    const py = opt.y !== undefined ? opt.y : 0.5 + Math.random() * 0.2;
+    sp.position.set(px, py, opt.z !== undefined ? opt.z : 0.34);
+    sp.renderOrder = 900;
+    body.add(sp);
+    hearts.push({
+      sprite: sp,
+      size: opt.size !== undefined ? opt.size : 0.26 + Math.random() * 0.16,
+      life: 0,
+      ttl: opt.ttl !== undefined ? opt.ttl : 1.9 + Math.random() * 0.7,
+      vy: opt.vy !== undefined ? opt.vy : 0.5 + Math.random() * 0.3,
+      vx: opt.vx !== undefined ? opt.vx : 0,
+      gravity: opt.gravity !== undefined ? opt.gravity : 0,
+      sway: opt.sway !== undefined ? opt.sway : (Math.random() - 0.5) * 0.8,
+      phase: Math.random() * Math.PI * 2,
+    });
+  }
+
   function spawnHeart() {
     const mat = new THREE.SpriteMaterial({
       map: makeHeartTexture(),
@@ -395,7 +530,10 @@ export function createGlbAvatar(config) {
         hearts.splice(i, 1);
         continue;
       }
+      // 花火は横に飛んで落ちるので、横速度と重力も扱えるようにしてある
+      if (h.gravity) h.vy -= h.gravity * dt;
       h.sprite.position.y += h.vy * dt;
+      h.sprite.position.x += (h.vx || 0) * dt;
       h.sprite.position.x += Math.sin(h.life * 3 + h.phase) * h.sway * dt;
       // 出たては勢いよく膨らみ（少し行き過ぎてから戻る）、最後にふっと消える
       const popT = Math.min(1, k / 0.18);
@@ -418,7 +556,15 @@ export function createGlbAvatar(config) {
   //        エモートバーには出さない（内部専用・2026-08-03追加）。
   //        長さ 0.72秒 は controls.js の物理そのまま（初速5.0 / 重力14.0 → 滞空 10/14秒）。
   //        ここを合わせないと、本人の画面と他人の画面で跳び方が食い違う
-  const EMOTE_DURATIONS = { wave: 2.5, clap: 2.5, jump: 2.0, dance: 4.0, heart: 3.0, penlight: 0.6, hop: 0.72 };
+  const EMOTE_DURATIONS = { wave: 2.5, clap: 2.5, jump: 2.0, dance: 4.0, heart: 3.0, penlight: 0.6, hop: 0.72,
+    // ---- スペシャルエモート（2ページ目・2026-08-03追加）----
+    fist: 1.4,      // コブシを上げる
+    smile: 2.2,     // ニコニコマーク
+    headbang: 2.0,  // ヘッドバンキング
+    star: 2.4,      // 星
+    firework: 2.6,  // 花火
+    cheers: 2.2,    // 乾杯（ビール）
+  };
   // 他人のジャンプを再現するための値（controls.js と同じ）
   const HOP_V0 = 5.0;
   const HOP_G = 14.0;
@@ -439,6 +585,7 @@ export function createGlbAvatar(config) {
       }
     }
     if (penlight) penlight.visible = false;
+    if (mug) mug.visible = false;
     heartCount = 0;
   }
   // 腕が短く頭が大きいので、前挙げ系エモート中は支点ごと少し前・外に出して
@@ -483,6 +630,10 @@ export function createGlbAvatar(config) {
     if (id === 'penlight') {
       ensurePenlight();
       if (penlight) penlight.visible = true;
+    }
+    if (id === 'cheers') {
+      ensureMug();
+      if (mug) mug.visible = true;
     }
   }
   function applyEmote(id, t, dur) {
@@ -598,6 +749,100 @@ export function createGlbAvatar(config) {
         // 体を軽く沈めて拍を取る（振りの折り返しでいちばん沈む）
         body.position.y = -Math.abs(Math.cos(cycle)) * 0.02;
         body.rotation.z = -swing * 0.055;
+        break;
+      }
+      // ================= スペシャルエモート（2ページ目・2026-08-03追加） =================
+      case 'fist': {
+        // コブシを上げる。真上へ突き上げて、拍に合わせて2回押し上げる。
+        // 腕を体の外側へ開いてから上げないと、頭の裏に回って正面から見えない
+        const env = ease(t, dur, 0.18);
+        const pump = Math.max(0, Math.sin(t * 7.5)); // 突き上げは「上げて戻す」の片側だけ
+        aimArm(armR, 1, [0.34, 1.0 + pump * 0.22, 0.16], env);
+        pushArmOut(armR, 1, env);
+        body.position.y = pump * 0.045 * env;
+        body.rotation.z = -0.03 * env;
+        break;
+      }
+      case 'smile': {
+        // ニコニコマークを出す。体は軽く左右に揺れるだけで、主役は出てくるマーク
+        const env = ease(t, dur, 0.3);
+        body.rotation.z = Math.sin(t * 2.4) * 0.05 * env;
+        body.position.y = Math.abs(Math.sin(t * 2.4)) * 0.015 * env;
+        // 一定の間隔で出す（毎フレーム出すと画面が埋まる）
+        if (Math.floor(t * 3) !== lastBeat) {
+          lastBeat = Math.floor(t * 3);
+          spawnSprite('smile', { size: 0.3, ttl: 1.6, vy: 0.55, y: 0.62 });
+        }
+        break;
+      }
+      case 'headbang': {
+        // ヘッドバンキング。首だけ動かす仕組みが無いので、上体を前後に大きく振る。
+        // 腕は体の横で軽く畳んで、ノリを出す
+        const env = ease(t, dur, 0.15);
+        const beat = Math.sin(t * 9.0);
+        body.rotation.x = (0.34 + beat * 0.34) * env; // 常に前傾ぎみで、拍で深く振る
+        body.position.y = -Math.abs(beat) * 0.05 * env;
+        if (armL) armL.rotation.x = (-0.5 - beat * 0.25) * env;
+        if (armR) armR.rotation.x = (-0.5 - beat * 0.25) * env;
+        break;
+      }
+      case 'star': {
+        // 星。両手を上げて、星をぱらぱら出す
+        const env = ease(t, dur, 0.25);
+        const sway = Math.sin(t * 3.0);
+        aimArm(armL, -1, [-0.5 - sway * 0.2, 0.9, 0.25], env);
+        aimArm(armR, 1, [0.5 - sway * 0.2, 0.9, 0.25], env);
+        pushArmOut(armL, -1, env);
+        pushArmOut(armR, 1, env);
+        body.rotation.z = sway * 0.05 * env;
+        if (Math.floor(t * 5) !== lastBeat) {
+          lastBeat = Math.floor(t * 5);
+          spawnSprite('star', {
+            size: 0.16 + Math.random() * 0.12,
+            ttl: 1.4,
+            vy: 0.7,
+            y: 0.9 + Math.random() * 0.3,
+            x: (Math.random() - 0.5) * 0.8,
+          });
+        }
+        break;
+      }
+      case 'firework': {
+        // 花火。頭上で一度だけ大きく弾けさせ、粒が放物線で散る。
+        // 何度も弾けると花火に見えないので、打ち上げ→開く の1回にしている
+        const env = ease(t, dur, 0.2);
+        aimArm(armL, -1, [-0.45, 0.95, 0.2], env);
+        aimArm(armR, 1, [0.45, 0.95, 0.2], env);
+        pushArmOut(armL, -1, env);
+        pushArmOut(armR, 1, env);
+        if (lastBeat < 0 && t > 0.35) {
+          lastBeat = 1; // 1回だけ
+          for (let i = 0; i < 22; i++) {
+            const a = (i / 22) * Math.PI * 2 + Math.random() * 0.2;
+            const sp = 0.9 + Math.random() * 0.6;
+            spawnSprite('spark', {
+              size: 0.16 + Math.random() * 0.1,
+              ttl: 1.3 + Math.random() * 0.5,
+              x: 0,
+              y: 1.6,
+              vx: Math.cos(a) * sp,
+              vy: Math.sin(a) * sp,
+              gravity: 1.1,
+              sway: 0,
+            });
+          }
+        }
+        break;
+      }
+      case 'cheers': {
+        // 乾杯。ジョッキを持った右手を前へ差し出し、軽く打ち合わせる仕草を2回。
+        // 上げっぱなしにせず「合わせて戻す」を繰り返すことで乾杯に見せる
+        const env = ease(t, dur, 0.2);
+        const toast = Math.max(0, Math.sin(t * 4.2));
+        aimArm(armR, 1, [0.3 + toast * 0.16, 0.42 + toast * 0.3, 0.62], env);
+        pushArmOut(armR, 1, env * 0.6);
+        body.position.y = toast * 0.02 * env;
+        body.rotation.z = -toast * 0.04 * env;
         break;
       }
       default:

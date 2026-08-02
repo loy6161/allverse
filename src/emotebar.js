@@ -5,14 +5,27 @@
 
 const STYLE_ID = 'vc-emotebar-style';
 
-// 左から順に表示するエモート一覧（数字キー1〜6に対応）
-const EMOTES = [
-  { id: 'wave', emoji: '\u{1F44B}', label: '手をふる' }, // 👋
-  { id: 'clap', emoji: '\u{1F44F}', label: '拍手' }, // 👏
-  { id: 'jump', emoji: '\u{2934}\u{FE0F}', label: 'ジャンプ' }, // ⤴️
-  { id: 'dance', emoji: '\u{1F57A}', label: 'おどる' }, // 🕺
-  { id: 'heart', emoji: '\u{1F497}', label: 'ハート' }, // 💗
-  { id: 'penlight', emoji: '\u{1F526}', label: 'ペンライト' }, // 🔦
+// エモートは2ページ。数字キー1〜6は「いま開いているページ」に対応する。
+// 2ページ目＝スペシャルエモート（2026-08-03 loyさん指示で追加）。
+// ⚠ 12個を1列に並べる案は採らなかった。横に長くなって画面を圧迫するうえ、
+//   数字キーが1〜6で足りなくなる（7〜9,0を割り当てても覚えられない）。
+const EMOTE_PAGES = [
+  [
+    { id: 'wave', emoji: '\u{1F44B}', label: '手をふる' }, // 👋
+    { id: 'clap', emoji: '\u{1F44F}', label: '拍手' }, // 👏
+    { id: 'jump', emoji: '\u{2934}\u{FE0F}', label: 'ジャンプ' }, // ⤴️
+    { id: 'dance', emoji: '\u{1F57A}', label: 'おどる' }, // 🕺
+    { id: 'heart', emoji: '\u{1F497}', label: 'ハート' }, // 💗
+    { id: 'penlight', emoji: '\u{1F526}', label: 'ペンライト' }, // 🔦
+  ],
+  [
+    { id: 'fist', emoji: '\u{270A}', label: 'コブシを上げる' }, // 
+    { id: 'smile', emoji: '\u{1F604}', label: 'ニコニコ' }, // 
+    { id: 'headbang', emoji: '\u{1F918}', label: 'ヘッドバンキング' }, // 
+    { id: 'star', emoji: '\u{2B50}', label: '星' }, // 
+    { id: 'firework', emoji: '\u{1F386}', label: '花火' }, // 
+    { id: 'cheers', emoji: '\u{1F37A}', label: '乾杯' }, // 
+  ],
 ];
 
 const COOLDOWN_MS = 500;
@@ -81,6 +94,12 @@ function injectStyle() {
       transform: none;
       filter: none;
       box-shadow: none;
+    }
+
+    /* ページ送り。エモート本体と区別が付くよう枠の色を変える */
+    .vc-emote-page {
+      border-color: rgba(255, 0, 229, 0.6);
+      background: rgba(255, 0, 229, 0.14);
     }
 
     .vc-emote-key {
@@ -157,26 +176,51 @@ export function initEmoteBar({ onEmote }) {
   bar.className = 'vc-emote-bar';
 
   const buttons = [];
+  /** いま開いているページ（0＝ふつう / 1＝スペシャル） */
+  let page = 0;
 
-  EMOTES.forEach((emote, index) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'vc-emote-btn';
-    btn.title = emote.label;
-    btn.setAttribute('aria-label', emote.label);
-    btn.textContent = emote.emoji;
+  // ページを切り替えるボタン。バーの右端に置く
+  const pageBtn = document.createElement('button');
+  pageBtn.type = 'button';
+  pageBtn.className = 'vc-emote-btn vc-emote-page';
 
-    const keyBadge = document.createElement('span');
-    keyBadge.className = 'vc-emote-key';
-    keyBadge.textContent = String(index + 1);
-    btn.appendChild(keyBadge);
+  function renderPage() {
+    bar.innerHTML = '';
+    buttons.length = 0;
+    EMOTE_PAGES[page].forEach((emote, index) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'vc-emote-btn';
+      btn.title = emote.label;
+      btn.setAttribute('aria-label', emote.label);
+      btn.textContent = emote.emoji;
 
-    btn.addEventListener('click', () => fire(emote.id, btn));
+      const keyBadge = document.createElement('span');
+      keyBadge.className = 'vc-emote-key';
+      keyBadge.textContent = String(index + 1);
+      btn.appendChild(keyBadge);
 
-    bar.appendChild(btn);
-    buttons.push(btn);
+      btn.addEventListener('click', () => fire(emote.id, btn));
+      bar.appendChild(btn);
+      buttons.push(btn);
+    });
+    // ✨＝スペシャルへ / 👋＝ふつうへ
+    pageBtn.textContent = page === 0 ? '\u{2728}' : '\u{1F44B}';
+    pageBtn.title = page === 0 ? 'スペシャルエモートへ (E)' : 'ふつうのエモートへ (E)';
+    bar.appendChild(pageBtn);
+    if (!enabled || cooling) {
+      buttons.forEach((b) => {
+        b.disabled = true;
+      });
+    }
+  }
+
+  pageBtn.addEventListener('click', () => {
+    page = page === 0 ? 1 : 0;
+    renderPage();
   });
 
+  renderPage();
   document.body.appendChild(bar);
 
   function fire(id, btn) {
@@ -206,9 +250,15 @@ export function initEmoteBar({ onEmote }) {
 
   function onKeydown(e) {
     if (isTypingTarget(document.activeElement)) return;
+    // E キーでページを切り替える（マウスに手を戻さずに済むように）
+    if (e.key === 'e' || e.key === 'E') {
+      page = page === 0 ? 1 : 0;
+      renderPage();
+      return;
+    }
     const idx = ['1', '2', '3', '4', '5', '6'].indexOf(e.key);
     if (idx === -1) return;
-    fire(EMOTES[idx].id, buttons[idx]);
+    fire(EMOTE_PAGES[page][idx].id, buttons[idx]);
   }
   window.addEventListener('keydown', onKeydown);
 

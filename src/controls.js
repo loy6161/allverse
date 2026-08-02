@@ -36,6 +36,61 @@ export function initControls(camera, avatar, domElement, { bounds, onJump, scree
 
   const SPEED = 4.2;
 
+  // ---- ダブルクリックでその場所まで歩く（2026-08-03追加） ----
+  //
+  // loyさんの要望:
+  //   > ダブルクリックでその位置まで移動（キーボード使わずにマウスだけでも移動できるように）
+  //
+  // 床（y=0 の面）へ視線を飛ばして交点を出し、そこへ向かって歩く。
+  // ⚠ **キーボード/スティックの入力が入ったら即やめる**。
+  //   自動で歩いている最中に操作を奪われると気持ち悪いため
+  const raycaster = new THREE.Raycaster();
+  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const pointerNdc = new THREE.Vector2();
+  /** 目的地。null なら自動移動していない */
+  let moveTarget = null;
+  /** 目的地に着いたとみなす距離。小さすぎると目的地の周りで細かく往復する */
+  const ARRIVE_DIST = 0.25;
+  /** 目的地の目印（床に置く輪） */
+  let targetMark = null;
+
+  function ensureTargetMark() {
+    if (targetMark || !avatar || !avatar.parent) return;
+    const geo = new THREE.RingGeometry(0.28, 0.38, 24);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x00ffea,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      depthTest: false, // 床に埋まって見えなくならないように
+    });
+    targetMark = new THREE.Mesh(geo, mat);
+    targetMark.rotation.x = -Math.PI / 2;
+    targetMark.renderOrder = 5;
+    targetMark.visible = false;
+    avatar.parent.add(targetMark);
+  }
+
+  function setMoveTarget(point) {
+    if (!point) return;
+    moveTarget = new THREE.Vector3(
+      THREE.MathUtils.clamp(point.x, bounds.minX, bounds.maxX),
+      0,
+      THREE.MathUtils.clamp(point.z, bounds.minZ, bounds.maxZ),
+    );
+    ensureTargetMark();
+    if (targetMark) {
+      // 床のわずかに上に置く（同じ高さだとちらつく）
+      targetMark.position.set(moveTarget.x, 0.02, moveTarget.z);
+      targetMark.visible = true;
+    }
+  }
+
+  function cancelMoveTarget() {
+    moveTarget = null;
+    if (targetMark) targetMark.visible = false;
+  }
+
   // ジャンプ（スペースキー）
   const JUMP_SPEED = 5.0; // 初速（m/s）
   const GRAVITY = 14.0; // 重力加速度（キビキビ跳ねるよう実際より強め）
@@ -174,6 +229,20 @@ export function initControls(camera, avatar, domElement, { bounds, onJump, scree
   const endDrag = (e) => {
     if (e.pointerId === dragPointerId) dragPointerId = null;
   };
+  // ダブルクリックした床の位置まで歩く。
+  // ⚠ UI（チャット・パネル等）の上でのダブルクリックは拾わない。
+  //   canvas に付けているので、その上に乗っている要素のクリックはここへ来ない
+  domElement.addEventListener('dblclick', (e) => {
+    const rect = domElement.getBoundingClientRect();
+    pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointerNdc, camera);
+    const hit = new THREE.Vector3();
+    // 床の面と交わらない（空を指した）場合は何もしない
+    if (!raycaster.ray.intersectPlane(groundPlane, hit)) return;
+    setMoveTarget(hit);
+  });
+
   window.addEventListener('pointerup', endDrag);
   window.addEventListener('pointercancel', endDrag);
   domElement.addEventListener(
@@ -203,7 +272,30 @@ export function initControls(camera, avatar, domElement, { bounds, onJump, scree
     if (keys.has('KeyA') || keys.has('ArrowLeft')) side -= 1;
     if (keys.has('KeyD') || keys.has('ArrowRight')) side += 1;
 
-    const moving = Math.abs(fw) > 0.1 || Math.abs(side) > 0.1;
+    const manual = Math.abs(fw) > 0.1 || Math.abs(side) > 0.1;
+    // 自分で動かしたら自動移動はやめる（操作を奪われる感じを出さない）
+    if (manual && moveTarget) cancelMoveTarget();
+
+    // ---- ダブルクリックで指した場所へ歩く ----
+    let autoMoving = false;
+    if (!manual && moveTarget) {
+      const dx = moveTarget.x - avatar.position.x;
+      const dz = moveTarget.z - avatar.position.z;
+      const dist2 = Math.hypot(dx, dz);
+      if (dist2 <= ARRIVE_DIST) {
+        cancelMoveTarget();
+      } else {
+        autoMoving = true;
+        const step = Math.min(SPEED * dt, dist2); // 行き過ぎて往復しないよう残り距離で頭打ち
+        avatar.position.x += (dx / dist2) * step;
+        avatar.position.z += (dz / dist2) * step;
+        avatar.position.x = THREE.MathUtils.clamp(avatar.position.x, bounds.minX, bounds.maxX);
+        avatar.position.z = THREE.MathUtils.clamp(avatar.position.z, bounds.minZ, bounds.maxZ);
+        if (!firstPerson) turnTowards(Math.atan2(dx, dz), dt);
+      }
+    }
+
+    const moving = manual || autoMoving;
 
     // シアターモード中に動こうとしたら、自動的に通常表示へ戻す
     if (theater && moving) {
@@ -211,7 +303,7 @@ export function initControls(camera, avatar, domElement, { bounds, onJump, scree
       if (onTheaterExit) onTheaterExit();
     }
 
-    if (moving) {
+    if (manual) {
       const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
       const right = new THREE.Vector3(-forward.z, 0, forward.x);
       move.copy(forward).multiplyScalar(fw).addScaledVector(right, side).normalize();

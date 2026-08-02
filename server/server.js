@@ -100,7 +100,11 @@ const MAX_COORD_ABS = 100;        // 座標の絶対値上限（これを超え�
 // エモートの既定リスト（docs/PROTOCOL.md と一致させること。ここにないidは破棄）
 // hop … Spaceキーで実際に跳んだことを他の人へ見せるための1回だけのジャンプ。
 //        エモートバーには出さない内部専用のid（2026-08-03追加）
-const EMOTE_IDS = new Set(['wave', 'clap', 'jump', 'dance', 'heart', 'penlight', 'hop']);
+const EMOTE_IDS = new Set([
+  'wave', 'clap', 'jump', 'dance', 'heart', 'penlight', 'hop',
+  // スペシャルエモート（バーの2ページ目・2026-08-03追加）
+  'fist', 'smile', 'headbang', 'star', 'firework', 'cheers',
+]);
 
 // 各エモートの長さ（秒）。src/avatar_glb.js の EMOTE_DURATIONS と同じ値。
 // presence.json に「あと何秒再生するか」を載せるために、サーバー側でも持つ必要がある。
@@ -115,6 +119,13 @@ const EMOTE_DURATIONS = {
   // 連打で振り続けられるようにするため。VRChat側は emd を見るので自動で追随する
   penlight: 0.6,
   hop: 0.72,
+  // スペシャルエモート（2026-08-03追加）
+  fist: 1.4,
+  smile: 2.2,
+  headbang: 2.0,
+  star: 2.4,
+  firework: 2.6,
+  cheers: 2.2,
 };
 const EMOTE_MIN_INTERVAL_MS = 500; // 1クライアントあたりのエモート最小間隔（連打防止）
 
