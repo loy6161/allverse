@@ -492,6 +492,11 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         if (screen) {
           liveScreen.setVideo(screen);
           if (screenUI) screenUI.setCurrent(screen);
+          // YouTubeチャットは動画ごとに別物なので、ここでも貼り直す。
+          // これが無いと、イベントを移動したときにチャットだけ前の動画のまま残り、
+          // 「このライブストリームではチャットは無効です」と出る
+          // （2026-08-03 本番テストで発覚）
+          if (ytChat) ytChat.refresh();
         }
         if (playback) liveScreen.player.applySync(playback);
         applyRoleToUi();
@@ -507,6 +512,11 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         if (screen) {
           liveScreen.setVideo(screen);
           if (screenUI) screenUI.setCurrent(screen);
+          // YouTubeチャットは動画ごとに別物なので、ここでも貼り直す。
+          // これが無いと、イベントを移動したときにチャットだけ前の動画のまま残り、
+          // 「このライブストリームではチャットは無効です」と出る
+          // （2026-08-03 本番テストで発覚）
+          if (ytChat) ytChat.refresh();
         }
         if (playback) liveScreen.player.applySync(playback);
         chat.addMessage('', `${currentEvent ? currentEvent.name : ''} のルーム${room} に移動しました`, {

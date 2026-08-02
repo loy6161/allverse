@@ -281,6 +281,14 @@ export function initYouTubeChat({ getVideoId, onRequestCode, onUnlink }) {
     if (shown && mountedEmbed !== null && mountedEmbed !== canEmbed()) mount();
   });
 
+  // 動画が差し替わったのに refresh() を呼び忘れた経路があっても追いつくようにする。
+  // 2026-08-03、イベントを移動したときに呼び忘れがあり、チャットだけ前の動画のまま
+  // 残って「このライブストリームではチャットは無効です」と出た。
+  // mount() は動画idが同じなら何もしないので、ここを回しても貼り直しは起きない
+  setInterval(() => {
+    if (shown) mount();
+  }, 3000);
+
   renderLink();
 
   return {
