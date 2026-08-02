@@ -199,6 +199,11 @@ export function makeFloating(el, { key, title, resizable = true, minW = 220, min
 
   /** 画面の外に出さない。出すと掴めなくなって詰む */
   function clamp() {
+    // ⚠ まだ動かされていない（CSSの right/bottom で貼り付いている）ものには手を出さない。
+    //   ここで left/top を書き込むと bottom 指定が効かなくなり、
+    //   畳んで開いたときに下端がズレる（2026-08-03 実測で発覚）。
+    //   CSSで隅に貼り付いている間は、そもそも画面外に出ることがない
+    if (!applied) return;
     const r = el.getBoundingClientRect();
     const maxLeft = Math.max(0, window.innerWidth - r.width);
     const maxTop = Math.max(0, window.innerHeight - r.height);
@@ -352,6 +357,13 @@ export function makeFloating(el, { key, title, resizable = true, minW = 220, min
   let heightBeforeFold = '';
 
   function applyFold(on, { persist: doPersist = true } = {}) {
+    // 畳む前の下端を覚えておく。
+    // ⚠ top を固定したまま高さだけ縮めると、帯が元の**上端**に残って
+    //   下に大きな空白ができる。チャットは画面の下に置くものなので、
+    //   畳んだら「チャット欄の下の位置」に来る方が自然
+    //   （2026-08-03 loyさん「チャット欄の下の位置になってくれた方が親切かも」）
+    const bottomBefore = el.getBoundingClientRect().bottom;
+
     folded = Boolean(on);
     if (folded) {
       heightBeforeFold = el.style.height || '';
@@ -364,9 +376,25 @@ export function makeFloating(el, { key, title, resizable = true, minW = 220, min
       foldBtn.textContent = '畳む';
       foldBtn.title = 'チャットを畳む（帯だけ残ります）';
     }
+
+    // 下端を畳む前と同じ位置に保つ。
+    // まだ left/top へ置き換えていない（＝CSSの bottom で貼り付いている）場合は、
+    // 何もしなくても下端が保たれるので触らない
+    if (applied) {
+      const h = el.getBoundingClientRect().height;
+      el.style.top = `${Math.round(bottomBefore - h)}px`;
+    }
+
     if (doPersist) {
       const v = loadSaved(key) || {};
-      save(key, { ...v, folded });
+      // 畳んだ/開いた後の位置も一緒に残す。
+      // ここで位置を保存しないと、次に開いたとき上下がズレる
+      const r = el.getBoundingClientRect();
+      save(key, {
+        ...v,
+        folded,
+        ...(applied ? { left: Math.round(r.left), top: Math.round(r.top) } : {}),
+      });
     }
     clamp();
   }
