@@ -46,6 +46,13 @@ function injectStyle() {
 }
 
 /* 仕切り線。「自分と会場」と「表示の切り替え」を視覚的に分ける */
+.vc-topbar-slot,
+.vc-topbar-tail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .vc-topbar-sep {
   width: 1px; height: 22px;
   background: rgba(255,255,255,0.18);
@@ -109,7 +116,8 @@ body.vc-ui-hidden .vc-topbar {
   backdrop-filter: none;
   padding: 6px 8px;
 }
-body.vc-ui-hidden .vc-topbar > *:not(.vc-topbar-tail) { display: none; }
+body.vc-ui-hidden .vc-topbar .vc-topbar-slot,
+body.vc-ui-hidden .vc-topbar .vc-topbar-sep { display: none; }
 body.vc-ui-hidden .vc-topbar .vc-name-toggle { display: none; }
 /* 残した目玉も控えめに。押せることは分かる程度の濃さにする */
 body.vc-ui-hidden .vc-topbar .vc-ui-toggle {
@@ -149,11 +157,11 @@ export function initTopBar() {
   const root = document.createElement('div');
   root.className = 'vc-topbar';
 
-  // 会場と自分に関するボタンが入る場所（アバター変更・ヘルプ・ルーム・参加者）
+  // 会場と自分に関するボタンが入る場所（アバター変更・ヘルプ・ルーム・参加者）。
+  // ⚠ 並びの指定は**インラインで書かない**。インラインのdisplayはCSSに勝つので、
+  //   UI非表示のときに display:none で消せなくなる（2026-08-03 実際に消えなかった）
   const slot = document.createElement('div');
-  slot.style.display = 'flex';
-  slot.style.alignItems = 'center';
-  slot.style.gap = '8px';
+  slot.className = 'vc-topbar-slot';
 
   const sep = document.createElement('div');
   sep.className = 'vc-topbar-sep';
@@ -163,9 +171,6 @@ export function initTopBar() {
   // CSSから指せるようクラスを付けておく
   const tail = document.createElement('div');
   tail.className = 'vc-topbar-tail';
-  tail.style.display = 'flex';
-  tail.style.alignItems = 'center';
-  tail.style.gap = '8px';
 
   root.append(slot, sep, tail);
   document.body.appendChild(root);

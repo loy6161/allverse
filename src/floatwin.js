@@ -68,7 +68,8 @@ body.vc-float-dragging canvas { pointer-events: none; }
 }
 
 /* 元の位置に戻すボタン（ヘッダー内） */
-.vc-float-reset {
+.vc-float-reset,
+.vc-float-fold {
   border: 1px solid rgba(255,255,255,0.25);
   background: rgba(255,255,255,0.06);
   color: #dfeaff;
@@ -78,7 +79,18 @@ body.vc-float-dragging canvas { pointer-events: none; }
   cursor: pointer;
   flex: 0 0 auto;
 }
-.vc-float-reset:hover { background: rgba(255,255,255,0.18); }
+.vc-float-reset:hover,
+.vc-float-fold:hover { background: rgba(255,255,255,0.18); }
+
+/* 折りたたみ中は帯だけ残す。
+   YouTubeチャットを開いているときは会場のチャットが要らなくなるので、
+   閉じずに畳んでおけるようにした（2026-08-03 loyさん要望） */
+.vc-float-folded > *:not(.vc-float-head) { display: none !important; }
+.vc-float-folded {
+  height: auto !important;
+  min-height: 0 !important;
+  resize: none;
+}
 
 @media (max-width: 700px) {
   /* スマホでは掴む帯もつまみも出さない（動かせないので出すと嘘になる） */
@@ -150,7 +162,18 @@ export function makeFloating(el, { key, title, resizable = true, minW = 220, min
   resetBtn.type = 'button';
   resetBtn.className = 'vc-float-reset';
   resetBtn.textContent = '位置を戻す';
-  head.append(grip, titleEl, resetBtn);
+
+  // 折りたたみ（2026-08-03追加）。
+  // loyさん「ブラウザのチャットはYouTubeのチャット開いたら要らなくなるので
+  // 折りたたむか閉じるかできたらいいかもね」。
+  // **閉じる**ではなく**畳む**にしたのは、閉じると開き直す入口が要るため。
+  // 帯だけ残しておけば、そのまま押して戻せる
+  const foldBtn = document.createElement('button');
+  foldBtn.type = 'button';
+  foldBtn.className = 'vc-float-fold';
+  foldBtn.textContent = '畳む';
+
+  head.append(grip, titleEl, foldBtn, resetBtn);
   el.insertBefore(head, el.firstChild);
 
   // 大きさを変えるつまみ
@@ -187,11 +210,15 @@ export function makeFloating(el, { key, title, resizable = true, minW = 220, min
 
   function persist() {
     const r = el.getBoundingClientRect();
+    const prev = loadSaved(key) || {};
     save(key, {
       left: Math.round(r.left),
       top: Math.round(r.top),
       w: Math.round(r.width),
-      h: Math.round(r.height),
+      // 畳んでいる間の高さは「帯だけ」の高さなので保存しない。
+      // 保存すると、開き直したときに帯の高さのままになる
+      h: folded ? prev.h : Math.round(r.height),
+      folded,
     });
   }
 
@@ -212,6 +239,8 @@ export function makeFloating(el, { key, title, resizable = true, minW = 220, min
       el.style.right = 'auto';
       el.style.bottom = 'auto';
     }
+    // 畳んだまま閉じた人は、次も畳んだ状態で始める
+    if (v.folded) applyFold(true, { persist: false });
     clamp();
   }
 
@@ -312,8 +341,36 @@ export function makeFloating(el, { key, title, resizable = true, minW = 220, min
     clamp();
   });
 
+  // ---- 折りたたみ ----
+  let folded = false;
+  /** 畳む前の高さ。戻すときにこれに復帰する */
+  let heightBeforeFold = '';
+
+  function applyFold(on, { persist: doPersist = true } = {}) {
+    folded = Boolean(on);
+    if (folded) {
+      heightBeforeFold = el.style.height || '';
+      el.classList.add('vc-float-folded');
+      foldBtn.textContent = '開く';
+      foldBtn.title = 'チャットを開く';
+    } else {
+      el.classList.remove('vc-float-folded');
+      if (heightBeforeFold) el.style.height = heightBeforeFold;
+      foldBtn.textContent = '畳む';
+      foldBtn.title = 'チャットを畳む（帯だけ残ります）';
+    }
+    if (doPersist) {
+      const v = loadSaved(key) || {};
+      save(key, { ...v, folded });
+    }
+    clamp();
+  }
+
+  foldBtn.addEventListener('click', () => applyFold(!folded));
+
   function reset() {
     clearSaved(key);
+    applyFold(false, { persist: false });
     el.style.left = '';
     el.style.top = '';
     el.style.right = '';
