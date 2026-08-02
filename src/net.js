@@ -65,6 +65,29 @@ export function avToConfig(av) {
 const WELCOME_TIMEOUT_MS = 3000;
 const POS_INTERVAL_MS = 100; // 最大10Hz
 
+// ------------------------------------------------------------------
+// 切れたら繋ぎ直す（2026-08-03追加）
+//
+// なぜ要るか:
+//   本番テスト中、サーバーを再デプロイした瞬間に中にいた人のブラウザが
+//   **黙ってオフラインのデモモードに落ちた**。画面は普通に動いて見える
+//   （NPCも歩くし自分も動ける）ので壊れていることに気づけず、実際には
+//   吹き出しもチャットも他人の姿も何も届かない状態になっていた。
+//   直し方は再読み込みしかなく、案内も出ていなかった。
+//   ライブの最中にこれが起きると興行として成立しないので、自動で繋ぎ直す。
+//
+// 方針:
+//   ・**一度でも入場できた後**に切れた場合だけ繋ぎ直す。
+//     最初から繋がらない場合は、これまでどおりデモモードへ落とす
+//     （サーバーを起動していない開発中がこれに当たる）
+//   ・キック・BAN・閉店など「サーバーが意図して切った」ときは繋ぎ直さない。
+//     繋ぎ直すと締め出されたのに何度も入ろうとしてしまう
+//   ・間隔は伸ばしていく。ページを開いている間は諦めない
+//     （復旧は数十秒後かもしれないし、10分後かもしれない）
+// ------------------------------------------------------------------
+const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000];
+const RECONNECT_MAX_MS = 15000;
+
 export function initNet({ name, config, handlers, idToken = '', eventId = '', roomNumber = null, entryCode = '' }) {
   const h = handlers || {};
   let ws = null;
@@ -99,15 +122,50 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
       ? `ws://${location.hostname}:5179/ws`
       : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
 
-  try {
-    ws = new WebSocket(wsUrl);
-  } catch (e) {
-    // WebSocket自体を生成できない環境（不正URL等）→ 失敗扱い
-    fireDisconnect();
-    ws = null;
+  // ---- 再接続まわりの状態（上のコメント参照） ----
+  /** 一度でも入場に成功したか。これが false のうちは繋ぎ直さずデモモードへ落とす */
+  let everJoined = false;
+  /** こちらから閉じたか（退場・移動）。繋ぎ直してはいけない */
+  let closedByUs = false;
+  /** サーバーが意図して切った（キック・BAN・閉店・入場拒否）。繋ぎ直してはいけない */
+  let terminal = false;
+  let reconnectTimer = null;
+  let attempt = 0;
+  /** いまいるルーム。繋ぎ直すとき同じ部屋へ戻るために覚えておく */
+  let currentRoom = Number.isInteger(roomNumber) ? roomNumber : null;
+  /** この接続が「繋ぎ直し」か（最初の入場と区別して画面に出し分ける） */
+  let isRejoin = false;
+
+  function setState(state, extra = {}) {
+    if (h.onConnectionState) h.onConnectionState({ state, attempt, ...extra });
   }
 
-  if (ws) {
+  function scheduleReconnect() {
+    if (closedByUs || terminal) return;
+    if (reconnectTimer) return;
+    const delay = RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)] || RECONNECT_MAX_MS;
+    attempt++;
+    setState('reconnecting', { delayMs: delay });
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      isRejoin = true;
+      connect();
+    }, delay);
+  }
+
+  function connect() {
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch (e) {
+      // WebSocket自体を生成できない環境（不正URL等）→ 失敗扱い
+      ws = null;
+    }
+    if (!ws) {
+      if (everJoined) scheduleReconnect();
+      else fireDisconnect();
+      return;
+    }
+
     ws.addEventListener('open', () => {
       const joinMsg = { t: 'join', n: name, av: configToAv(config) };
       if (idToken) joinMsg.idt = idToken; // Googleログイン済みなら権限判定に使われる
@@ -119,7 +177,8 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
       const devRole = new URLSearchParams(location.search).get('devRole');
       if (devRole) joinMsg.devRole = devRole;
       if (eventId) joinMsg.ev = eventId;
-      if (Number.isInteger(roomNumber)) joinMsg.rm = roomNumber;
+      // 繋ぎ直しのときは、切れる直前にいた部屋へ戻る
+      if (Number.isInteger(currentRoom)) joinMsg.rm = currentRoom;
       // 合言葉つきイベント用。照合はサーバーだけが行う
       if (entryCode) joinMsg.code = entryCode;
       send(joinMsg);
@@ -147,8 +206,15 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
         case 'welcome':
           joined = true;
           clearWelcomeTimer();
+          // 繋ぎ直しの判定に使う。これ以降に切れたら、諦めずに繋ぎ直す
+          everJoined = true;
+          attempt = 0;
+          currentRoom = Number.isInteger(msg.room) ? msg.room : currentRoom;
+          setState('online', { rejoined: isRejoin });
           if (h.onWelcome) {
             h.onWelcome({
+              // 繋ぎ直しで入り直したのか（周りの人を総入れ替えする必要がある）
+              rejoined: isRejoin,
               id: msg.id,
               name: msg.n, // サーバーが確定させた表示名
               av: msg.av, // サーバーが確定させた見た目（ゲストはこちらが正）
@@ -171,9 +237,12 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
               yt: msg.yt || { on: false, linked: false },
             });
           }
+          isRejoin = false;
           break;
         case 'moved':
-          // 別のイベント/ルームへ移動が完了した（周りの人が総入れ替えになる）
+          // 別のイベント/ルームへ移動が完了した（周りの人が総入れ替えになる）。
+          // 繋ぎ直したときに元の部屋へ戻れるよう、いる場所を更新しておく
+          currentRoom = Number.isInteger(msg.room) ? msg.room : currentRoom;
           if (h.onMoved) {
             h.onMoved({
               room: msg.room,
@@ -194,11 +263,15 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
           if (h.onEventCreated) h.onEventCreated(msg.ev);
           break;
         case 'closed':
-          // 管理人がイベントを閉じた。会場ごと無くなるので入場画面に戻す
+          // 管理人がイベントを閉じた。会場ごと無くなるので入場画面に戻す。
+          // サーバーが意図して終わらせたので、繋ぎ直してはいけない
+          terminal = true;
           if (h.onClosed) h.onClosed({ eventId: msg.ev, name: msg.name });
           break;
 
         case 'denied':
+          // 入場を断られた（合言葉違い・満員・締め出し等）。繋ぎ直しても同じなので諦める
+          terminal = true;
           if (h.onDenied)
             h.onDenied({
               reason: msg.reason,
@@ -220,10 +293,13 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
           if (h.onModerated) h.onModerated({ act: msg.act, n: msg.n, mins: msg.mins || 0 });
           break;
         case 'kicked':
-          // 退出させられた。closeが続くので、ここでは理由を伝えるだけ
+          // 退出させられた。closeが続くので、ここでは理由を伝えるだけ。
+          // ⚠ 繋ぎ直すと、締め出されているのに何度も入ろうとしてしまう
+          terminal = true;
           if (h.onKicked) h.onKicked({ by: msg.by, mins: msg.mins || 0, why: msg.why || '' });
           break;
         case 'banned':
+          terminal = true;
           if (h.onBanned) h.onBanned({ by: msg.by, why: msg.why });
           break;
         case 'bans':
@@ -283,13 +359,47 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
 
     ws.addEventListener('close', () => {
       clearWelcomeTimer();
-      fireDisconnect();
+      joined = false;
+
+      // こちらから閉じた（退場・移動）／サーバーが意図して切った（キック等）→ 何もしない
+      if (closedByUs || terminal) return;
+
+      // まだ一度も入場できていない＝サーバーが動いていない等。
+      // これまでどおりデモモードへ落とす（開発中の挙動を変えない）
+      if (!everJoined) {
+        fireDisconnect();
+        return;
+      }
+
+      // ここが本題。入場できていたのに切れた＝復旧しうるので繋ぎ直す
+      setState('offline');
+      scheduleReconnect();
     });
 
     ws.addEventListener('error', () => {
-      // closeイベントが後続して発火するため、ここでは何もしない（fireDisconnectは1回だけ）
+      // closeイベントが後続して発火するため、ここでは何もしない
     });
   }
+
+  // 最初の接続
+  setState('connecting');
+  connect();
+
+  // 画面が復帰したとき（スマホでアプリを切り替えて戻った等）は、
+  // 待ち時間を飛ばしてすぐ試す。復帰した瞬間に直ってほしい場面なので
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (closedByUs || terminal || !everJoined) return;
+    if (ws && ws.readyState === WebSocket.OPEN) return;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    attempt = 0;
+    isRejoin = true;
+    setState('reconnecting', { delayMs: 0 });
+    connect();
+  });
 
   // ---- 送信（位置は10Hzスロットル＋変化なしなら送らない） ----
   let lastSentPos = null;
@@ -446,6 +556,12 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
 
   function close() {
     clearWelcomeTimer();
+    // こちらから閉じたので繋ぎ直さない。予約済みの繋ぎ直しも取り消す
+    closedByUs = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (ws) {
       try {
         ws.close();

@@ -23,6 +23,7 @@ import { initLogsUI } from './logsui.js';
 import { initPeopleUI } from './people.js';
 import { initHelpUI } from './helpui.js';
 import { initNoticeBar } from './noticebar.js';
+import { initConnBanner } from './connbanner.js';
 import { initYouTubeChat } from './ytchat.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
@@ -100,6 +101,9 @@ let blockedList = []; // 自分がブロックしている相手（解除UIに�
 let banList = []; // BAN一覧（管理者のみサーバーから届く）
 let kickLog = []; // キックの履歴（管理者のみ）。あとでBANするかの判断材料
 let noticeBar = null; // 運営メッセージの固定枠
+// 接続が切れていることを出すバナー（2026-08-03追加）。
+// initNet より先に作る必要がある（繋がらないと分かるのが接続直後のため）
+let connBanner = null;
 let ytChat = null; // YouTubeのライブチャット（連動イベントのときだけ出す）
 // YouTubeチャンネルとの連携状態（2026-08-03追加）。
 // welcome はUIの組み立てより先に来ることがあるので、ここで受けておいて後から流し込む
@@ -438,6 +442,9 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
 
   // リアルタイム同期へ接続（失敗時は onDisconnect → NPCデモにフォールバック）
   remote = initRemotePlayers(scene);
+  // 接続が切れたことを出すバナー。initNet より先に作る
+  // （繋がらないと分かるのは接続の直後なので、後から作ると1回目の通知を取りこぼす）
+  connBanner = initConnBanner();
   net = initNet({
     name,
     config,
@@ -446,7 +453,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     roomNumber,
     entryCode,
     handlers: {
-      onWelcome: ({ id, name: assignedName, av: assignedAv, room, peers, count, cap, screen, playback, role, canControl, isAdmin, event, events, blocked, yt }) => {
+      onWelcome: ({ rejoined, id, name: assignedName, av: assignedAv, room, peers, count, cap, screen, playback, role, canControl, isAdmin, event, events, blocked, yt }) => {
+        // 繋ぎ直しで入り直した場合、周りの人は総入れ替えになる。
+        // 消さずに足すと、切れる前の人が幽霊として残ったままになる（2026-08-03追加）
+        if (rejoined) remote.clear();
         myId = id;
         // YouTubeとの連携状態。UIがまだ無い（入場直後）ことがあるので覚えておく
         ytLinkState = yt || { on: false, linked: false };
@@ -704,6 +714,28 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         );
       },
       onDisconnect: () => startDemoMode(),
+      // 接続の状態が変わった（2026-08-03追加）。
+      // 黙ってオフラインになるのを防ぐため、画面にはっきり出す
+      onConnectionState: ({ state, attempt, rejoined }) => {
+        if (!connBanner) return;
+        if (state === 'online') {
+          connBanner.hide();
+          // 繋ぎ直したときだけ知らせる。最初の入場では出さない（当たり前のことなので）
+          if (rejoined) chat.addMessage('', '接続が戻りました。', { system: true });
+          return;
+        }
+        if (state === 'offline') {
+          connBanner.show('接続が切れました。繋ぎ直しています…');
+          return;
+        }
+        if (state === 'reconnecting') {
+          connBanner.show(
+            attempt > 1
+              ? `接続が切れました。繋ぎ直しています…（${attempt}回目）`
+              : '接続が切れました。繋ぎ直しています…',
+          );
+        }
+      },
     },
   });
 
