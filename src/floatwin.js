@@ -253,7 +253,12 @@ export function makeFloating(el, { key, title, resizable = true, minW = 220, min
 
   head.addEventListener('pointerdown', (e) => {
     if (!isFloatEnabled()) return;
-    if (e.target === resetBtn) return; // ボタンは押させる
+    // ⚠ 帯の中のボタン（畳む／位置を戻す）を押したときはドラッグを始めない。
+    //   ここで preventDefault してしまうと click が発火せず、
+    //   **ボタンが反応しなくなる**（2026-08-03「折りたためないね」の原因）。
+    //   resetBtn だけを除外していたため foldBtn が押せなかった。
+    //   個別に列挙すると足すたびに漏れるので、帯の中のボタン全部を対象にする
+    if (e.target instanceof Element && e.target.closest('button')) return;
     toAbsolute();
     dragging = true;
     startX = e.clientX;
