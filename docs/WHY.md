@@ -957,4 +957,6 @@ WHY.md の趣旨（仕様は再導出できるが思想は再導出できない�
 ## 記録されなかったこと（不明として残す）
 
 - 3フェイズ整理とネーミング発言の正確な時刻（発言ログの抽出が2026-07-26 16:32時点で、07-25 12:48の中断以降が未収録のため）
-- 「VERSE CITY parallel」と「ALLVERSE parallel」のどちらを採るか（未決定。階層で両方使う案を提示済み・返答なし）
+- ~~「VERSE CITY parallel」と「ALLVERSE parallel」のどちらを採るか~~ → **2026-08-02 決着: どちらでもなく「ALLVERSE WEB」に確定**（本人）。
+  `parallel` は廃止。理由は「将来ここ自体が独自プラットフォーム ALLVERSE になるので、役割名だと役割が変わったとき合わなくなる。場所/手段の名前にする」。
+  あわせて **場所（ALLVERSE LAND／VERSE CITY／clubVERSE）と入口（WEB／VRC／将来cluster）の2軸**に整理された → `L:\企画用\ALLVERSE_HUB.md`「呼称の統一」

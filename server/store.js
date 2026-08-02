@@ -190,6 +190,25 @@ export async function initStore() {
       )
     `);
     await db.execute('CREATE INDEX IF NOT EXISTS idx_kicklog_at ON kick_log(created_at)');
+    // ---- 会場チャットの記録（2026-08-02 追加）----
+    // 「何かあった時に証拠になるので」（loyさん）。開催（run_id）に紐づけて残す。
+    // イベントを閉じても消さない＝あとから見返せることが目的なので。
+    // ⚠ ゲストは発言できない仕様なので、ここに残るのはログイン済みの人の発言だけ。
+    //   YouTubeチャット連動のイベントでは会場チャット自体を使わないため記録も無い。
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_log (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id     TEXT NOT NULL,
+        event_id   TEXT NOT NULL,
+        room       INTEGER NOT NULL,
+        visitor    TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        txt        TEXT NOT NULL,
+        scope      TEXT NOT NULL DEFAULT 'local',
+        created_at INTEGER NOT NULL
+      )
+    `);
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_chatlog_run ON chat_log(run_id, created_at)');
     // サーバーが最後に生きていた時刻。再起動で「退場が書かれないまま」残った行を
     // どの時刻で閉じるかの根拠になる（詳細は closeOpenVisits）
     await db.execute(`
@@ -861,6 +880,60 @@ export async function getRun(runId) {
   } catch (e) {
     console.warn('[store] 開催の読み込みに失敗:', e.message);
     return null;
+  }
+}
+
+/**
+ * 会場チャットを1件記録する（2026-08-02追加）。
+ * 発言そのものは既にブロードキャスト済みなので、ここが失敗しても会話は止めない。
+ */
+export async function addChatLog(entry) {
+  if (!entry || !entry.runId) return false;
+  if (!ready) return true; // メモリ運用では残さない（再起動で消える＝証拠にならないため）
+  try {
+    await db.execute({
+      sql: `INSERT INTO chat_log (run_id, event_id, room, visitor, name, txt, scope, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        entry.runId,
+        entry.eventId,
+        Number(entry.room) || 0,
+        entry.visitor,
+        String(entry.name || ''),
+        String(entry.txt || ''),
+        entry.scope === 'stream' ? 'stream' : 'local',
+        entry.createdAt,
+      ],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] チャットの記録に失敗:', e.message);
+    return false;
+  }
+}
+
+/** 1開催ぶんの会場チャット（時刻順）。管理者だけが見る */
+export async function listChatLog(runId, limit = 5000) {
+  if (!ready || !runId) return [];
+  const lim = Math.min(20000, Math.max(1, Math.trunc(limit) || 5000));
+  try {
+    const rs = await db.execute({
+      sql: `SELECT id, room, visitor, name, txt, scope, created_at
+              FROM chat_log WHERE run_id = ? ORDER BY created_at ASC LIMIT ?`,
+      args: [runId, lim],
+    });
+    return rs.rows.map((r) => ({
+      id: Number(r.id),
+      room: Number(r.room),
+      visitor: String(r.visitor),
+      name: String(r.name),
+      txt: String(r.txt),
+      scope: String(r.scope),
+      createdAt: Number(r.created_at),
+    }));
+  } catch (e) {
+    console.warn('[store] チャットの読み込みに失敗:', e.message);
+    return [];
   }
 }
 

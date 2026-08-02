@@ -230,6 +230,27 @@ export function visitsCsv(run, visits, now = Date.now()) {
 }
 
 /**
+ * 会場チャットのCSV（1行 = 1発言）。
+ * 「何かあった時の証拠」として使うので、**誰が・いつ・どこで・何を**が揃っている必要がある。
+ * 訪問者IDも入れているのは、表示名が同じ人が複数いても取り違えないため。
+ */
+export function chatCsv(run, messages) {
+  const rows = [['イベント名', '時刻(UTC)', '発言者', '訪問者ID', 'ルーム', '発言', '範囲']];
+  for (const m of messages || []) {
+    rows.push([
+      run ? run.name : '',
+      iso(m.createdAt),
+      m.name,
+      m.visitor,
+      m.room,
+      m.txt,
+      m.scope === 'stream' ? '配信にも送信' : '会場内',
+    ]);
+  }
+  return rowsToCsv(rows);
+}
+
+/**
  * 同接の経過CSV。そのまま折れ線グラフにできる。
  * 刻みは開催時間から自動で決まる（指定もできる）。
  * 経過を秒と分の両方で出すのは、短いイベントでも長いイベントでも

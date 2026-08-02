@@ -47,8 +47,10 @@ import {
   deleteKickTimeout,
   addKickLog,
   listKickLog,
+  addChatLog,
+  listChatLog,
 } from './store.js';
-import { summarize, gridSeries, autoStepMs, visitsCsv, seriesCsv } from './stats.js';
+import { summarize, gridSeries, autoStepMs, visitsCsv, seriesCsv, chatCsv } from './stats.js';
 // ゲストの見た目はクライアントと同じ計算で決める（src/guestlook.js を両側で読む）。
 // 別々に持つと片方だけ直したときに姿がズレるので、1本のファイルを共有する
 import { guestLookFor } from '../src/guestlook.js';
@@ -915,6 +917,23 @@ function handleChat(client, msg) {
   if (scope === 'stream' && !canControlVideo(client.role)) scope = 'local';
 
   client.lastChat = { txt, ts: Date.now() };
+
+  // 会場チャットを記録する（2026-08-02 loyさん要望「何かあった時に証拠になるので」）。
+  // ブロードキャストの前に await すると発言が遅れるので、記録は投げっぱなしにする。
+  // ブロックで一部の人に見えなかった発言も残す——ブロックは見え方の話であって、
+  // 「起きたこと」は起きたことなので、証拠としては残っている必要がある
+  if (myEvent) {
+    addChatLog({
+      runId: myEvent.runId,
+      eventId: myEvent.id,
+      room: client.room,
+      visitor: client.visitor,
+      name: client.n,
+      txt,
+      scope,
+      createdAt: Date.now(),
+    }).catch(() => {});
+  }
 
   // 発信者自身にも返す（クライアント側で自分のidなら無視する仕様）
   broadcastFrom(client, { t: 'chat', id: client.id, n: client.n, txt, sc: scope }, false);
@@ -1926,6 +1945,16 @@ async function handleAdminLogDetail(req, res) {
   const now = Date.now();
   const format = body && typeof body.format === 'string' ? body.format : 'json';
 
+  if (format === 'csv-chat') {
+    const text = chatCsv(run, await listChatLog(runId));
+    res.writeHead(200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="chat-${runId.replace(/[^\w.-]/g, '')}.csv"`,
+    });
+    res.end(text);
+    return;
+  }
+
   if (format === 'csv-visits' || format === 'csv-series') {
     const text = format === 'csv-visits' ? visitsCsv(run, visits, now) : seriesCsv(run, visits, { now });
     res.writeHead(200, {
@@ -1948,6 +1977,8 @@ async function handleAdminLogDetail(req, res) {
       stepMs,
       series: gridSeries(visits, { from: run.openedAt, to, stepMs }),
       visits,
+      // 会場チャット（管理者のみ）。件数が多くなるので画面には直近ぶんだけ出す
+      chat: await listChatLog(runId),
     }),
   );
 }

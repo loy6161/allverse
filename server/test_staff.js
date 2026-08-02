@@ -52,6 +52,19 @@ async function waitFor(c, pred, timeout = 1500) {
   return null;
 }
 
+async function postJson(path, body) {
+  return post(path, body);
+}
+
+async function postText(path, body) {
+  const res = await fetch(HTTP + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, text: await res.text() };
+}
+
 async function post(path, body) {
   const res = await fetch(HTTP + path, {
     method: 'POST',
@@ -280,6 +293,33 @@ async function main() {
   vip.send({ t: 'chat', txt: '戻ったので言える' });
   const chatOk = await waitFor(vip, (m) => m.t === 'chat' || m.t === 'denied');
   check('連動を戻せば独自チャットが使える', chatOk && chatOk.t === 'chat', chatOk && chatOk.t);
+
+  // ---- 会場チャットの記録（2026-08-02）----
+  // 「何かあった時に証拠になるので」（loyさん）。開催に紐づけて残す
+  vip.inbox.length = 0;
+  vip.send({ t: 'chat', txt: '証拠として残るはずの発言' });
+  await waitFor(vip, (m) => m.t === 'chat');
+  await sleep(500);
+  // このイベントの開催id（run_id）を記録一覧から引く
+  const runsRes = await post('/api/admin/logs', { devRole: 'admin' });
+  const thisRun = ((runsRes.data && runsRes.data.runs) || []).find((r) => r.eventId === evId);
+  check('このイベントの開催記録が引ける', Boolean(thisRun), thisRun && thisRun.runId);
+  const runId = thisRun && thisRun.runId;
+  const withChat = await post('/api/admin/log', { devRole: 'admin', runId });
+  const msgs = (withChat.data && withChat.data.chat) || [];
+  check('会場チャットが記録される', msgs.some((m) => m.txt === '証拠として残るはずの発言'),
+    `${msgs.length}件`);
+  const rec = msgs.find((m) => m.txt === '証拠として残るはずの発言');
+  check('発言者と時刻が残る', rec && rec.name && rec.createdAt > 0, rec && `${rec.name}`);
+  check('訪問者IDも残る（同名の取り違え防止）', rec && String(rec.visitor).length > 2,
+    rec && rec.visitor);
+  const chatCsvRes = await postText('/api/admin/log',
+    { devRole: 'admin', runId, format: 'csv-chat' });
+  check('チャットCSVが落とせる',
+    chatCsvRes.status === 200 && chatCsvRes.text.includes('証拠として残るはずの発言'),
+    `status=${chatCsvRes.status}`);
+  const chatDeny = await postJson('/api/admin/log', { devRole: 'guest', runId });
+  check('チャットの記録は管理者以外に渡さない', chatDeny.status === 403, `status=${chatDeny.status}`);
 
   // ---- キックの履歴（管理者だけ）----
   const admin = await connect({ ev: evId, ...ADMIN });

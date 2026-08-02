@@ -45,6 +45,17 @@ function injectStyle() {
 }
 .vc-logs-actions button:hover { border-color: rgba(0,255,234,0.6); }
 .vc-logs-empty { font-size: 12px; color: rgba(220,235,255,0.5); }
+
+/* 会場チャットの記録。件数が多くなるので、この枠の中だけスクロールさせる */
+.vc-logs-chat {
+  margin-top: 8px; padding: 8px 9px;
+  border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+  max-height: 160px; overflow-y: auto;
+}
+.vc-logs-chat-line {
+  font-size: 11px; line-height: 1.6; color: rgba(220,235,255,0.8);
+  word-break: break-word; padding: 1px 0;
+}
 `;
   document.head.appendChild(style);
 }
@@ -186,7 +197,8 @@ export function initLogsUI({ getRole, getIdToken }) {
       const res = await post('api/admin/log', { runId: run.runId, format });
       if (!res.ok) return;
       const text = await res.text();
-      const label = format === 'csv-visits' ? '訪問ログ' : '同接の経過';
+      const label =
+        format === 'csv-visits' ? '訪問ログ' : format === 'csv-chat' ? 'チャット' : '同接の経過';
       const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -269,6 +281,31 @@ export function initLogsUI({ getRole, getIdToken }) {
       '「累計」は同じブラウザ・同じアカウントを1人として数えた人数です。NPCは含みません。';
     box.appendChild(hint);
 
+    // 直近の発言を画面にも出す。何か起きたとき、CSVを落とさずその場で確認できるように
+    const chat = detail.chat || [];
+    if (chat.length) {
+      const chatBox = document.createElement('div');
+      chatBox.className = 'vc-logs-chat';
+
+      const chatTitle = document.createElement('div');
+      chatTitle.className = 'vc-logs-when';
+      chatTitle.textContent =
+        chat.length > 20
+          ? `💬 会場チャット ${chat.length}件（新しい20件だけ表示。全部はCSVで）`
+          : `💬 会場チャット ${chat.length}件`;
+      chatBox.appendChild(chatTitle);
+
+      for (const m of chat.slice(-20)) {
+        const line = document.createElement('div');
+        line.className = 'vc-logs-chat-line';
+        line.textContent = `${fmtTime(m.createdAt)}　${m.name}: ${m.txt}`;
+        // 表示名が同じ人がいても取り違えないように、素性はツールチップで出す
+        line.title = `ルーム${m.room} / ${m.visitor}${m.scope === 'stream' ? ' / 配信にも送信' : ''}`;
+        chatBox.appendChild(line);
+      }
+      box.appendChild(chatBox);
+    }
+
     const actions = document.createElement('div');
     actions.className = 'vc-logs-actions';
     const csv1 = document.createElement('button');
@@ -285,6 +322,13 @@ export function initLogsUI({ getRole, getIdToken }) {
       e.stopPropagation();
       downloadCsv(run, 'csv-series');
     });
+    const csv3 = document.createElement('button');
+    csv3.type = 'button';
+    csv3.textContent = `💬 チャットCSV（${(detail.chat || []).length}件）`;
+    csv3.addEventListener('click', (e) => {
+      e.stopPropagation();
+      downloadCsv(run, 'csv-chat');
+    });
     const close = document.createElement('button');
     close.type = 'button';
     close.textContent = '閉じる';
@@ -294,7 +338,7 @@ export function initLogsUI({ getRole, getIdToken }) {
       detail = null;
       render();
     });
-    actions.append(csv1, csv2, close);
+    actions.append(csv1, csv2, csv3, close);
     box.appendChild(actions);
 
     return box;
