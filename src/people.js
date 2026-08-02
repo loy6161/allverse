@@ -134,12 +134,19 @@ export function initPeopleUI({
 }) {
   injectStyle();
 
+  // ⚠ 2026-08-03: 参加者は⚙設定パネルの中へ移したので、**独立したボタンは出さない**
+  //   （loyさん「設定に入れたならアイコンはいらないね」）。
+  //   ボタン自体は残してある——キーボードやコードから開く経路と、
+  //   将来また独立させたくなったときのため。slot に入れないので画面には出ない
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'vc-people-btn';
   btn.title = '参加者';
   btn.textContent = '👥';
-  slot.appendChild(btn);
+  if (slot) {
+    // slot を渡さなければ画面に出ない。いまは main.js から渡していない
+    slot.appendChild(btn);
+  }
 
   const ownPanel = document.createElement('div');
   ownPanel.className = 'vc-people-panel vc-people-hidden';

@@ -206,7 +206,7 @@ export function initEmoteBar({ onEmote }) {
     });
     // ✨＝スペシャルへ / 👋＝ふつうへ
     pageBtn.textContent = page === 0 ? '\u{2728}' : '\u{1F44B}';
-    pageBtn.title = page === 0 ? 'スペシャルエモートへ (E)' : 'ふつうのエモートへ (E)';
+    pageBtn.title = page === 0 ? 'スペシャルエモートへ (0)' : 'ふつうのエモートへ (0)';
     bar.appendChild(pageBtn);
     if (!enabled || cooling) {
       buttons.forEach((b) => {
@@ -250,8 +250,10 @@ export function initEmoteBar({ onEmote }) {
 
   function onKeydown(e) {
     if (isTypingTarget(document.activeElement)) return;
-    // E キーでページを切り替える（マウスに手を戻さずに済むように）
-    if (e.key === 'e' || e.key === 'E') {
+    // 0 でページを切り替える（2026-08-03 loyさん指示）。
+    // 「エモート操作はNumPadだけで完結したほうが便利」——数字キー1〜6と同じ並びに
+    // 0 があるので、テンキーから手を離さずにページを行き来できる
+    if (e.key === '0') {
       page = page === 0 ? 1 : 0;
       renderPage();
       return;

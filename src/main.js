@@ -875,7 +875,8 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
 
   // 参加者パネル（ブロック／キック／BAN）
   peopleUI = initPeopleUI({
-    slot: topBar.slot,
+    // 2026-08-03: ⚙設定の中に入れたので、独立したボタンは出さない（slotを渡さない）
+    slot: null,
     getRole: () => staffRole(),
     getMyName: () => session.name,
     getPeople: () => (remote ? remote.list() : []),

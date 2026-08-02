@@ -543,8 +543,11 @@ export function createGlbAvatar(config) {
       sprite: sp,
       size,
       life: 0,
-      ttl: 1.9 + Math.random() * 0.7,
-      vy: 0.5 + Math.random() * 0.3,
+      // 2026-08-03: 「もっと上空まで上がっていっていい（VRCのエモートみたいに）」
+      // という指示で、寿命と上昇速度を大きくした。
+      // 頭のかなり上（3〜4m）まで昇ってから消える
+      ttl: 3.2 + Math.random() * 0.9,
+      vy: 1.5 + Math.random() * 0.6,
       sway: (Math.random() - 0.5) * 0.8,
       phase: Math.random() * Math.PI * 2,
     });
@@ -596,6 +599,9 @@ export function createGlbAvatar(config) {
     cheers: 2.2,    // 乾杯（ビール）
   };
   // 他人のジャンプを再現するための値（controls.js と同じ）
+  // 花火の打ち上げ（2026-08-03）。玉が昇る時間と、開く高さ（アバターの頭上からの距離）
+  const LAUNCH_SEC = 0.75;
+  const BURST_Y = 3.4;
   const HOP_V0 = 5.0;
   const HOP_G = 14.0;
   let emoteId = null;
@@ -811,7 +817,7 @@ export function createGlbAvatar(config) {
         // 一定の間隔で出す（毎フレーム出すと画面が埋まる）
         if (Math.floor(t * 3) !== lastBeat) {
           lastBeat = Math.floor(t * 3);
-          spawnSprite('smile', { size: 0.3, ttl: 1.6, vy: 0.55, y: 0.62 });
+          spawnSprite('smile', { size: 0.3, ttl: 3.0, vy: 1.5, y: 0.62 });
         }
         break;
       }
@@ -839,8 +845,8 @@ export function createGlbAvatar(config) {
           lastBeat = Math.floor(t * 5);
           spawnSprite('star', {
             size: 0.16 + Math.random() * 0.12,
-            ttl: 1.4,
-            vy: 0.7,
+            ttl: 3.0,
+            vy: 1.6 + Math.random() * 0.5,
             y: 0.9 + Math.random() * 0.3,
             x: (Math.random() - 0.5) * 0.8,
           });
@@ -855,19 +861,34 @@ export function createGlbAvatar(config) {
         aimArm(armR, 1, [0.45, 0.95, 0.2], env);
         pushArmOut(armL, -1, env);
         pushArmOut(armR, 1, env);
-        if (lastBeat < 0 && t > 0.35) {
-          lastBeat = 1; // 1回だけ
-          for (let i = 0; i < 22; i++) {
-            const a = (i / 22) * Math.PI * 2 + Math.random() * 0.2;
-            const sp = 0.9 + Math.random() * 0.6;
+        // 2026-08-03: 「花火は打ち上る感じにして」（loyさん）。
+        // その場で弾けるのではなく、①玉が真上へ昇る → ②上空で開く、の2段にした
+        if (lastBeat < 0 && t > 0.15) {
+          lastBeat = 0; // 打ち上げ済みの印
+          // ① 打ち上げの玉。まっすぐ速く昇り、開く高さで消える
+          spawnSprite('spark', {
+            size: 0.13,
+            ttl: LAUNCH_SEC,
+            x: 0,
+            y: 1.5,
+            vy: BURST_Y / LAUNCH_SEC,
+            sway: 0,
+          });
+        }
+        if (lastBeat === 0 && t > 0.15 + LAUNCH_SEC) {
+          lastBeat = 1; // 開いた印（1回だけ）
+          // ② 上空で開く。粒は放物線で散って落ちる
+          for (let i = 0; i < 26; i++) {
+            const a = (i / 26) * Math.PI * 2 + Math.random() * 0.2;
+            const sp = 1.5 + Math.random() * 0.9;
             spawnSprite('spark', {
-              size: 0.16 + Math.random() * 0.1,
-              ttl: 1.3 + Math.random() * 0.5,
+              size: 0.18 + Math.random() * 0.12,
+              ttl: 1.8 + Math.random() * 0.6,
               x: 0,
-              y: 1.6,
+              y: 1.5 + BURST_Y,
               vx: Math.cos(a) * sp,
               vy: Math.sin(a) * sp,
-              gravity: 1.1,
+              gravity: 1.6,
               sway: 0,
             });
           }
