@@ -42,8 +42,16 @@ import {
   getRun,
   listVisits,
   listVisitsForRuns,
+  loadKickTimeouts,
+  saveKickTimeout,
+  deleteKickTimeout,
+  addKickLog,
+  listKickLog,
 } from './store.js';
 import { summarize, gridSeries, autoStepMs, visitsCsv, seriesCsv } from './stats.js';
+// ゲストの見た目はクライアントと同じ計算で決める（src/guestlook.js を両側で読む）。
+// 別々に持つと片方だけ直したときに姿がズレるので、1本のファイルを共有する
+import { guestLookFor } from '../src/guestlook.js';
 import {
   verifyIdToken,
   roleForEmail,
@@ -106,8 +114,11 @@ const DEFAULT_CAPACITY = 30;                  // 1ルームの既定キャパ
 const MIN_CAPACITY = 1;
 const MAX_CAPACITY = 60;                      // presence.json の web[] 上限に合わせる
 
-// ゲスト（未ログイン）の固定アバター。見た目は後で確定させる（2026-07-29 時点の暫定）
-const GUEST_AV = { h: 'short', o: 'middle', ac: 'none', hc: 12, sc: 12, bc: 0, ec: 0, pl: 9 };
+// ゲスト（未ログイン）の見た目は src/guestlook.js が匿名IDから決める（2026-08-02）。
+// 以前は全員同じ固定アバターだったが、
+//   ・全ゲストが同じ姿になり、荒らしがいても「どのゲストか」を指させない
+//   ・本人の画面だけ入場画面で決めた姿が残り、他人と食い違う
+// という2つの問題があった。いまは髪なし＋肌と服の色がIDから決まる
 
 // 開発用の権限指定を許すか。Render上では常に無効（RENDER環境変数が必ず立つため）。
 // ローカルでのみ有効で、管理者/VIP/ゲストの挙動を実際に動かして確かめるために使う。
@@ -125,6 +136,17 @@ const PRESENCE_CHAT_TXT_MAX = 40; // c[0] の最大文字数（30KB制約対応�
 
 // 「直近チャット」フィールド(c)は実装済みだが、運用判断が済むまで既定は無効。
 const ENABLE_CHAT_FIELD = false;
+
+// 運営メッセージの固定枠（2026-08-02追加）。チャットに流すと見逃されるので別枠にする
+const NOTICE_LEVELS = new Set(['info', 'important', 'emergency']);
+const MAX_NOTICE_LEN = 120;
+
+// キックのタイムアウト（2026-08-02追加）。0＝すぐ戻れる（従来どおり）
+const KICK_MINUTES = new Set([0, 5, 15, 60, 180]);
+const MAX_KICK_REASON_LEN = 60;
+
+// NPCの上限（管理者が決める全体の上限。各自はこの範囲で自分の画面を増減する）
+const MAX_NPC = 100;
 
 // イベントログ（2026-07-31追加）
 const HEARTBEAT_LOG_MS = 60 * 1000; // 「生きている印」を打つ間隔＝再起動時のズレの上限
@@ -172,6 +194,51 @@ const startedAt = Date.now();
 // BANされたメールアドレス。入場のたびにDBを叩かないようメモリに載せておく。
 // bans: Map<email, {email,name,byName,reason,createdAt}>
 const bans = new Map();
+
+// キックのタイムアウト（2026-08-02追加）。
+// kickTimeouts: Map<eventId, Map<subject, {untilAt,name,byName,reason,createdAt}>>
+//
+// 「蹴るだけで即戻れる」ではBANとの間が空きすぎていたので、時間つきにした。
+// subject は入場ログと同じ匿名ID（`u:ハッシュ`/`g:番号`）なので、
+// Googleアカウントを持たないゲストにも効く（BANはゲストに効かない）。
+const kickTimeouts = new Map();
+
+/** タイムアウトを1件セットする（メモリ側） */
+function setKickTimeout(t) {
+  let m = kickTimeouts.get(t.eventId);
+  if (!m) {
+    m = new Map();
+    kickTimeouts.set(t.eventId, m);
+  }
+  m.set(t.subject, t);
+}
+
+/**
+ * その人がそのイベントから締め出し中か。切れていれば掃除して null を返す。
+ * @returns {{untilAt:number, byName:string, reason:string}|null}
+ */
+function findKickTimeout(eventId, subject) {
+  const m = kickTimeouts.get(eventId);
+  if (!m) return null;
+  const t = m.get(subject);
+  if (!t) return null;
+  if (t.untilAt <= Date.now()) {
+    m.delete(subject);
+    deleteKickTimeout(eventId, subject).catch(() => {});
+    return null;
+  }
+  return t;
+}
+
+/** そのイベントにいる管理者だけに送る（運営向けの通知に使う） */
+function notifyAdmins(eventId, obj) {
+  for (const [key, members] of rooms) {
+    if (keyEventId(key) !== eventId) continue;
+    for (const c of members.values()) {
+      if (c.role === 'admin') send(c.ws, obj);
+    }
+  }
+}
 
 /**
  * ブロックの相手を指す文字列。
@@ -305,6 +372,11 @@ function makeEvent({
   capacity = DEFAULT_CAPACITY,
   vrcBridge = false,
   createdAt = Date.now(),
+  ownerEmail = '',
+  npcMax = -1,
+  chatMode = 'local',
+  noticeLevel = '',
+  noticeText = '',
 }) {
   return {
     id,
@@ -315,6 +387,15 @@ function makeEvent({
     capacity: clampCapacity(capacity),
     vrcBridge,
     createdAt,
+    // 立てた人のメール。VIPは自分が立てたイベントだけ操作できる（2026-08-02）
+    ownerEmail: String(ownerEmail || ''),
+    // NPCの全体上限。-1 は自動（キャパ − 実在人数）＝これまでの挙動
+    npcMax: Number.isFinite(npcMax) ? npcMax : -1,
+    // 'local' … 独自チャット ／ 'youtube' … YouTubeチャットへ一本化
+    chatMode: chatMode === 'youtube' ? 'youtube' : 'local',
+    // 運営メッセージの固定枠（'' なら出さない）
+    noticeLevel: NOTICE_LEVELS.has(noticeLevel) ? noticeLevel : '',
+    noticeText: String(noticeText || ''),
     // 記録用の開催id。イベントidが将来使い回されても過去の記録と混ざらないように
     // 「id＋立てた時刻」で一意にする
     runId: `${id}-${createdAt}`,
@@ -381,12 +462,40 @@ function toEventInfo(ev) {
     cap: ev.capacity,
     vrc: ev.vrcBridge,
     count: countInEvent(ev.id),
+    // NPCの全体上限。-1 は自動（キャパ − 実在人数）。
+    // 各自はこの範囲内で自分の画面のNPCを増減できる（超えられない）
+    npcMax: ev.npcMax,
+    // 'local'（独自チャット）/ 'youtube'（YouTubeチャットへ一本化）
+    chatMode: ev.chatMode,
+    // 運営メッセージの固定枠。level が空なら出さない
+    notice: ev.noticeLevel ? { level: ev.noticeLevel, text: ev.noticeText } : null,
   };
 }
 
-/** 管理人向け。合言葉の中身も返す（人に伝えるために必要） */
+/** そのイベントを操作できる人向け。合言葉の中身も返す（人に伝えるために必要） */
 function toEventInfoAdmin(ev) {
   return { ...toEventInfo(ev), code: ev.entryCode };
+}
+
+/**
+ * そのイベントを操作できるか（2026-08-02 追加）
+ *
+ * 管理者不在でもメンバーだけで会場を回せるようにするため、VIPに運営権限を渡した。
+ * ただし**自分が立てたイベントだけ**に限る。そうしないと他人のイベントを
+ * 勝手に閉じられてしまう（loyさんの配信中に別のVIPが閉じる、が起きうる）。
+ *
+ * ⚠ ログイン未設定（ローカル開発）では canControlVideo が全員 true を返すので、
+ *   ここも全員 true になる。本番はログイン設定済みなので意図通りに効く。
+ */
+function canManageEvent(role, email, ev) {
+  if (!ev) return false;
+  if (canControlVideo(role)) return true; // 管理者（ログイン未設定なら全員）
+  return role === 'vip' && Boolean(email) && ev.ownerEmail === email;
+}
+
+/** イベントを新しく立てられるか。VIPも立てられる（立てた本人が所有者になる） */
+function canCreateEvent(role) {
+  return canControlVideo(role) || role === 'vip';
 }
 
 function countInEvent(eventId) {
@@ -400,17 +509,26 @@ function countInEvent(eventId) {
 /**
  * イベント一覧＋各ルームの人数（入場画面とルーム移動で使う）
  *
- * forAdmin=true のときだけ合言葉の中身を含める。
+ * 合言葉の中身を含めるのは「そのイベントを操作できる人」にだけ。
  * 管理人の設定画面に現在の合言葉を出すために要る（見えないまま保存すると
  * 空欄で上書きされて合言葉が消えてしまう）。それ以外へは絶対に渡さない。
+ *
+ * 2026-08-02: 判定を**イベントごと**に変えた。VIPは自分が立てたイベントの
+ * 合言葉だけ見えて、他人のイベントの合言葉は見えない。
+ * viewer が null（公開JSON）のときは、どのイベントの合言葉も出さない。
  */
-function buildEventList(forAdmin = false) {
+function buildEventList(viewer = null) {
   return Array.from(events.values())
     .sort((a, b) => a.createdAt - b.createdAt)
-    .map((ev) => ({
-      ...(forAdmin ? toEventInfoAdmin(ev) : toEventInfo(ev)),
-      rooms: buildRoomList(ev.id),
-    }));
+    .map((ev) => {
+      const manage = viewer ? canManageEvent(viewer.role, viewer.email, ev) : false;
+      return {
+        ...(manage ? toEventInfoAdmin(ev) : toEventInfo(ev)),
+        // クライアントが「設定」「閉じる」を出すかの判断に使う
+        mine: manage,
+        rooms: buildRoomList(ev.id),
+      };
+    });
 }
 
 /** そのイベントのルーム一覧。空きのある最小番号を必ず1つは含める */
@@ -660,6 +778,21 @@ async function handleJoin(client, msg) {
     return;
   }
 
+  // キックの締め出し中なら入れない（2026-08-02）。
+  // 相手の識別は匿名IDなので、ログインしていないゲストにも効く
+  const timeout = findKickTimeout(ev.id, client.visitor);
+  if (timeout) {
+    send(client.ws, {
+      t: 'denied',
+      reason: 'kicked-out',
+      ev: ev.id,
+      until: timeout.untilAt,
+      by: timeout.byName,
+      why: timeout.reason,
+    });
+    return;
+  }
+
   // 満室なら入れない（キャパはイベントごと）
   if (!assignableRoom(ev.id)) {
     send(client.ws, { t: 'denied', reason: 'event-full', ev: ev.id });
@@ -672,8 +805,9 @@ async function handleJoin(client, msg) {
 
   // 名前はサーバーが決める。msg.n は受け取らない（他人の名前を名乗れないようにするため）
   client.n = resolveDisplayName(email, googleName);
-  // ゲストは見た目を固定（自由度を下げる方針。2026-07-29 確定）
-  client.av = role === 'guest' ? { ...GUEST_AV } : sanitizeAv(msg.av);
+  // ゲストの見た目はサーバーが決める（クライアントの申告は使わない）。
+  // 同じブラウザなら毎回同じ姿になるので「あの黄色いゲスト、また来てる」が成立する
+  client.av = role === 'guest' ? guestLookFor(client.visitor) : sanitizeAv(msg.av);
   client.x = 0;
   client.z = 0;
   client.r = 0;
@@ -697,9 +831,16 @@ async function handleJoin(client, msg) {
     id: client.id,
     // 名前はサーバーが決めるので、確定した表示名を本人にも返す
     n: client.n,
+    // 見た目も返す。ゲストはサーバーが決めるので、これを返さないと
+    // **本人の画面だけ入場画面で決めた姿のまま**になり、他人と食い違う（2026-08-02 修正）
+    av: client.av,
     role: client.role,
-    // 動画を操作できるかはサーバーが唯一の判断元（ログイン未設定の間は全員 true）
-    canControl: canControlVideo(client.role),
+    // 「いまいるイベントを操作できるか」。VIPは自分が立てたイベントだけ true になる
+    canControl: canManageEvent(client.role, client.email, ev),
+    // 「管理者そのものか」。イベントに依らない権限（BAN・記録の閲覧）の出し分けに使う。
+    // canControl と分けているのは、VIPが自分のイベントを操作できる＝管理者ではないため。
+    // これを一緒にすると、VIPに管理者専用パネルが見えてしまう（押しても弾かれる）
+    isAdmin: canControlVideo(client.role),
     canInteract: canInteract(client.role),
     ev: ev.id,
     event: toEventInfo(ev),
@@ -709,7 +850,7 @@ async function handleJoin(client, msg) {
     cap: ev.capacity, // クライアントは「定員 − 実在人数」ぶんをNPCで埋める
     screen: ev.videoId,
     playback: currentPlayback(ev.id),
-    events: buildEventList(canControlVideo(role)),
+    events: buildEventList(client),
     persistent: isPersistent(),
     blocked: blockedListFor(client), // 「ブロック中の人」を画面から解除できるようにする
   });
@@ -753,6 +894,16 @@ function handleChat(client, msg) {
   if (!client.joined) return;
   if (!canInteract(client.role)) {
     send(client.ws, { t: 'denied', reason: 'guest-no-chat' });
+    return;
+  }
+
+  // YouTubeチャット連動のイベントでは、会場の独自チャットは使わない。
+  // クライアントは入力欄を隠しているが、それはUIの都合でしかない。
+  // サーバーが止めないと開発者ツールから投げれば書き込めてしまい、
+  // 「発言はYouTubeへ一本化する」という設計が成立しない（2026-08-02 追加）
+  const myEvent = events.get(client.eventId);
+  if (myEvent && myEvent.chatMode === 'youtube') {
+    send(client.ws, { t: 'denied', reason: 'chat-on-youtube' });
     return;
   }
 
@@ -802,17 +953,16 @@ function handleEmote(client, msg) {
   broadcastFrom(client, { t: 'emote', id: client.id, e: msg.e });
 }
 
-/** screen: イベントの動画を変更（管理者のみ）。同じイベントの全ルームに反映される */
+/** screen: イベントの動画を変更。いま自分がいるイベントを操作できる人だけ */
 async function handleScreen(client, msg) {
   if (!client.joined) return;
-  if (!canControlVideo(client.role)) {
-    send(client.ws, { t: 'denied', reason: 'admin-only' });
+  const ev = events.get(client.eventId);
+  if (!ev) return;
+  if (!canManageEvent(client.role, client.email, ev)) {
+    send(client.ws, { t: 'denied', reason: 'not-your-event' });
     return;
   }
   if (typeof msg.v !== 'string' || !VIDEO_ID_RE.test(msg.v)) return;
-
-  const ev = events.get(client.eventId);
-  if (!ev) return;
 
   ev.videoId = msg.v;
   ev.playback = { playing: true, pos: 0, at: Date.now() }; // 動画が変われば先頭から
@@ -825,19 +975,18 @@ async function handleScreen(client, msg) {
   await updateEventVideo(ev.id, msg.v);
 }
 
-/** playback: 再生/一時停止/シーク（管理者のみ）。同じイベントの全ルームで揃える */
+/** playback: 再生/一時停止/シーク。いま自分がいるイベントを操作できる人だけ */
 function handlePlayback(client, msg) {
   if (!client.joined) return;
-  if (!canControlVideo(client.role)) {
-    send(client.ws, { t: 'denied', reason: 'admin-only' });
+  const ev = events.get(client.eventId);
+  if (!ev) return;
+  if (!canManageEvent(client.role, client.email, ev)) {
+    send(client.ws, { t: 'denied', reason: 'not-your-event' });
     return;
   }
   if (msg.st !== 'play' && msg.st !== 'pause') return;
   const pos = typeof msg.pos === 'number' && Number.isFinite(msg.pos) ? Math.max(0, msg.pos) : 0;
   if (pos > 24 * 3600) return; // 異常値は破棄
-
-  const ev = events.get(client.eventId);
-  if (!ev) return;
   // ライブ配信なら位置は保存しない（上の currentPlayback のコメント参照）
   const live = msg.live === true;
   ev.playback = { playing: msg.st === 'play', pos: live ? 0 : pos, at: Date.now(), live };
@@ -847,11 +996,11 @@ function handlePlayback(client, msg) {
   broadcastToEvent(client.eventId, out, client.id);
 }
 
-/** event-create: イベント作成（管理者のみ） */
+/** event-create: イベント作成（管理者とVIP）。立てた本人が所有者になる */
 async function handleEventCreate(client, msg) {
   if (!client.joined) return;
-  if (!canControlVideo(client.role)) {
-    send(client.ws, { t: 'denied', reason: 'admin-only' });
+  if (!canCreateEvent(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'staff-only' });
     return;
   }
   if (events.size >= MAX_EVENTS) {
@@ -859,7 +1008,7 @@ async function handleEventCreate(client, msg) {
     return;
   }
 
-  const ev = await createEventFrom(msg);
+  const ev = await createEventFrom(msg, client.email);
   if (!ev) return;
   send(client.ws, { t: 'event-created', ev: toEventInfoAdmin(ev) });
   broadcastAllEvents();
@@ -870,7 +1019,7 @@ async function handleEventCreate(client, msg) {
  * 入場画面から作れないと、イベント0件のとき「入れないから作れない」で詰むため
  * 入口を2つ用意している（2026-07-30）。
  */
-async function createEventFrom(msg) {
+async function createEventFrom(msg, ownerEmail = '') {
   const name = clampString(msg && msg.name, MAX_EVENT_NAME_LEN).trim();
   if (!name) return null;
   const videoId =
@@ -888,6 +1037,9 @@ async function createEventFrom(msg) {
     entryCode: clampString(msg.code, MAX_EVENT_CODE_LEN).trim(),
     capacity: msg.cap,
     vrcBridge: Boolean(msg.vrc),
+    // 立てた人。VIPが自分のイベントだけ操作できるようにするための印
+    ownerEmail: String(ownerEmail || ''),
+    chatMode: msg.chatMode === 'youtube' ? 'youtube' : 'local',
   });
   if (ev.vrcBridge) makeBridgeExclusive(ev.id);
   events.set(id, ev);
@@ -907,13 +1059,14 @@ async function createEventFrom(msg) {
  */
 async function handleEventUpdate(client, msg) {
   if (!client.joined) return;
-  if (!canControlVideo(client.role)) {
-    send(client.ws, { t: 'denied', reason: 'admin-only' });
-    return;
-  }
   const ev = events.get(msg && msg.id);
   if (!ev) {
     send(client.ws, { t: 'denied', reason: 'no-event' });
+    return;
+  }
+  // 権限はイベントごとに見る。VIPは自分が立てたイベントだけ変更できる
+  if (!canManageEvent(client.role, client.email, ev)) {
+    send(client.ws, { t: 'denied', reason: 'not-your-event' });
     return;
   }
 
@@ -945,10 +1098,32 @@ async function handleEventUpdate(client, msg) {
     }
     ev.capacity = want;
   }
+  // NPCの全体上限。-1 は自動（キャパ − 実在人数）に戻す
+  if (msg.npcMax !== undefined) {
+    const n = Number(msg.npcMax);
+    ev.npcMax = Number.isFinite(n) && n >= 0 ? Math.min(MAX_NPC, Math.trunc(n)) : -1;
+  }
+  // チャットの形（独自チャット / YouTubeへ一本化）
+  if (msg.chatMode === 'local' || msg.chatMode === 'youtube') {
+    ev.chatMode = msg.chatMode;
+  }
+  // 運営メッセージの固定枠。level を空にすると消える
+  if (msg.notice !== undefined) {
+    const lv = msg.notice && typeof msg.notice.level === 'string' ? msg.notice.level : '';
+    const tx = msg.notice && typeof msg.notice.text === 'string' ? msg.notice.text : '';
+    const text = clampString(tx, MAX_NOTICE_LEN).trim();
+    // 本文が空なら、レベルが何であれ出さない（空の帯が残るのを防ぐ）
+    ev.noticeLevel = NOTICE_LEVELS.has(lv) && text ? lv : '';
+    ev.noticeText = ev.noticeLevel ? text : '';
+  }
 
   await saveEvent(ev);
   send(client.ws, { t: 'event-updated', ev: toEventInfoAdmin(ev) });
   broadcastAllEvents();
+  // 中にいる人へ、変わった設定をその場で反映させる（定員・チャットの形・運営メッセージ）。
+  // 以前はイベント一覧しか配っていなかったので、
+  // 「キャパを増やしてもNPCが増えない」など**途中変更が効かなかった**（2026-08-02 loyさん指摘）
+  broadcastToEvent(ev.id, { t: 'event-changed', event: toEventInfo(ev) });
 }
 
 /**
@@ -960,13 +1135,15 @@ async function handleEventUpdate(client, msg) {
  */
 async function handleEventDelete(client, msg) {
   if (!client.joined) return;
-  if (!canControlVideo(client.role)) {
-    send(client.ws, { t: 'denied', reason: 'admin-only' });
-    return;
-  }
   const ev = events.get(msg.id);
   if (!ev) {
     send(client.ws, { t: 'denied', reason: 'cannot-delete' });
+    return;
+  }
+  // VIPは自分が立てたイベントしか閉じられない。
+  // これが無いと、別のVIPが進行中のライブを閉じられてしまう
+  if (!canManageEvent(client.role, client.email, ev)) {
+    send(client.ws, { t: 'denied', reason: 'not-your-event' });
     return;
   }
 
@@ -988,8 +1165,12 @@ async function handleEventDelete(client, msg) {
 
   events.delete(ev.id);
   await deleteEvent(ev.id);
+  // キックのタイムアウトはイベントに紐づくので、閉じたら一緒に片付ける
+  kickTimeouts.delete(ev.id);
+  await deleteKickTimeout(ev.id);
   // 記録は残す。イベント定義を消しても「いつ開いて、いつ閉じたか」は後から見たいので
-  // （消えたら記録の意味がない。2026-07-31 の設計方針）
+  // （消えたら記録の意味がない。2026-07-31 の設計方針）。
+  // キックの履歴も同じ理由で残す（あとでBANするかの判断材料になる）
   await logRunClose(ev.runId, Date.now());
   broadcastAllEvents();
 }
@@ -1004,6 +1185,37 @@ function handleMove(client, msg) {
   if (ev.requireLogin && client.role === 'guest') {
     send(client.ws, { t: 'denied', reason: 'login-required', ev: ev.id });
     return;
+  }
+
+  // ---- 別のイベントへ移るときは、入場と同じ関門をくぐらせる（2026-08-02 修正）----
+  //
+  // ⚠ ここが抜けていた。move は join と同じ「イベントへの入場」なのに、
+  //   合言葉もキックの締め出しも見ていなかったため、
+  //   ・合言葉つきイベントへ**合言葉なしで入れてしまう**（今回以前からあった穴）
+  //   ・キックで締め出した相手が **join し直さず move で戻れてしまう**
+  //   という2つが起きていた。同じイベント内のルーム移動には掛けない
+  //   （既に入場を許された人が部屋を移るだけなので、また合言葉を聞くのはおかしい）。
+  if (targetEventId !== client.eventId) {
+    if (ev.entryCode && clampString(msg.code, MAX_EVENT_CODE_LEN) !== ev.entryCode) {
+      send(client.ws, { t: 'denied', reason: 'bad-code', ev: ev.id });
+      return;
+    }
+    const timeout = findKickTimeout(ev.id, client.visitor);
+    if (timeout) {
+      send(client.ws, {
+        t: 'denied',
+        reason: 'kicked-out',
+        ev: ev.id,
+        until: timeout.untilAt,
+        by: timeout.byName,
+        why: timeout.reason,
+      });
+      return;
+    }
+    if (!assignableRoom(ev.id)) {
+      send(client.ws, { t: 'denied', reason: 'event-full', ev: ev.id });
+      return;
+    }
   }
 
   const wantRoom = Number.isInteger(msg.rm) && msg.rm >= 1 && msg.rm <= 999 ? msg.rm : null;
@@ -1056,7 +1268,7 @@ function handleMove(client, msg) {
 
 /** events: 一覧の要求 */
 function handleEventsRequest(client) {
-  send(client.ws, { t: 'events', events: buildEventList(canControlVideo(client.role)) });
+  send(client.ws, { t: 'events', events: buildEventList(client) });
 }
 
 // ------------------------------------------------------------
@@ -1154,25 +1366,97 @@ async function handleUnblock(client, msg) {
  * kick: その場から退出させる（管理者・VIP）。再入場はできる。
  * 同格以上は蹴れない。VIPが管理者を、管理者が管理者を蹴れると収拾がつかなくなるため。
  */
-function handleKick(client, msg) {
+async function handleKick(client, msg) {
   if (!client.joined) return;
   if (!isGlobalRole(client.role)) {
     send(client.ws, { t: 'denied', reason: 'staff-only' });
     return;
   }
+  const ev = events.get(client.eventId);
+  // 2026-08-02: キックも「自分が立てたイベントだけ」に絞る。
+  // ここを役職だけで判定すると、他人のライブに客として来ているVIPが
+  // その会場の参加者を最大3時間締め出せてしまう（設定変更や閉じるは絞ったのに、
+  // キックだけ抜けていた）
+  if (!canManageEvent(client.role, client.email, ev)) {
+    send(client.ws, { t: 'denied', reason: 'not-your-event' });
+    return;
+  }
+
   const target = findPeerInEvent(client, msg.id);
   if (!target || target.id === client.id) return;
   if (isGlobalRole(target.role)) {
     send(client.ws, { t: 'denied', reason: 'cannot-kick-staff' });
     return;
   }
-  send(target.ws, { t: 'kicked', by: client.n });
-  send(client.ws, { t: 'moderated', act: 'kick', n: target.n });
+
+  const mins = KICK_MINUTES.has(Number(msg.mins)) ? Number(msg.mins) : 0;
+  const reason = clampString(msg.why, MAX_KICK_REASON_LEN);
+  const now = Date.now();
+
+  // 時間つきなら、その間そのイベントへ再入場できないようにする。
+  // 相手の識別は入場ログと同じ匿名ID（`u:ハッシュ`/`g:番号`）なので**ゲストにも効く**。
+  //
+  // ⚠ **メモリへの登録を先に済ませ、DBへの保存は後回しにする。**
+  //   締め出しの判定はメモリを見るので、これで即座に効く。
+  //   逆にDBの書き込みを待ってから通知すると、書き込みが遅れたときに
+  //   蹴られた本人へ理由が届く前に接続が切れ、「通信が不安定」に見えてしまう
+  //   （実DBでのテストで実際に取りこぼした。2026-08-02）
+  let timeout = null;
+  if (mins > 0 && ev) {
+    timeout = {
+      eventId: ev.id,
+      subject: target.visitor,
+      untilAt: now + mins * 60 * 1000,
+      name: target.n,
+      byName: client.n,
+      reason,
+      createdAt: now,
+    };
+    setKickTimeout(timeout);
+  }
+
+  send(target.ws, { t: 'kicked', by: client.n, mins, why: reason });
+  send(client.ws, { t: 'moderated', act: 'kick', n: target.n, mins });
+  // 管理者には誰が誰を蹴ったかを知らせる（VIPが蹴った場合も気づけるように）
+  notifyAdmins(client.eventId, {
+    t: 'staff-note',
+    kind: 'kick',
+    n: target.n,
+    by: client.n,
+    mins,
+    why: reason,
+  });
   try {
     target.ws.close();
   } catch {
     // 既に切れている場合は何もしない（closeイベント側で後始末される）
   }
+
+  // ---- ここから先は保存。通知が済んでいるので時間がかかっても体験に響かない ----
+  if (timeout) await saveKickTimeout(timeout); // 再起動しても締め出しが解けないように
+  // 履歴は時間の有無にかかわらず残す。
+  // 「この人、前にも蹴られてるな」を管理者が後から判断してBANを決めるための材料
+  // （loyさん設計 2026-08-02: キックの履歴を管理人に通知して、あとで審議する）
+  await addKickLog({
+    eventId: ev ? ev.id : client.eventId,
+    eventName: ev ? ev.name : '',
+    subject: target.visitor,
+    name: target.n,
+    email: target.email,
+    byName: client.n,
+    reason,
+    minutes: mins,
+    createdAt: now,
+  });
+}
+
+/** kicks: キックの履歴を返す（管理者のみ）。BANするかの審議に使う */
+async function handleKickLogRequest(client) {
+  if (!client.joined || client.role !== 'admin') {
+    send(client.ws, { t: 'denied', reason: 'admin-only' });
+    return;
+  }
+  send(client.ws, { t: 'kicks', list: await listKickLog(100) });
 }
 
 /** ban: 再入場を止める（管理者だけ）。Googleアカウント単位なのでゲストにはかけられない */
@@ -1254,15 +1538,17 @@ const HANDLERS = {
   ban: handleBan,
   unban: handleUnban,
   bans: handleBansRequest,
+  kicks: handleKickLogRequest,
 };
 
 /** 全員にイベント一覧を配る（人数が変わったとき・イベントが増減したとき） */
 function broadcastAllEvents() {
-  const forAll = { t: 'events', events: buildEventList(false) };
-  const forAdmin = { t: 'events', events: buildEventList(true) };
+  // 2026-08-02: 合言葉を見せる範囲がイベントごとになった（VIPは自分のイベントだけ）ので、
+  // 「管理者用／全員用」の2種類では足りない。人ごとに組み立てる。
+  // イベント数もクライアント数も上限が小さい（20件×60人）ので負荷は問題にならない
   for (const members of rooms.values()) {
     for (const client of members.values()) {
-      send(client.ws, canControlVideo(client.role) ? forAdmin : forAll);
+      send(client.ws, { t: 'events', events: buildEventList(client) });
     }
   }
 }
@@ -1314,7 +1600,7 @@ function buildStatusJson() {
   return {
     ok: true,
     rooms: roomList,
-    events: buildEventList(false),
+    events: buildEventList(null),
     persistent: isPersistent(),
     login: isLoginEnabled(),
     // PORTAL連携APIが開いているか（合言葉そのものは出さない）
@@ -1521,20 +1807,33 @@ async function handleProfileRequest(req, res) {
  *
  * @returns {Promise<{ok:true, role:string} | {ok:false, code:number, error:string}>}
  */
-async function authAdminBody(body) {
+async function authAdminBody(body, { allowStaff = false } = {}) {
+  // 開発用の権限指定。Render上では ALLOW_DEV_ROLE が false なので絶対に効かない。
+  // ⚠ 判定を「ログイン必須で弾く」より**先**に置くこと。
+  //   後ろに置くと、ログインを有効にしたローカル環境で devRole が使えず、
+  //   権限まわりの検証ができなくなる（WS側の join は元から先に見ている）
+  const dev =
+    ALLOW_DEV_ROLE && body && typeof body.devRole === 'string' && DEV_ROLES.has(body.devRole);
+
   let role = defaultRole();
+  let email = '';
   if (body && body.idt) {
     const info = await verifyIdToken(body.idt);
     if (!info) return { ok: false, code: 401, error: 'not-signed-in' };
-    role = roleForEmail(info.email);
-  } else if (isLoginEnabled()) {
+    email = info.email;
+    role = roleForEmail(email);
+  } else if (isLoginEnabled() && !dev) {
     return { ok: false, code: 401, error: 'not-signed-in' };
   }
-  if (ALLOW_DEV_ROLE && body && typeof body.devRole === 'string' && DEV_ROLES.has(body.devRole)) {
+  if (dev) {
     role = body.devRole;
+    if (typeof body.devEmail === 'string' && body.devEmail) email = body.devEmail.toLowerCase();
   }
-  if (!canControlVideo(role)) return { ok: false, code: 403, error: 'admin-only' };
-  return { ok: true, role };
+  // allowStaff … イベント作成はVIPにも開放する（管理者不在でも会場を開けるように）。
+  // 記録の閲覧など管理者専用のものは false のままにする
+  const ok = allowStaff ? canCreateEvent(role) : canControlVideo(role);
+  if (!ok) return { ok: false, code: 403, error: 'admin-only' };
+  return { ok: true, role, email };
 }
 
 async function handleAdminEventCreate(req, res) {
@@ -1544,7 +1843,8 @@ async function handleAdminEventCreate(req, res) {
   };
 
   const body = await readJsonBody(req);
-  const auth = await authAdminBody(body);
+  // イベント作成はVIPにも開放（管理者不在でもメンバーが会場を開けるように・2026-08-02）
+  const auth = await authAdminBody(body, { allowStaff: true });
   if (!auth.ok) {
     reply(auth.code, { ok: false, error: auth.error });
     return;
@@ -1554,7 +1854,7 @@ async function handleAdminEventCreate(req, res) {
     return;
   }
 
-  const ev = await createEventFrom(body);
+  const ev = await createEventFrom(body, auth.email);
   if (!ev) {
     reply(400, { ok: false, error: 'bad-name' });
     return;
@@ -1795,7 +2095,7 @@ const httpServer = http.createServer(async (req, res) => {
       login: isLoginEnabled(),
       clientId: getClientId(),
       persistent: isPersistent(),
-      events: buildEventList(false),
+      events: buildEventList(null),
     });
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(body);
@@ -1969,6 +2269,11 @@ async function boot() {
   // BANはメモリに載せておく。入場のたびにDBを叩かずに済ませるため
   for (const b of await loadBans()) bans.set(b.email, b);
 
+  // キックの締め出しも復元する。ここを消すと、再起動しただけで
+  // 1時間の締め出しが解けてしまい、荒らし対策として役に立たない
+  const timeouts = await loadKickTimeouts();
+  for (const t of timeouts) setKickTimeout(t);
+
   // サーバーが生きている印。人がいる間だけ打つ（誰もいない時間に書き込みを増やさない）。
   // 次に落ちたとき、この時刻で「閉じ忘れ」を閉じるので、記録のズレは最大1分に収まる
   setInterval(() => {
@@ -1979,7 +2284,7 @@ async function boot() {
     console.log(`[VERSE CITY Web Server] listening on port ${PORT} (ws path: ${WS_PATH})`);
     console.log(`  ログイン: ${isLoginEnabled() ? '有効' : '無効（GOOGLE_CLIENT_ID 未設定）'}`);
     console.log(`  イベント永続化: ${isPersistent() ? '有効（Turso）' : '無効（メモリのみ）'}`);
-    console.log(`  イベント数: ${events.size} ／ BAN: ${bans.size}件`);
+    console.log(`  イベント数: ${events.size} ／ BAN: ${bans.size}件 ／ キック締め出し: ${timeouts.length}件`);
     console.log(`  イベントログ: 有効${fixed ? `（前回の閉じ忘れ ${fixed}件を補正）` : ''}`);
     console.log(`  PORTAL連携API: ${STATS_TOKEN ? '有効（/api/stats.json）' : '無効（STATS_TOKEN 未設定）'}`);
     console.log(`  入口の鍵: ${ENTRY_KEY ? '有効（?k= が必要）' : '無効（ENTRY_KEY 未設定＝誰でも入れる）'}`);

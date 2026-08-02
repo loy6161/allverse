@@ -106,6 +106,7 @@ function injectStyle() {
  * @param {(id:string) => void} p.onDeleteEvent
  * @param {() => void} p.onRefresh
  * @param {() => number} [p.getNpcCount] NPCの現在数
+ * @param {() => number} [p.getNpcCeiling] 管理者が決めた上限（これを超えて増やせない）
  * @param {() => boolean} [p.isNpcAuto] 自動補充中かどうか
  * @param {(n:number|null) => void} [p.onNpcCount] NPCの人数を指定する（null で自動補充に戻す）
  * @param {{element:HTMLElement, refresh:() => void}} [p.adminExtra]
@@ -122,6 +123,7 @@ export function initRoomUI({
   onDeleteEvent,
   onRefresh,
   getNpcCount,
+  getNpcCeiling,
   isNpcAuto,
   onNpcCount,
   adminExtra = null,
@@ -227,16 +229,69 @@ export function initRoomUI({
     vrcLb.append(vrcC, document.createTextNode('VRChatの客席に出す（ONにできるのは1つ）'));
     box.appendChild(vrcLb);
 
+    // ---- チャットの形（2026-08-02追加）----
+    // 配信中はYouTubeへ一本化し、配信のないイベントでは会場チャットを使う。
+    // 自動判定にしないのは、誤爆したとき運営が制御を取り戻せなくなるため
+    const ytLb = document.createElement('label');
+    const ytC = document.createElement('input');
+    ytC.type = 'checkbox';
+    ytC.checked = ev.chatMode === 'youtube';
+    ytLb.append(ytC, document.createTextNode('YouTubeチャット連動（会場のチャットは使わない）'));
+    box.appendChild(ytLb);
+
+    // ---- NPCの全体上限（管理者が決める。各自はこの範囲でしか出せない）----
+    const npcTitle = document.createElement('div');
+    npcTitle.className = 'vc-room-hint';
+    npcTitle.textContent = 'NPC（賑やかし）の上限。空欄なら自動（定員の空きぶん）。0にすると全員の画面から消えます。';
+    box.appendChild(npcTitle);
+    const npcI = document.createElement('input');
+    npcI.type = 'number';
+    npcI.min = '0';
+    npcI.max = '100';
+    npcI.placeholder = '自動';
+    npcI.value = Number.isFinite(ev.npcMax) && ev.npcMax >= 0 ? String(ev.npcMax) : '';
+    box.appendChild(npcI);
+
+    // ---- 運営メッセージの固定枠 ----
+    const noticeTitle = document.createElement('div');
+    noticeTitle.className = 'vc-room-hint';
+    noticeTitle.textContent = '運営メッセージ（会場の上部に出したままになります。空にすると消えます）';
+    box.appendChild(noticeTitle);
+    const noticeI = document.createElement('input');
+    noticeI.type = 'text';
+    noticeI.maxLength = 120;
+    noticeI.placeholder = '例: 転換中です。次の出演は○○さんです';
+    noticeI.value = ev.notice ? ev.notice.text : '';
+    box.appendChild(noticeI);
+    const lvSel = document.createElement('select');
+    for (const [val, label] of [
+      ['info', 'お知らせ（青）'],
+      ['important', '重要（黄）'],
+      ['emergency', '緊急（赤・画面上部に固定）'],
+    ]) {
+      const o = document.createElement('option');
+      o.value = val;
+      o.textContent = label;
+      lvSel.appendChild(o);
+    }
+    lvSel.value = ev.notice && ev.notice.level ? ev.notice.level : 'info';
+    box.appendChild(lvSel);
+
     const save = document.createElement('button');
     save.type = 'button';
     save.textContent = '保存';
     save.addEventListener('click', () => {
+      const npcRaw = npcI.value.trim();
       const payload = {
         id: ev.id,
         name: nameI.value.trim() || ev.name,
         cap: Number(capI.value) || ev.cap,
         requireLogin: loginC.checked,
         vrc: vrcC.checked,
+        chatMode: ytC.checked ? 'youtube' : 'local',
+        // 空欄は自動（-1）。数値ならその値を全体の上限にする
+        npcMax: npcRaw === '' ? -1 : Math.max(0, Math.min(100, Number(npcRaw) || 0)),
+        notice: { level: lvSel.value, text: noticeI.value.trim() },
       };
       if (codeTouched) payload.code = codeI.value.trim();
       onUpdateEvent(payload);
@@ -283,7 +338,9 @@ export function initRoomUI({
         (ev.vrc ? ' 🥽' : '');
       head.appendChild(name);
 
-      if (role === 'admin') {
+      // 2026-08-02: 権限はイベントごと（VIPは自分が立てたイベントだけ）。
+      // サーバーが `mine` で教えてくれるので、その判断をそのまま使う
+      if (ev.mine) {
         const gear = document.createElement('button');
         gear.className = 'vc-room-del';
         gear.textContent = '設定';
@@ -308,7 +365,7 @@ export function initRoomUI({
       }
       box.appendChild(head);
 
-      if (role === 'admin' && openSettings === ev.id) box.appendChild(buildSettings(ev));
+      if (ev.mine && openSettings === ev.id) box.appendChild(buildSettings(ev));
 
       const list = document.createElement('div');
       list.className = 'vc-room-list';
@@ -320,7 +377,15 @@ export function initRoomUI({
         chip.textContent = `#${r.room}（${r.count}）`;
         chip.addEventListener('click', () => {
           if (r.full && !here) return;
-          onMove(ev.id, r.room);
+          // 合言葉つきの**別の**イベントへ移るときは、入場と同じように合言葉が要る。
+          // 以前はサーバーが move で合言葉を見ていなかったため素通りできてしまっていた
+          // （2026-08-02 修正）。自分のイベントなら見えているので聞かない
+          let code = '';
+          if (ev.id !== cur.eventId && ev.hasCode && !ev.mine) {
+            code = window.prompt(`「${ev.name}」の合言葉を入力してください`, '') || '';
+            if (!code) return;
+          }
+          onMove(ev.id, r.room, code);
           closePanel();
         });
         list.appendChild(chip);
@@ -329,7 +394,8 @@ export function initRoomUI({
       panel.appendChild(box);
     }
 
-    if (role === 'admin') {
+    // イベント作成はVIPにも開放（管理者不在でも会場を開けるように・2026-08-02）
+    if (role === 'admin' || role === 'vip') {
       const admin = document.createElement('div');
       admin.className = 'vc-room-admin';
 
@@ -401,72 +467,83 @@ export function initRoomUI({
       admin.appendChild(createBtn);
       panel.appendChild(admin);
 
-      // ---- NPC（賑やかし・負荷テスト） ----
-      // 自分の画面にだけ出る。他の人には見えないので、いつ試しても迷惑にならない
-      const test = document.createElement('div');
-      test.className = 'vc-room-admin';
-
-      const testLabel = document.createElement('div');
-      testLabel.className = 'vc-room-title';
-      testLabel.textContent = 'NPC（賑やかし・負荷テスト）';
-      test.appendChild(testLabel);
-
-      const testHint = document.createElement('div');
-      testHint.className = 'vc-room-hint';
-      testHint.textContent =
-        'ふだんは定員の空きぶんを自動で埋めています。ここで人数を指定すると自動補充は止まり、描画が重くならないか確かめられます。NPCは自分の画面にだけ出ます。';
-      test.appendChild(testHint);
-
-      const auto = isNpcAuto ? isNpcAuto() : false;
-      const now = getNpcCount ? getNpcCount() : 0;
-
-      const row = document.createElement('div');
-      npcNumEl = null; // 前回の描画で持っていた参照を捨てる
-      row.className = 'vc-npc-row';
-      const range = document.createElement('input');
-      range.type = 'range';
-      range.min = '0';
-      range.max = '100';
-      range.step = '5';
-      range.value = String(now);
-      const num = document.createElement('span');
-      num.className = 'vc-npc-num';
-      num.textContent = auto ? `自動 ${now}体` : `${now} 体`;
-      npcNumEl = num; // 自動補充で人数が動いたら refreshNpc() で書き換える
-      const apply = (v) => {
-        num.textContent = `${v} 体`;
-        if (onNpcCount) onNpcCount(Number(v));
-      };
-      range.addEventListener('input', () => apply(range.value));
-      row.append(range, num);
-      test.appendChild(row);
-
-      const presets = document.createElement('div');
-      presets.className = 'vc-room-list';
-      const autoBtn = document.createElement('button');
-      autoBtn.className = 'vc-room-chip' + (auto ? ' here' : '');
-      autoBtn.textContent = '自動';
-      autoBtn.addEventListener('click', () => {
-        if (onNpcCount) onNpcCount(null); // 空きぶんを埋める動きに戻す
-        render();
-      });
-      presets.appendChild(autoBtn);
-      for (const n of [0, 10, 30, 60, 100]) {
-        const b = document.createElement('button');
-        b.className = 'vc-room-chip';
-        b.textContent = n === 0 ? '消す' : `${n}体`;
-        b.addEventListener('click', () => {
-          range.value = String(n);
-          apply(n);
-        });
-        presets.appendChild(b);
-      }
-      test.appendChild(presets);
-      panel.appendChild(test);
-
       // イベントの記録（logsui.js が中身を持つ）。管理者のときだけ末尾に置く
       if (adminExtra && adminExtra.element) panel.appendChild(adminExtra.element);
     }
+
+    // ---- NPC（賑やかし）の人数 ----
+    // 2026-08-02: **誰でも触れる**ようにした（「NPCが邪魔」という声があったため）。
+    // 動かせるのは自分の画面だけで、他の人には影響しない。
+    // 上限は管理者がイベント設定で決めていて、それを超えては増やせない
+    // （管理者が0にすれば、このスライダーの最大も0になり全員の画面から消える）。
+    panel.appendChild(buildNpcSection());
+  }
+
+  /** NPCの人数スライダー。上限は管理者が決めた値 */
+  function buildNpcSection() {
+    const box = document.createElement('div');
+    box.className = 'vc-room-admin';
+
+    const label = document.createElement('div');
+    label.className = 'vc-room-title';
+    label.textContent = 'NPC（賑やかし）';
+    box.appendChild(label);
+
+    const ceil = getNpcCeiling ? getNpcCeiling() : 0;
+    const now = getNpcCount ? getNpcCount() : 0;
+    const isAuto = isNpcAuto ? isNpcAuto() : true;
+
+    const hint = document.createElement('div');
+    hint.className = 'vc-room-hint';
+    hint.textContent =
+      ceil > 0
+        ? `人の少ない時間でも寂しく見えないように出している飾りです。自分の画面だけ減らせます（上限 ${ceil}体）。`
+        : '運営がNPCを出さない設定にしているため、いまは調整できません。';
+    box.appendChild(hint);
+
+    const row = document.createElement('div');
+    row.className = 'vc-npc-row';
+    const range = document.createElement('input');
+    range.type = 'range';
+    range.min = '0';
+    range.max = String(Math.max(0, ceil));
+    range.step = '1';
+    range.value = String(Math.min(now, Math.max(0, ceil)));
+    range.disabled = ceil <= 0;
+    const num = document.createElement('span');
+    num.className = 'vc-npc-num';
+    num.textContent = isAuto ? `自動 ${now}体` : `${now} 体`;
+    npcNumEl = num; // 人数が動いたら refreshNpc() で書き換える
+
+    range.addEventListener('input', () => {
+      const v = Number(range.value);
+      num.textContent = `${v} 体`;
+      if (onNpcCount) onNpcCount(v);
+    });
+    row.append(range, num);
+    box.appendChild(row);
+
+    const presets = document.createElement('div');
+    presets.className = 'vc-room-list';
+    const autoBtn = document.createElement('button');
+    autoBtn.className = 'vc-room-chip' + (isAuto ? ' here' : '');
+    autoBtn.textContent = 'おまかせ';
+    autoBtn.addEventListener('click', () => {
+      if (onNpcCount) onNpcCount(null); // 上限いっぱいに戻す
+      render();
+    });
+    presets.appendChild(autoBtn);
+    const zero = document.createElement('button');
+    zero.className = 'vc-room-chip';
+    zero.textContent = '消す';
+    zero.addEventListener('click', () => {
+      range.value = '0';
+      num.textContent = '0 体';
+      if (onNpcCount) onNpcCount(0);
+    });
+    presets.appendChild(zero);
+    box.appendChild(presets);
+    return box;
   }
 
   /** URLでも動画IDでも受け付ける（screenui.js と同じ考え方） */

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GUEST_HAIR } from './guestlook.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createTextSprite } from './avatar.js';
 import { playClap } from './sfx.js';
@@ -17,6 +18,7 @@ import { playClap } from './sfx.js';
 
 // パーツ合成方式: body_<服装> + hair_<髪型> + acc_<アクセ> を実行時に組む
 export const GLB_STYLES = ['long', 'bob', 'short', 'twin', 'bun', 'pony'];
+// ※ ゲスト専用の「髪なし」は選択肢に入れない（選べてしまうと見分けにならない）
 export const GLB_OUTFITS = ['middle', 'long', 'short'];
 export const GLB_ACCESSORIES = ['none', 'kemo', 'ahoge'];
 
@@ -63,10 +65,15 @@ function loadPart(key) {
 }
 
 function partsFor(config) {
-  const hair = GLB_STYLES.includes(config.hairStyle) ? config.hairStyle : GLB_STYLES[0];
   const outfit = GLB_OUTFITS.includes(config.outfit) ? config.outfit : GLB_OUTFITS[0];
   const acc = GLB_ACCESSORIES.includes(config.accessory) ? config.accessory : 'none';
-  const keys = [`body_${outfit}`, `hair_${hair}`];
+  const keys = [`body_${outfit}`];
+  // ゲストは髪なし（2026-08-02）。アクセの 'none' と同じで、単に足さないだけ。
+  // 新しい3Dアセットが要らないうえ、シルエットで一目でゲストと分かる
+  if (config.hairStyle !== GUEST_HAIR) {
+    const hair = GLB_STYLES.includes(config.hairStyle) ? config.hairStyle : GLB_STYLES[0];
+    keys.push(`hair_${hair}`);
+  }
   if (acc !== 'none') keys.push(`acc_${acc}`);
   return keys;
 }

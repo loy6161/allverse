@@ -224,5 +224,19 @@ export function initChat({ onSend }) {
   // 具体的な会場名とルーム番号は、サーバーからwelcomeが届いた時点でヘッダーに出る
   addMessage('', `${APP_NAME} へようこそ！`, { system: true });
 
-  return { addMessage };
+  return {
+    addMessage,
+    /**
+     * 入力欄の表示を切り替える（2026-08-02追加）。
+     *
+     * YouTubeチャット連動のイベントでは発言をYouTubeへ一本化するので、
+     * **入力欄だけを隠してログは残す**。ここを「パネルごと隠す」にすると、
+     * 「コメントするにはログインが必要です」のような案内も一緒に消えてしまい、
+     * ゲストが理由の分からないまま詰まる。
+     * 隠している間、このパネルは発言欄ではなく「お知らせ欄」として働く。
+     */
+    setInputVisible(on) {
+      inputRow.style.display = on ? '' : 'none';
+    },
+  };
 }

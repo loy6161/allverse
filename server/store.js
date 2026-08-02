@@ -75,10 +75,19 @@ export async function initStore() {
     //   entry_code … 合言葉（空文字＝パブリック）
     //   capacity   … 1ルームの定員
     //   vrc_bridge … VRChat連携に出すイベントか
+    //   owner_email … 立てた人。VIPは「自分が立てたイベント」だけ操作できる（2026-08-02）
+    //   npc_max     … NPCの全体上限。-1 は自動（キャパ − 実在人数）
+    //   chat_mode   … 'local'（独自チャット）/ 'youtube'（YouTubeチャットへ一本化）
+    //   notice_*    … 運営メッセージの固定枠（レベルと本文）
     for (const ddl of [
       `ALTER TABLE events ADD COLUMN entry_code TEXT NOT NULL DEFAULT ''`,
       `ALTER TABLE events ADD COLUMN capacity INTEGER NOT NULL DEFAULT 30`,
       `ALTER TABLE events ADD COLUMN vrc_bridge INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE events ADD COLUMN owner_email TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE events ADD COLUMN npc_max INTEGER NOT NULL DEFAULT -1`,
+      `ALTER TABLE events ADD COLUMN chat_mode TEXT NOT NULL DEFAULT 'local'`,
+      `ALTER TABLE events ADD COLUMN notice_level TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE events ADD COLUMN notice_text TEXT NOT NULL DEFAULT ''`,
     ]) {
       try {
         await db.execute(ddl);
@@ -147,6 +156,40 @@ export async function initStore() {
     `);
     await db.execute('CREATE INDEX IF NOT EXISTS idx_visits_run ON visits(run_id, joined_at)');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_visits_open ON visits(left_at)');
+    // ---- キックのタイムアウト（2026-08-02 追加）----
+    // キックは「蹴るだけで即戻れる」仕様だったので、荒らしへの対処にならなかった。
+    // 時間を決めて再入場を止められるようにする（実質的な一時BAN）。
+    // subject は入場ログと同じ匿名IDを使う（ログイン済み=u:ハッシュ / ゲスト=g:番号）。
+    // これで**ゲストにも効く**（BANはGoogleアカウント単位なので効かなかった）。
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS kick_timeouts (
+        event_id   TEXT NOT NULL,
+        subject    TEXT NOT NULL,
+        until_at   INTEGER NOT NULL,
+        name       TEXT NOT NULL,
+        by_name    TEXT NOT NULL,
+        reason     TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (event_id, subject)
+      )
+    `);
+    // キックの履歴。管理者があとで「BANするか」を判断するための材料。
+    // タイムアウトが切れても残す（timeouts は消えるが、こちらは記録として残る）
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS kick_log (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id   TEXT NOT NULL,
+        event_name TEXT NOT NULL,
+        subject    TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        email      TEXT NOT NULL DEFAULT '',
+        by_name    TEXT NOT NULL,
+        reason     TEXT NOT NULL DEFAULT '',
+        minutes    INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      )
+    `);
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_kicklog_at ON kick_log(created_at)');
     // サーバーが最後に生きていた時刻。再起動で「退場が書かれないまま」残った行を
     // どの時刻で閉じるかの根拠になる（詳細は closeOpenVisits）
     await db.execute(`
@@ -174,7 +217,9 @@ export async function loadEvents() {
   if (!ready) return [];
   try {
     const rs = await db.execute(
-      'SELECT id, name, video_id, require_login, entry_code, capacity, vrc_bridge, created_at FROM events',
+      `SELECT id, name, video_id, require_login, entry_code, capacity, vrc_bridge, created_at,
+              owner_email, npc_max, chat_mode, notice_level, notice_text
+         FROM events`,
     );
     return rs.rows.map((r) => ({
       id: String(r.id),
@@ -185,6 +230,11 @@ export async function loadEvents() {
       capacity: r.capacity == null ? 30 : Number(r.capacity),
       vrcBridge: Number(r.vrc_bridge) === 1,
       createdAt: Number(r.created_at),
+      ownerEmail: r.owner_email == null ? '' : String(r.owner_email),
+      npcMax: r.npc_max == null ? -1 : Number(r.npc_max),
+      chatMode: r.chat_mode == null ? 'local' : String(r.chat_mode),
+      noticeLevel: r.notice_level == null ? '' : String(r.notice_level),
+      noticeText: r.notice_text == null ? '' : String(r.notice_text),
     }));
   } catch (e) {
     console.warn('[store] イベント読み込みに失敗:', e.message);
@@ -197,15 +247,21 @@ export async function saveEvent(ev) {
   if (!ready) return false;
   try {
     await db.execute({
-      sql: `INSERT INTO events (id, name, video_id, require_login, entry_code, capacity, vrc_bridge, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      sql: `INSERT INTO events (id, name, video_id, require_login, entry_code, capacity, vrc_bridge, created_at,
+                                owner_email, npc_max, chat_mode, notice_level, notice_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               name = excluded.name,
               video_id = excluded.video_id,
               require_login = excluded.require_login,
               entry_code = excluded.entry_code,
               capacity = excluded.capacity,
-              vrc_bridge = excluded.vrc_bridge`,
+              vrc_bridge = excluded.vrc_bridge,
+              owner_email = excluded.owner_email,
+              npc_max = excluded.npc_max,
+              chat_mode = excluded.chat_mode,
+              notice_level = excluded.notice_level,
+              notice_text = excluded.notice_text`,
       args: [
         ev.id,
         ev.name,
@@ -215,6 +271,11 @@ export async function saveEvent(ev) {
         ev.capacity,
         ev.vrcBridge ? 1 : 0,
         ev.createdAt,
+        ev.ownerEmail || '',
+        Number.isFinite(ev.npcMax) ? ev.npcMax : -1,
+        ev.chatMode || 'local',
+        ev.noticeLevel || '',
+        ev.noticeText || '',
       ],
     });
     return true;
@@ -403,6 +464,136 @@ export async function deleteBan(email) {
   } catch (e) {
     console.warn('[store] BANの解除に失敗:', e.message);
     return false;
+  }
+}
+
+// ------------------------------------------------------------
+// キックのタイムアウトと履歴（2026-08-02 追加）
+//
+// キックは「蹴るだけで即戻れる」ので荒らしに効かなかった。
+// 時間つきにして、その間は同じイベントへ再入場できないようにする。
+// 相手の識別は入場ログと同じ匿名ID（`u:ハッシュ` / `g:番号`）を使うので、
+// **BANでは止められなかったゲストにも効く**。
+// ------------------------------------------------------------
+
+/** 期限切れを除いた、生きているタイムアウトを全部読む（起動時にメモリへ載せる） */
+export async function loadKickTimeouts(now = Date.now()) {
+  if (!ready) return [];
+  try {
+    const rs = await db.execute({
+      sql: `SELECT event_id, subject, until_at, name, by_name, reason, created_at
+              FROM kick_timeouts WHERE until_at > ?`,
+      args: [now],
+    });
+    return rs.rows.map((r) => ({
+      eventId: String(r.event_id),
+      subject: String(r.subject),
+      untilAt: Number(r.until_at),
+      name: String(r.name),
+      byName: String(r.by_name),
+      reason: r.reason == null ? '' : String(r.reason),
+      createdAt: Number(r.created_at),
+    }));
+  } catch (e) {
+    console.warn('[store] キックのタイムアウト読み込みに失敗:', e.message);
+    return [];
+  }
+}
+
+export async function saveKickTimeout(t) {
+  if (!ready || !t) return false;
+  try {
+    await db.execute({
+      sql: `INSERT INTO kick_timeouts (event_id, subject, until_at, name, by_name, reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(event_id, subject) DO UPDATE SET
+              until_at = excluded.until_at,
+              name = excluded.name,
+              by_name = excluded.by_name,
+              reason = excluded.reason,
+              created_at = excluded.created_at`,
+      args: [t.eventId, t.subject, t.untilAt, String(t.name || ''), String(t.byName || ''), String(t.reason || ''), t.createdAt],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] キックのタイムアウト保存に失敗:', e.message);
+    return false;
+  }
+}
+
+/** 解除（管理者が早めに許すとき）。イベントを閉じたときの一括削除にも使う */
+export async function deleteKickTimeout(eventId, subject = null) {
+  if (!ready || !eventId) return false;
+  try {
+    if (subject) {
+      await db.execute({
+        sql: 'DELETE FROM kick_timeouts WHERE event_id = ? AND subject = ?',
+        args: [eventId, subject],
+      });
+    } else {
+      await db.execute({ sql: 'DELETE FROM kick_timeouts WHERE event_id = ?', args: [eventId] });
+    }
+    return true;
+  } catch (e) {
+    console.warn('[store] キックのタイムアウト削除に失敗:', e.message);
+    return false;
+  }
+}
+
+/**
+ * 履歴を1件足す。タイムアウトが切れても消さない。
+ * 「この人、前にも蹴られてるな」を管理者が判断できるようにするための記録。
+ */
+export async function addKickLog(entry) {
+  if (!ready || !entry) return false;
+  try {
+    await db.execute({
+      sql: `INSERT INTO kick_log (event_id, event_name, subject, name, email, by_name, reason, minutes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        entry.eventId,
+        String(entry.eventName || ''),
+        entry.subject,
+        String(entry.name || ''),
+        String(entry.email || ''),
+        String(entry.byName || ''),
+        String(entry.reason || ''),
+        Number(entry.minutes) || 0,
+        entry.createdAt,
+      ],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] キック履歴の記録に失敗:', e.message);
+    return false;
+  }
+}
+
+/** 履歴（新しい順）。管理者の👥パネルに出して、BANするかの判断材料にする */
+export async function listKickLog(limit = 100) {
+  if (!ready) return [];
+  const lim = Math.min(500, Math.max(1, Math.trunc(limit) || 100));
+  try {
+    const rs = await db.execute({
+      sql: `SELECT id, event_id, event_name, subject, name, email, by_name, reason, minutes, created_at
+              FROM kick_log ORDER BY created_at DESC LIMIT ?`,
+      args: [lim],
+    });
+    return rs.rows.map((r) => ({
+      id: Number(r.id),
+      eventId: String(r.event_id),
+      eventName: String(r.event_name),
+      subject: String(r.subject),
+      name: String(r.name),
+      email: r.email == null ? '' : String(r.email),
+      byName: String(r.by_name),
+      reason: r.reason == null ? '' : String(r.reason),
+      minutes: Number(r.minutes) || 0,
+      createdAt: Number(r.created_at),
+    }));
+  } catch (e) {
+    console.warn('[store] キック履歴の読み込みに失敗:', e.message);
+    return [];
   }
 }
 

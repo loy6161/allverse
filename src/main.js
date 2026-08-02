@@ -12,7 +12,7 @@ import { initSimPlayers } from './players.js';
 import { initControls } from './controls.js';
 import { initLiveScreen } from './screen.js';
 import { initSoundGate } from './soundgate.js';
-import { initNet } from './net.js';
+import { initNet, avToConfig } from './net.js';
 import { initRemotePlayers } from './remote.js';
 import { initEmoteBar } from './emotebar.js';
 import { initScreenUI } from './screenui.js';
@@ -21,6 +21,9 @@ import { initPlayerControls } from './playerctl.js';
 import { initRoomUI } from './roomui.js';
 import { initLogsUI } from './logsui.js';
 import { initPeopleUI } from './people.js';
+import { initHelpUI } from './helpui.js';
+import { initNoticeBar } from './noticebar.js';
+import { initYouTubeChat } from './ytchat.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
@@ -84,6 +87,10 @@ let roomUI = null;
 let myRole = 'user'; // 'admin' | 'vip' | 'user' | 'guest'
 // 「できるかどうか」はサーバーの判断をそのまま使う（ログイン未設定の間は全員が操作できる）
 let canControlVideo = true;
+// 「管理者そのものか」。canControlVideo（いまのイベントを操作できるか）とは別物。
+// VIPは自分のイベントを操作できるが管理者ではないので、
+// BAN・キックの履歴・イベントの記録といった管理者専用のものはこちらで出し分ける
+let isAdminUser = true;
 let currentEvent = null;
 let currentRoom = null;
 let knownEvents = [];
@@ -91,6 +98,11 @@ let namesHidden = false; // ネームプレートを消しているか（アバ�
 let peopleUI = null;
 let blockedList = []; // 自分がブロックしている相手（解除UIに出す）
 let banList = []; // BAN一覧（管理者のみサーバーから届く）
+let kickLog = []; // キックの履歴（管理者のみ）。あとでBANするかの判断材料
+let noticeBar = null; // 運営メッセージの固定枠
+let ytChat = null; // YouTubeのライブチャット（連動イベントのときだけ出す）
+let helpUI = null;
+let chatMode = 'local'; // 'local' … 独自チャット / 'youtube' … YouTubeへ一本化
 // キック/BAN/入場拒否の説明。設定されているときは、切断を「通信不良」として扱わない
 let removedReason = '';
 
@@ -108,6 +120,8 @@ const DENY_MESSAGES = {
   'capacity-too-small': 'いま入っている人数より少ない定員にはできません',
   'too-many-events': 'イベントの数が上限に達しています',
   'staff-only': 'この操作は管理者・VIPのみです',
+  'not-your-event': 'このイベントは、立てた本人か管理者だけが操作できます',
+  'chat-on-youtube': 'このイベントのコメントは YouTube のチャットからどうぞ',
   'cannot-kick-staff': '管理者・VIPはキックできません',
   'cannot-ban-staff': '管理者・VIPはBANできません',
   'cannot-ban-guest': 'ゲストはBANできません（Googleアカウント単位のため）。キックで対応してください',
@@ -172,8 +186,10 @@ const playerCountEl = document.getElementById('player-count');
 const roomNameEl = document.getElementById('room-name');
 const avatarBtn = document.getElementById('avatar-btn');
 
-// ?npc=1 でNPC（賑やかし）をネットワークモードでも追加できる
-const WANT_NPC = new URLSearchParams(location.search).get('npc') === '1';
+// ※ 以前あった `?npc=1`（NPCを手動で足す確認用）は廃止した。
+//   NPCの人数は「管理者が決めた上限」と「各自のスライダー」で決まるようになり、
+//   直後の updateCount() が必ず上書きするため、フラグが効かなくなっていた（2026-08-02）。
+//   手で増減したいときは 🚪 パネルのスライダーを使う
 
 // サーバーが伝えてきた最新の人数。NPCだけ増減したときの再計算に使う
 let lastServerCount = null;
@@ -196,6 +212,19 @@ function updateHeader(room) {
   roomNameEl.textContent = `${evName} #${room}`;
 }
 
+/**
+ * パネルの出し分けに使う権限。
+ *
+ * ログイン未設定（ローカル開発）では全員が管理者相当になるので、生の myRole だけを見ると
+ * 「操作はできるのにパネルが出ない」というちぐはぐが起きる。サーバーが配る isAdmin を優先する。
+ * ⚠ **canControlVideo（いまのイベントを操作できるか）とは別物**。
+ *   そちらで判定すると、VIPが自分のイベントにいる間だけ管理者専用パネルが見えてしまう。
+ */
+function staffRole() {
+  if (isAdminUser) return 'admin';
+  return myRole;
+}
+
 /** 権限をネームプレートの見た目に変換する（管理者=👑 / VIP=⭐） */
 function badgeForRole(role) {
   return role === 'admin' || role === 'vip' ? role : '';
@@ -216,17 +245,119 @@ function ensureSim() {
   return sim;
 }
 
-// ---- NPCの自動補充 ----
-// 空いている席をNPCで埋めて、人が少ない時間帯でも会場が寂しく見えないようにする。
-// 管理者が負荷テストで人数を指定したら自動補充は止める（指定が上書きされないように）。
+// ---- NPC（賑やかし）の人数 ----
+//
+// 2026-08-02 に二段構えへ変更（loyさん設計）:
+//   ・**管理者はグローバル**。イベント設定の npcMax が「全員に効く上限」になる
+//     （-1 は自動＝キャパ − 実在人数。これまでの挙動）
+//   ・**ユーザーはローカル**。自分の画面だけ、その上限の範囲で減らせる
+//   ・上限は超えられない。だから**管理者が0にすれば全員の画面から消える**
+//
+// NPCはサーバーに繋がっていない各自の画面だけの存在なので、
+// ここで言う「グローバル」は「同じNPCが見える」ではなく「上限が共有される」の意味。
+const NPC_PREF_KEY = 'allverse.npc.v1';
+
 let roomCapacity = 30;
-let npcAuto = true;
+let npcMaxFromServer = -1; // -1 = 自動（キャパ − 実在人数）
+let npcUserLimit = loadNpcPref(); // null = 上限いっぱい（既定）
+
+function loadNpcPref() {
+  try {
+    const raw = localStorage.getItem(NPC_PREF_KEY);
+    if (raw == null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : null;
+  } catch {
+    return null; // localStorageが使えなくても機能自体は動かす
+  }
+}
+
+function saveNpcPref(v) {
+  try {
+    if (v == null) localStorage.removeItem(NPC_PREF_KEY);
+    else localStorage.setItem(NPC_PREF_KEY, String(v));
+  } catch {
+    // 保存できなくてもその場では効くので続行
+  }
+}
+
+/** 管理者が決めた全体の上限。-1（自動）なら空席のぶん */
+function npcCeiling() {
+  if (npcMaxFromServer >= 0) return npcMaxFromServer;
+  const real = lastServerCount != null ? lastServerCount : 1 + (remote ? remote.count() : 0);
+  return Math.max(0, roomCapacity - real);
+}
+
+/** 実際に出す数＝上限と自分の設定の小さい方 */
+function desiredNpc() {
+  const ceil = npcCeiling();
+  return npcUserLimit == null ? ceil : Math.min(npcUserLimit, ceil);
+}
 
 function autoFillNpc() {
-  if (!npcAuto || !sim) return;
-  const real = lastServerCount != null ? lastServerCount : 1 + (remote ? remote.count() : 0);
-  const want = Math.max(0, roomCapacity - real);
+  if (!sim || demoMode) return; // デモモードは別枠で人数を決めている
+  const want = desiredNpc();
   if (sim.count() !== want) sim.setCount(want);
+}
+
+/** 5 → 「5分」 / 60 → 「1時間」。キックの締め出し時間の表示に使う */
+function formatMinutes(mins) {
+  const m = Math.max(0, Math.trunc(mins || 0));
+  if (m < 60) return `${m}分`;
+  const h = Math.floor(m / 60);
+  return m % 60 ? `${h}時間${m % 60}分` : `${h}時間`;
+}
+
+/**
+ * チャットの形を切り替える（2026-08-02）。
+ *
+ * 'youtube' のとき、独自チャットの**入力欄だけ**を隠して「お知らせ欄」として残す。
+ * パネルごと消すと「ログインが必要です」などの案内も一緒に消えてしまい、
+ * ゲストが理由の分からないまま詰まる（loyさん指摘）。
+ */
+function applyChatMode(mode) {
+  const next = mode === 'youtube' ? 'youtube' : 'local';
+  const changed = next !== chatMode;
+  chatMode = next;
+
+  // ここは**毎回そのまま反映する**（変化したときだけにしない）。
+  // welcome は UI ができる前に届くことがあり、そのとき差分だけ見ていると
+  // あとから作られた YouTube チャットが出ないままになる
+  if (chat && chat.setInputVisible) chat.setInputVisible(chatMode === 'local');
+  if (ytChat) ytChat.setVisible(chatMode === 'youtube');
+
+  // 案内は切り替わったときだけ（毎回出すとお知らせ欄が埋まる）
+  if (changed && chat) {
+    chat.addMessage(
+      '',
+      chatMode === 'youtube'
+        ? 'このイベントのコメントは YouTube のチャットに集まります'
+        : 'このイベントでは会場内のチャットが使えます',
+      { system: true },
+    );
+  }
+}
+
+/** 運営メッセージの固定枠を出す/消す */
+function applyNotice(notice) {
+  if (noticeBar) noticeBar.set(notice);
+}
+
+/**
+ * イベント設定を反映する（入場時・移動時・途中変更時に通る唯一の入口）。
+ *
+ * 以前は定員を welcome と moved でしか受け取っておらず、
+ * **途中でキャパを変えてもNPCが増えなかった**（2026-08-02 loyさん指摘）。
+ * サーバーは変更を配っていたのに、受け取る側が使っていなかったのが原因。
+ */
+function applyEventSettings(ev) {
+  if (!ev) return;
+  currentEvent = ev;
+  if (Number.isFinite(ev.cap)) roomCapacity = ev.cap;
+  if (Number.isFinite(ev.npcMax)) npcMaxFromServer = ev.npcMax;
+  if (typeof ev.chatMode === 'string') applyChatMode(ev.chatMode);
+  applyNotice(ev.notice || null);
+  updateCount();
 }
 
 // サーバーに繋がらない/切断されたときは従来のNPCデモに切り替える
@@ -234,7 +365,7 @@ function startDemoMode() {
   if (demoMode) return;
   demoMode = true;
   if (remote) remote.clear();
-  npcAuto = false;
+  // デモモードでは人数を自前で決めるので、autoFillNpc は demoMode を見て降りる
 
   // 退出させられた場合は、原因を伝えるのが先。
   // 「通信が不安定なのかな」と誤解させないよう、NPCで賑やかしたりしない
@@ -309,18 +440,25 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     roomNumber,
     entryCode,
     handlers: {
-      onWelcome: ({ id, name: assignedName, room, peers, count, cap, screen, playback, role, canControl, event, events, blocked }) => {
+      onWelcome: ({ id, name: assignedName, av: assignedAv, room, peers, count, cap, screen, playback, role, canControl, isAdmin, event, events, blocked }) => {
         myId = id;
         myRole = role || 'user';
-        if (cap) roomCapacity = cap;
         canControlVideo = canControl !== false;
-        currentEvent = event || null;
+        isAdminUser = isAdmin !== false;
+
+        // 見た目もサーバーが決める場合がある（ゲストは髪なし＋IDで決まる色）。
+        // ここで受け取った姿に差し替えないと、**自分の画面だけ違う姿**になり、
+        // 本人はそれに気づけない（2026-08-02 修正）
+        const serverConfig = assignedAv ? avToConfig(assignedAv) : null;
+        const avChanged =
+          serverConfig && JSON.stringify(serverConfig) !== JSON.stringify(session.config);
+        if (serverConfig) session.config = serverConfig;
 
         // 表示名も権限もサーバーが決める（ログイン名 or ゲスト連番／管理者かどうか）。
         // 入場画面の時点ではどちらも分からないので、確定した内容で作り直す。
         // 名前が同じでも、👑や⭐を付けるためにここを通る必要がある
         const needsRebuild =
-          (assignedName && assignedName !== session.name) || badgeForRole(myRole) !== '';
+          (assignedName && assignedName !== session.name) || badgeForRole(myRole) !== '' || avChanged;
         if (needsRebuild) {
           if (assignedName) session.name = assignedName;
           const pos = player.position.clone();
@@ -337,7 +475,9 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         blockedList = blocked || [];
         updateHeader(room);
         peers.forEach((p) => remote.addPeer(p));
-        updateCount(count);
+        lastServerCount = count;
+        // 定員・NPC上限・チャットの形・運営メッセージをまとめて反映する
+        applyEventSettings(event);
         if (peopleUI) peopleUI.refresh();
         // 途中入場でも、その部屋で今流れている動画と再生位置に合わせる
         if (screen) {
@@ -349,13 +489,12 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
       },
       // 別のイベント/ルームへ移動したとき: 周りの人を総入れ替えする
       onMoved: ({ room, peers, count, cap, screen, playback, event }) => {
-        currentEvent = event || currentEvent;
-        if (cap) roomCapacity = cap;
         remote.clear();
         peers.forEach((p) => remote.addPeer(p));
         if (peopleUI) peopleUI.refresh();
         updateHeader(room);
-        updateCount(count);
+        lastServerCount = count;
+        applyEventSettings(event || currentEvent);
         if (screen) {
           liveScreen.setVideo(screen);
           if (screenUI) screenUI.setCurrent(screen);
@@ -368,8 +507,12 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
       onEvents: (list) => {
         knownEvents = list || [];
         if (roomUI) roomUI.setEvents(knownEvents);
+        // 一覧にも自分がいるイベントの最新設定が入っている。
+        // ここで拾わないと、定員を増やしてもNPCが増えないままになる
+        const mine = currentEvent ? knownEvents.find((e) => e.id === currentEvent.id) : null;
+        if (mine) applyEventSettings(mine);
       },
-      onDenied: ({ reason, by, why, min }) => {
+      onDenied: ({ reason, by, why, min, until }) => {
         // ---- 入場そのものを断られたケース ----
         // ワールドは既に描き始めているので、何もしないと「入れたのに人が誰もいない」
         // ように見えてしまう（2026-07-31 loyさん報告: 合言葉なしで入れる＋NPCが全員消える）。
@@ -401,6 +544,17 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
           );
           return;
         }
+        if (reason === 'kicked-out') {
+          // キックの締め出し中。何分後に入れるかを出さないと、
+          // 「入れない」だけが残って不具合に見える
+          const left = until ? Math.max(1, Math.ceil((until - Date.now()) / 60000)) : 0;
+          removedReason =
+            `${by || '運営'} によって一時的に締め出されています。` +
+            (left ? `あと ${formatMinutes(left)} で入れます。` : '') +
+            (why ? `（理由: ${why}）` : '');
+          showEntryBlocked(removedReason);
+          return;
+        }
         if (reason === 'banned') {
           // 入場そのものを断られた。理由を画面に出して、デモモードには落とさない
           removedReason = why
@@ -412,12 +566,20 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
       },
       onPeerJoin: (p) => {
         remote.addPeer(p);
-        chat.addMessage('', `${p.n} が入場しました`, { system: true });
+        // 入退場のお知らせは**管理者だけ**に出す（2026-08-02 loyさん指示）。
+        // 人が多い会だとこれでお知らせ欄が埋まり、
+        // 「ログインが必要です」のような**本人向けの案内が流れて見えなくなる**
+        if (myRole === 'admin') chat.addMessage('', `${p.n} が入場しました`, { system: true });
         if (peopleUI) peopleUI.refresh();
       },
       onPeerMove: (m) => remote.movePeer(m),
       onPeerUpdate: (m) => remote.updatePeer(m),
       onPeerLeave: (id) => {
+        // 退場した人の名前は、消す前に一覧から拾う
+        const gone = remote ? remote.list().find((x) => x.id === id) : null;
+        if (myRole === 'admin' && gone && gone.name) {
+          chat.addMessage('', `${gone.name} が退場しました`, { system: true });
+        }
         remote.removePeer(id);
         if (peopleUI) peopleUI.refresh();
       },
@@ -431,8 +593,11 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         blockedList = list;
         if (peopleUI) peopleUI.refresh();
       },
-      onModerated: ({ act, n }) => {
-        chat.addMessage('', act === 'ban' ? `${n} をBANしました` : `${n} をキックしました`, { system: true });
+      onModerated: ({ act, n, mins }) => {
+        const kickMsg = mins > 0
+          ? `${n} をキックしました（${formatMinutes(mins)} 再入場できません）`
+          : `${n} をキックしました`;
+        chat.addMessage('', act === 'ban' ? `${n} をBANしました` : kickMsg, { system: true });
         if (net && myRole === 'admin') net.requestBans();
         if (peopleUI) peopleUI.refresh();
       },
@@ -441,8 +606,29 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         if (peopleUI) peopleUI.refresh();
       },
       // 退出させられた側。切断が続くので、デモモードに落ちる前に理由を出す
-      onKicked: ({ by }) => {
-        removedReason = `${by} によって退出させられました。入り直すことはできます。`;
+      onKicked: ({ by, mins, why }) => {
+        removedReason =
+          mins > 0
+            ? `${by} によって退出させられました。${formatMinutes(mins)} は入り直せません。` +
+              (why ? `（理由: ${why}）` : '')
+            : `${by} によって退出させられました。入り直すことはできます。`;
+      },
+      // 運営向けの通知。管理者にだけ届く（VIPがキックしたときも気づけるように）
+      onStaffNote: ({ kind, n, by, mins, why }) => {
+        if (kind !== 'kick' || !chat) return;
+        const span = mins > 0 ? `${formatMinutes(mins)}の締め出し` : '締め出しなし';
+        chat.addMessage('', `【運営】${by} が ${n} をキック（${span}）${why ? ` 理由: ${why}` : ''}`, {
+          system: true,
+        });
+      },
+      onKicks: (list) => {
+        kickLog = list || [];
+        if (peopleUI) peopleUI.refresh();
+      },
+      // イベント設定が途中で変わった（定員・NPC上限・チャットの形・運営メッセージ）
+      onEventChanged: (ev) => {
+        applyEventSettings(ev);
+        if (roomUI && net) net.requestEvents();
       },
       onBanned: ({ by, why }) => {
         removedReason = why
@@ -459,6 +645,8 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
       onScreen: ({ v, by }) => {
         liveScreen.setVideo(v);
         if (screenUI) screenUI.setCurrent(v);
+        // YouTubeチャットは動画ごとに別物なので、差し替わったら貼り直す
+        if (ytChat) ytChat.refresh();
         chat.addMessage('', `${by} がスクリーンを変更しました`, { system: true });
       },
       // 他の人の再生/一時停止/シークを自分の映像にも反映する
@@ -475,13 +663,9 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     },
   });
 
-  // NPCの入れ物は常に用意しておく（管理者が負荷テストで増やせるようにするため）。
+  // NPCの入れ物は常に用意しておく（人数は上限と各自の設定から決まる）。
   // 人数0なら何も描かないので、通常の入場では一切影響しない
   ensureSim();
-  if (WANT_NPC) {
-    npcAuto = false;
-    sim.setCount(7);
-  }
 
   // スマホは消音で始まるので、音を出すための案内を出す
   if (IS_TOUCH) {
@@ -540,20 +724,33 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   });
   screenUI.setCurrent(liveScreen.getVideo());
 
+  // 運営メッセージの固定枠（チャットに流すと見逃されるので別枠に出す）
+  noticeBar = initNoticeBar();
+  // YouTubeのライブチャット。連動イベントのときだけ出す
+  ytChat = initYouTubeChat({ getVideoId: () => liveScreen.getVideo() });
+  // ヘルプ（❓）。運営向けタブは管理者・VIPにだけ出る。
+  // 権限の見方は🚪パネルと揃える（ログイン未設定の環境では全員が運営扱いになる仕様のため、
+  // myRole だけ見ると「操作はできるのに手引きが読めない」というちぐはぐが起きる）
+  helpUI = initHelpUI({ slot: videoPanel.slot, getRole: () => staffRole() });
+  // 入場時点のイベント設定を反映する（この時点でUIが揃ったので改めて通す）
+  applyEventSettings(currentEvent);
+
   // イベントの記録（管理者だけ。🚪パネルの末尾に差し込む）
   const logsUI = initLogsUI({
-    getRole: () => (canControlVideo ? 'admin' : myRole),
+    // 記録のAPIは管理者専用なので、VIPには出さない（出すと押しても弾かれる）
+    getRole: () => staffRole(),
     getIdToken: () => idToken || '',
   });
 
   // イベント／ルームの移動パネル（管理者はイベント作成もここから）
   roomUI = initRoomUI({
     slot: videoPanel.slot,
-    // イベント作成の可否はサーバーの判断（canControl）に合わせる
-    getRole: () => (canControlVideo ? 'admin' : myRole),
+    // イベント作成はVIPにも開放されている。個々のイベントを操作できるかは
+    // サーバーが各イベントに付ける mine で判断するので、ここは役職だけ渡す
+    getRole: () => staffRole(),
     getCurrent: () => ({ eventId: currentEvent ? currentEvent.id : '', room: currentRoom }),
-    onMove: (evId, room) => {
-      if (net && !demoMode) net.sendMove(evId, room);
+    onMove: (evId, room, code) => {
+      if (net && !demoMode) net.sendMove(evId, room, code);
     },
     onCreateEvent: (payload) => {
       if (net && !demoMode) net.sendEventCreate(payload);
@@ -567,13 +764,16 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     onRefresh: () => {
       if (net && !demoMode) net.requestEvents();
     },
-    // 負荷テスト用のNPC。自分の画面にだけ出るので、他の人には影響しない
+    // NPCは自分の画面にだけ出る。上限は管理者がイベント設定で決めている
     getNpcCount: () => (sim ? sim.count() : 0),
-    isNpcAuto: () => npcAuto,
+    getNpcCeiling: () => npcCeiling(),
+    isNpcAuto: () => npcUserLimit == null,
     onNpcCount: (n) => {
-      // n が null なら自動補充に戻す
-      npcAuto = n === null;
-      if (!npcAuto) ensureSim().setCount(n);
+      // n が null なら「上限いっぱい」に戻す
+      npcUserLimit = n === null ? null : Math.max(0, Math.trunc(n));
+      saveNpcPref(npcUserLimit); // 次に来たときも同じ見え方にする
+      ensureSim();
+      autoFillNpc();
       updateCount(); // サーバー人数は据え置きでNPCぶんだけ数え直す
     },
     adminExtra: logsUI,
@@ -583,19 +783,20 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   // 参加者パネル（ブロック／キック／BAN）
   peopleUI = initPeopleUI({
     slot: videoPanel.slot,
-    getRole: () => myRole,
+    getRole: () => staffRole(),
     getMyName: () => session.name,
     getPeople: () => (remote ? remote.list() : []),
     getBlocked: () => blockedList,
     getBans: () => banList,
+    getKicks: () => kickLog,
     onBlock: (id) => {
       if (net && !demoMode) net.sendBlock(id);
     },
     onUnblock: (k) => {
       if (net && !demoMode) net.sendUnblock(k);
     },
-    onKick: (id) => {
-      if (net && !demoMode) net.sendKick(id);
+    onKick: (id, mins, why) => {
+      if (net && !demoMode) net.sendKick(id, mins, why);
     },
     onBan: (id, why) => {
       if (net && !demoMode) net.sendBan(id, why);
@@ -605,7 +806,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     },
     // 管理者のときだけBAN一覧を取りに行く（一般ユーザーには断られるので送らない）
     onRefresh: () => {
-      if (net && !demoMode && myRole === 'admin') net.requestBans();
+      if (net && !demoMode && myRole === 'admin') {
+        net.requestBans();
+        net.requestKicks(); // BANするかの判断材料（キックの履歴）
+      }
     },
   });
 

@@ -1,8 +1,15 @@
 import * as THREE from 'three';
 import { AVATAR_PARTS, randomConfig, createAvatar } from './avatar.js';
+import { guestLookFor } from './guestlook.js';
+import { getVisitorId } from './visitorid.js';
+import { avToConfig } from './net.js';
 import { fetchConfig, getConfig, renderLoginButton, getIdToken, isSignedIn } from './login.js';
 import { APP_NAME, APP_TAGLINE } from './brand.js';
 import { loadLocalPrefs, saveLocalPrefs, fetchServerPrefs } from './prefs.js';
+import { UPDATES } from './updates.js';
+
+// 入場画面の「📢 お知らせ」欄に出す件数。多すぎると縦に伸びすぎるため5件に絞る
+const UPDATES_DISPLAY_COUNT = 5;
 
 const HAIR_LABELS = {
   long: 'ロング',
@@ -43,7 +50,7 @@ function injectStyle() {
 }
 
 .join-panel {
-  width: min(760px, 92vw);
+  width: min(860px, 92vw);
   max-height: 92vh;
   overflow-y: auto;
   background: linear-gradient(160deg, rgba(12, 12, 28, 0.92), rgba(18, 8, 30, 0.92));
@@ -80,6 +87,26 @@ function injectStyle() {
   flex-wrap: wrap;
 }
 
+/* PC（幅広いとき）は左＝プレビュー＋設定、右＝お知らせ・なまえ・次へ の2カラム。
+   スマホは下の @media (max-width: 640px) で縦1カラムに戻す */
+.join-col {
+  min-width: 0;
+}
+
+.join-col-left {
+  flex: 1 1 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.join-col-right {
+  flex: 1 1 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .join-preview {
   flex: 0 0 auto;
   width: 300px;
@@ -98,11 +125,57 @@ function injectStyle() {
 }
 
 .join-customize {
-  flex: 1 1 320px;
-  min-width: 280px;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* お知らせ欄。本文より控えめ（小さく・薄く）に見せる */
+.join-updates {
+  border: 1px solid rgba(0, 255, 234, 0.15);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.updates-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: rgba(0, 255, 234, 0.8);
+}
+
+.updates-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.update-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+}
+
+.update-date {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: rgba(220, 235, 255, 0.4);
+  font-variant-numeric: tabular-nums;
+}
+
+.update-text {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(220, 235, 255, 0.55);
+  word-break: break-word;
 }
 
 .customize-row {
@@ -280,6 +353,9 @@ function injectStyle() {
 
 @media (max-width: 640px) {
   .join-panel { padding: 20px; }
+  /* スマホは今まで通り縦1カラム。お知らせは「なまえ」の上に来る（DOM順のまま） */
+  .join-body { flex-direction: column; }
+  .join-col-left, .join-col-right { width: 100%; }
   .join-preview { width: 100%; height: 240px; }
 }
 `;
@@ -300,6 +376,40 @@ function disposeObject3D(obj) {
 }
 
 /**
+ * 「📢 お知らせ」欄のHTMLを組み立てる。新しい順の先頭数件だけを見せる
+ * （全部出すと縦に伸びすぎるため）。中身は src/updates.js を編集するだけで反映される
+ */
+/**
+ * HTMLに埋め込む前に記号を無害化する。
+ * いまの中身は updates.js の固定文言だけだが、将来ここが外部の文章を
+ * 扱うようになったときに壊れないよう、埋め込み側で守っておく。
+ */
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
+  );
+}
+
+function renderUpdatesSection() {
+  const items = UPDATES.slice(0, UPDATES_DISPLAY_COUNT)
+    .map(
+      (u) => `
+            <li class="update-item">
+              <span class="update-date">${escapeHtml(u.date)}</span>
+              <span class="update-text">${escapeHtml(u.text)}</span>
+            </li>`
+    )
+    .join('');
+  return `
+          <div class="join-updates">
+            <div class="updates-title">📢 お知らせ</div>
+            <ul class="updates-list">${items}
+            </ul>
+          </div>`;
+}
+
+/**
  * 入場画面 / 再カスタム画面 共通のUI構築処理。
  * #join-screen 内にアバターカスタマイズ＋名前入力＋決定ボタンを構築し、
  * 決定/キャンセル時にプレビュー用WebGLレンダラーを確実に破棄する。
@@ -317,6 +427,10 @@ function buildCustomizeScreen({
 }) {
   injectStyle();
 
+  // お知らせ欄は入場画面（showPlace）だけ出す。再カスタム画面では出さない
+  // （ログイン欄と同じ条件分岐。displayを切り替えるのではなくHTML自体を出し分ける）
+  const updatesHtml = showPlace ? renderUpdatesSection() : '';
+
   const root = document.getElementById('join-screen');
   root.classList.remove('hidden');
   root.innerHTML = `
@@ -324,48 +438,53 @@ function buildCustomizeScreen({
       <h1 class="join-title">${title}</h1>
       <p class="join-subtitle">${subtitle}</p>
       <div class="join-body">
-        <div class="join-preview">
-          <canvas id="avatar-preview-canvas"></canvas>
+        <div class="join-col join-col-left">
+          <div class="join-preview">
+            <canvas id="avatar-preview-canvas"></canvas>
+          </div>
+          <div class="join-customize">
+            <div class="customize-row">
+              <div class="customize-label">髪型</div>
+              <div class="hairstyle-buttons" id="hairstyle-buttons"></div>
+            </div>
+            <div class="customize-row">
+              <div class="customize-label">服装</div>
+              <div class="hairstyle-buttons" id="outfit-buttons"></div>
+            </div>
+            <div class="customize-row">
+              <div class="customize-label">アクセサリー</div>
+              <div class="hairstyle-buttons" id="accessory-buttons"></div>
+            </div>
+            <div class="customize-row">
+              <div class="customize-label">肌色</div>
+              <div class="swatch-row" id="bodycolor-swatches"></div>
+            </div>
+            <div class="customize-row">
+              <div class="customize-label">髪色</div>
+              <div class="swatch-row" id="haircolor-swatches"></div>
+            </div>
+            <div class="customize-row">
+              <div class="customize-label">目の色</div>
+              <div class="swatch-row" id="eyecolor-swatches"></div>
+            </div>
+            <div class="customize-row">
+              <div class="customize-label">服色</div>
+              <div class="swatch-row" id="shirtcolor-swatches"></div>
+            </div>
+            <div class="customize-row">
+              <div class="customize-label">ペンライトの色</div>
+              <div class="swatch-row" id="penlightcolor-swatches"></div>
+            </div>
+          </div>
         </div>
-        <div class="join-customize">
+        <div class="join-col join-col-right">
+          ${updatesHtml}
           <div class="customize-row" id="login-row" style="display:none">
             <div class="customize-label">ログイン</div>
             <div class="login-area">
               <div id="login-button"></div>
               <div class="login-note" id="login-note"></div>
             </div>
-          </div>
-          <div class="customize-row">
-            <div class="customize-label">髪型</div>
-            <div class="hairstyle-buttons" id="hairstyle-buttons"></div>
-          </div>
-          <div class="customize-row">
-            <div class="customize-label">服装</div>
-            <div class="hairstyle-buttons" id="outfit-buttons"></div>
-          </div>
-          <div class="customize-row">
-            <div class="customize-label">アクセサリー</div>
-            <div class="hairstyle-buttons" id="accessory-buttons"></div>
-          </div>
-          <div class="customize-row">
-            <div class="customize-label">肌色</div>
-            <div class="swatch-row" id="bodycolor-swatches"></div>
-          </div>
-          <div class="customize-row">
-            <div class="customize-label">髪色</div>
-            <div class="swatch-row" id="haircolor-swatches"></div>
-          </div>
-          <div class="customize-row">
-            <div class="customize-label">目の色</div>
-            <div class="swatch-row" id="eyecolor-swatches"></div>
-          </div>
-          <div class="customize-row">
-            <div class="customize-label">服色</div>
-            <div class="swatch-row" id="shirtcolor-swatches"></div>
-          </div>
-          <div class="customize-row">
-            <div class="customize-label">ペンライトの色</div>
-            <div class="swatch-row" id="penlightcolor-swatches"></div>
           </div>
           <div class="customize-row">
             <div class="customize-label">なまえ</div>
@@ -443,6 +562,9 @@ function buildCustomizeScreen({
   previewScene.add(ambient, keyLight, rimLight);
 
   let previewAvatar = null;
+  // ゲスト表示に切り替える前の見た目。ログインしたら戻すために控える
+  let guestPreviewBackup = null;
+
   function rebuildPreviewAvatar() {
     if (previewAvatar) {
       previewScene.remove(previewAvatar);
@@ -551,6 +673,20 @@ function buildCustomizeScreen({
   function applyGuestLock() {
     const cfg = getConfig();
     const locked = Boolean(cfg && cfg.login) && !isSignedIn();
+
+    // ゲストの姿はサーバーが匿名IDから決める（髪なし＋IDで決まる色）。
+    // プレビューにも同じ計算を当てておかないと、入場した瞬間に姿が変わって驚かせる。
+    // ログインしたら自分で選んだ姿に戻す（下の restore）
+    if (locked) {
+      if (!guestPreviewBackup) guestPreviewBackup = { ...config };
+      // サーバーは `g:` 付きの匿名IDで計算する。接頭辞を落とすと色が変わるので必ず揃える
+      Object.assign(config, avToConfig(guestLookFor(`g:${getVisitorId()}`)));
+      rebuildPreviewAvatar();
+    } else if (guestPreviewBackup) {
+      Object.assign(config, guestPreviewBackup);
+      guestPreviewBackup = null;
+      rebuildPreviewAvatar();
+    }
     const rows = ['hairstyle-buttons', 'outfit-buttons', 'accessory-buttons'];
     for (const id of rows) {
       const el = document.getElementById(id);
@@ -609,6 +745,7 @@ function buildCustomizeScreen({
 
   // ---- 決定ボタン ----
   const joinBtn = document.getElementById('join-btn');
+
 
   function handleSubmit() {
     // 名前は入場時にサーバーが確定させる（ログイン名 or ゲスト連番）。

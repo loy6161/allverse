@@ -3,7 +3,7 @@
 //
 // 強さの違う3つを、使える人ごとに出し分ける:
 //   ブロック … 誰でも。自分と相手が互いに見えなくなるだけ（相手には通知されない）
-//   キック   … 管理者・VIP。その場から退出させる。すぐ入り直せる
+//   キック   … 管理者・VIP。その場から退出させる。時間を選べる（0分なら即戻れる）
 //   BAN      … 管理者だけ。Googleアカウント単位で再入場を止める
 //
 // 3Dのアバターを直接クリックさせる案もあったが、動き回る相手を狙うのは難しく、
@@ -101,13 +101,17 @@ function markFor(role) {
  * @param {() => Array<{id:string,name:string,role:string}>} p.getPeople 今見えている人
  * @param {() => Array<{k:string,n:string}>} p.getBlocked ブロック中の相手
  * @param {() => Array<{email:string,name:string,byName:string,reason:string}>} p.getBans BAN一覧
+ * @param {() => Array<object>} [p.getKicks] キックの履歴（管理者のみ）
  * @param {(id:string) => void} p.onBlock
  * @param {(k:string) => void} p.onUnblock
- * @param {(id:string) => void} p.onKick
+ * @param {(id:string, mins:number, why:string) => void} p.onKick
  * @param {(id:string, why:string) => void} p.onBan
  * @param {(email:string) => void} p.onUnban
  * @param {() => void} p.onRefresh 開いたときにサーバーへ最新を取りに行く
  */
+// キックで選べる締め出し時間（分）。0＝すぐ入り直せる（従来の挙動）
+const KICK_CHOICES = [0, 5, 15, 60, 180];
+
 export function initPeopleUI({
   slot,
   getRole,
@@ -115,6 +119,7 @@ export function initPeopleUI({
   getPeople,
   getBlocked,
   getBans,
+  getKicks,
   onBlock,
   onUnblock,
   onKick,
@@ -216,8 +221,18 @@ export function initPeopleUI({
         kickBtn.className = 'vc-people-act danger';
         kickBtn.textContent = 'キック';
         kickBtn.addEventListener('click', () => {
-          if (!confirmAct(`${p.name} をこの場から退出させます。\n入り直すことはできます。`)) return;
-          onKick(p.id);
+          // 2026-08-02: 時間を選べるようにした。
+          // 蹴るだけでは即戻れてしまい荒らしへの対処にならなかったので、
+          // BANほど重くない「一時的な締め出し」をここで賄う
+          const ans = window.prompt(
+            `${p.name} を退出させます。\n何分のあいだ入れなくしますか？\n` +
+              '0（すぐ入り直せる）／ 5 ／ 15 ／ 60 ／ 180 から選んでください。',
+            '15',
+          );
+          if (ans === null) return;
+          const mins = KICK_CHOICES.includes(Number(ans)) ? Number(ans) : 0;
+          const why = window.prompt('理由（任意・履歴に残ります）', '') || '';
+          onKick(p.id, mins, why);
         });
         row.appendChild(kickBtn);
       }
@@ -292,6 +307,43 @@ export function initPeopleUI({
         sec.appendChild(row);
       }
       panel.appendChild(sec);
+
+      // ---- キックの履歴（管理者だけ）----
+      // タイムアウトが切れても残る。「この人、前にも蹴られてるな」を見て
+      // BANするかを後から判断するための材料（loyさん設計 2026-08-02）
+      const kSec = document.createElement('div');
+      kSec.className = 'vc-people-section';
+      const kLabel = document.createElement('div');
+      kLabel.className = 'vc-people-title';
+      kLabel.textContent = 'キックの履歴';
+      kSec.appendChild(kLabel);
+
+      const kicks = getKicks ? getKicks() : [];
+      if (!kicks.length) {
+        const empty = document.createElement('div');
+        empty.className = 'vc-people-empty';
+        empty.textContent = 'キックの記録はありません。';
+        kSec.appendChild(empty);
+      }
+      // 同じ人が何回蹴られたかを数えて添える（BAN判断の目安になる）
+      const counts = new Map();
+      for (const k of kicks) counts.set(k.subject, (counts.get(k.subject) || 0) + 1);
+      for (const k of kicks.slice(0, 20)) {
+        const row = document.createElement('div');
+        row.className = 'vc-people-row';
+        const name = document.createElement('div');
+        name.className = 'vc-people-name';
+        const times = counts.get(k.subject) || 1;
+        const span = k.minutes > 0 ? `${k.minutes}分` : '締め出しなし';
+        name.textContent =
+          `${k.name}（${span}）` +
+          (times > 1 ? ` ×${times}回` : '') +
+          (k.reason ? ` 理由: ${k.reason}` : '');
+        name.title = `${new Date(k.createdAt).toLocaleString()} / ${k.eventName} / ${k.byName} がキック`;
+        row.appendChild(name);
+        kSec.appendChild(row);
+      }
+      panel.appendChild(kSec);
     }
   }
 

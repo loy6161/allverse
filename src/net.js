@@ -1,5 +1,6 @@
 import { AVATAR_PARTS } from './avatar.js';
 import { getVisitorId } from './visitorid.js';
+import { GUEST_HAIR } from './guestlook.js';
 
 // ------------------------------------------------------------------
 // アバターconfig（hex色形式） ⇔ av（プリセット番号形式）の相互変換
@@ -40,7 +41,9 @@ export function avToConfig(av) {
   const ecIdx = Number.isInteger(a.ec) && a.ec >= 0 && a.ec < AVATAR_PARTS.eyeColors.length ? a.ec : 0;
   const plIdx =
     Number.isInteger(a.pl) && a.pl >= 0 && a.pl < AVATAR_PARTS.penlightColors.length ? a.pl : 0;
-  const hairStyle = AVATAR_PARTS.hairStyles.includes(a.h) ? a.h : AVATAR_PARTS.hairStyles[0];
+  // ゲストの「髪なし」は選択肢に無い値なので、ここで潰さないよう明示的に通す
+  const hairStyle =
+    a.h === GUEST_HAIR || AVATAR_PARTS.hairStyles.includes(a.h) ? a.h : AVATAR_PARTS.hairStyles[0];
   const outfit = AVATAR_PARTS.outfits.includes(a.o) ? a.o : AVATAR_PARTS.outfits[0];
   const accessory = AVATAR_PARTS.accessories.includes(a.ac) ? a.ac : AVATAR_PARTS.accessories[0];
   return {
@@ -148,6 +151,7 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
             h.onWelcome({
               id: msg.id,
               name: msg.n, // サーバーが確定させた表示名
+              av: msg.av, // サーバーが確定させた見た目（ゲストはこちらが正）
               room: msg.room,
               peers: msg.peers,
               count: msg.count,
@@ -156,6 +160,7 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
               playback: msg.playback,
               role: msg.role,
               canControl: msg.canControl,
+              isAdmin: msg.isAdmin,
               canInteract: msg.canInteract,
               eventId: msg.ev,
               event: msg.event,
@@ -193,7 +198,14 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
 
         case 'denied':
           if (h.onDenied)
-            h.onDenied({ reason: msg.reason, eventId: msg.ev, by: msg.by, why: msg.why, min: msg.min });
+            h.onDenied({
+              reason: msg.reason,
+              eventId: msg.ev,
+              by: msg.by,
+              why: msg.why,
+              min: msg.min,
+              until: msg.until, // キックの締め出しが切れる時刻
+            });
           break;
         // ---- 迷惑行為への対処 ----
         case 'blocked':
@@ -203,11 +215,11 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
           if (h.onBlockedList) h.onBlockedList(msg.list || []);
           break;
         case 'moderated':
-          if (h.onModerated) h.onModerated({ act: msg.act, n: msg.n });
+          if (h.onModerated) h.onModerated({ act: msg.act, n: msg.n, mins: msg.mins || 0 });
           break;
         case 'kicked':
           // 退出させられた。closeが続くので、ここでは理由を伝えるだけ
-          if (h.onKicked) h.onKicked({ by: msg.by });
+          if (h.onKicked) h.onKicked({ by: msg.by, mins: msg.mins || 0, why: msg.why || '' });
           break;
         case 'banned':
           if (h.onBanned) h.onBanned({ by: msg.by, why: msg.why });
@@ -241,6 +253,18 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
           break;
         case 'playback':
           if (h.onPlayback) h.onPlayback({ st: msg.st, pos: msg.pos });
+          break;
+        // イベント設定が途中で変わった（定員・チャットの形・運営メッセージ）。
+        // 以前は一覧しか配っていなかったので、いま中にいる人へ反映されなかった
+        case 'event-changed':
+          if (h.onEventChanged) h.onEventChanged(msg.event);
+          break;
+        // 運営向けの通知（キックがあった等）。管理者にだけ届く
+        case 'staff-note':
+          if (h.onStaffNote) h.onStaffNote(msg);
+          break;
+        case 'kicks':
+          if (h.onKicks) h.onKicks(msg.list || []);
           break;
         default:
           break;
@@ -316,15 +340,21 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     send({ t: 'playback', st, pos: Math.max(0, Number(pos) || 0), live: !!live });
   }
 
-  function sendMove(targetEventId, targetRoom) {
+  /**
+   * 別のイベント/ルームへ移動する。
+   * 合言葉つきの**別イベント**へ移るときは code が要る（サーバーが照合する）。
+   * 同じイベント内のルーム移動には要らない。
+   */
+  function sendMove(targetEventId, targetRoom, code = '') {
     if (!joined) return;
     const m = { t: 'move' };
     if (targetEventId) m.ev = targetEventId;
     if (Number.isInteger(targetRoom)) m.rm = targetRoom;
+    if (code) m.code = code;
     send(m);
   }
 
-  function sendEventCreate({ name: evName, videoId, requireLogin, code, cap, vrc }) {
+  function sendEventCreate({ name: evName, videoId, requireLogin, code, cap, vrc, chatMode }) {
     if (!joined) return;
     send({
       t: 'event-create',
@@ -334,6 +364,7 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
       code: code || '',
       cap,
       vrc: !!vrc,
+      chatMode: chatMode === 'youtube' ? 'youtube' : 'local',
     });
   }
 
@@ -364,9 +395,16 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     send({ t: 'unblock', k });
   }
 
-  function sendKick(id) {
+  /** mins: 0=すぐ戻れる（従来） / 5・15・60・180=その分だけ再入場を止める */
+  function sendKick(id, mins = 0, why = '') {
     if (!joined) return;
-    send({ t: 'kick', id });
+    send({ t: 'kick', id, mins, why });
+  }
+
+  /** キックの履歴を取りに行く（管理者のみ）。BANするかの判断材料 */
+  function requestKicks() {
+    if (!joined) return;
+    send({ t: 'kicks' });
   }
 
   function sendBan(id, why) {
@@ -410,6 +448,7 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     sendBlock,
     sendUnblock,
     sendKick,
+    requestKicks,
     sendBan,
     sendUnban,
     requestBans,
