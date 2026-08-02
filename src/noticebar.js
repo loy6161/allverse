@@ -25,7 +25,12 @@ function injectStyle() {
 .vc-notice {
   position: fixed;
   left: 50%; transform: translateX(-50%);
-  top: 56px;
+  /* 2026-08-03: top:56px だと左上の操作ヒント（#controls-help）と重なり、
+     運営メッセージがヒントの上に乗って両方読めなくなっていた
+     （loyさん「運営コメントの位置も調整した方がいいね」）。
+     ヒントの下端（16 + ルーム名の高さ + 8 + ヒント）より下へ逃がす。
+     右上のツールバー（top:16, 高さ48）とも干渉しない高さ */
+  top: 84px;
   width: min(680px, calc(100vw - 24px));
   box-sizing: border-box;
   padding: 9px 14px;
@@ -113,8 +118,29 @@ export function initNoticeBar() {
     if (current) {
       mark.textContent = MARKS[current.level] || '📢';
       text.textContent = current.text;
+      placeBelowHud();
     }
   }
+
+  /**
+   * 左上のHUD（会場名＋操作ヒント）の下に置く（2026-08-03追加）。
+   *
+   * 固定値で 56px → 84px と下げてみたが、操作ヒントは画面の幅で折り返して
+   * 高さが変わるため、どの値にしても重なる幅が必ず出てくる。
+   * ヒントの実際の下端を測って、その下に置くのが確実。
+   */
+  function placeBelowHud() {
+    const hud = document.getElementById('hud');
+    if (!hud) return;
+    const b = hud.getBoundingClientRect().bottom;
+    // HUDが隠れている（UI非表示中の緊急メッセージ等）ときは画面上部へ戻す
+    el.style.top = `${Math.max(16, Math.round(b) + 10)}px`;
+  }
+
+  // 幅が変わるとヒントの折り返しも変わるので、置き直す
+  window.addEventListener('resize', () => {
+    if (current) placeBelowHud();
+  });
 
   return {
     /** null を渡すと消える */

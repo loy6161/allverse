@@ -10,6 +10,8 @@
 // getRole() を読み直す（roomui.js / people.js と同じ考え方）。
 // ============================================================
 
+import { getBubbleSec, setBubbleSec, BUBBLE_CHOICES, bubbleLabel } from './bubbletime.js';
+
 const STYLE_ID = 'vc-help-style';
 
 function injectStyle() {
@@ -78,6 +80,25 @@ function injectStyle() {
 .vc-help-sec { border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px; margin-top: 10px; }
 .vc-help-sec:first-child { border-top: none; padding-top: 0; margin-top: 0; }
 .vc-help-h { font-size: 12px; font-weight: bold; color: rgba(220,235,255,0.9); margin-bottom: 4px; }
+
+/* 表示のせってい（2026-08-03追加） */
+.vc-help-note { font-size: 11px; line-height: 1.7; color: rgba(220,235,255,0.6); margin: 4px 0 8px; }
+.vc-help-choices { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.vc-help-choice {
+  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.06);
+  color: #eaf6ff;
+  border-radius: 8px;
+  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.vc-help-choice:hover { border-color: rgba(0,255,234,0.6); }
+.vc-help-choice.active {
+  border-color: rgba(0,255,234,0.9);
+  background: rgba(0,255,234,0.2);
+  font-weight: bold;
+}
 .vc-help-list { margin: 0; padding-left: 18px; line-height: 1.6; }
 .vc-help-list li { margin-bottom: 5px; }
 .vc-help-key {
@@ -86,6 +107,74 @@ function injectStyle() {
 }
 `;
   document.head.appendChild(style);
+}
+
+/**
+ * 表示のせってい（2026-08-03追加）。
+ *
+ * loyさんの要望「吹き出しに出現時間をもっと長くしないと読めないかも。
+ * （設定で時間指定もいいね）」への対応。
+ * 読む速さは人によって違うので、会場ぜんぶで揃えるのではなく端末ごとに持つ。
+ */
+function renderSettings(body) {
+  const box = document.createElement('div');
+  box.className = 'vc-help-box';
+
+  const h = document.createElement('div');
+  h.className = 'vc-help-h';
+  h.textContent = '吹き出しの表示時間';
+  box.appendChild(h);
+
+  const note = document.createElement('div');
+  note.className = 'vc-help-note';
+  note.textContent =
+    'アバターの上に出るセリフを、何秒間そのままにしておくかを選べます。この設定はこの端末にだけ保存されます。';
+  box.appendChild(note);
+
+  const row = document.createElement('div');
+  row.className = 'vc-help-choices';
+
+  let current = getBubbleSec();
+  const buttons = [];
+  function paint() {
+    for (const b of buttons) b.classList.toggle('active', Number(b.dataset.sec) === current);
+  }
+  for (const sec of BUBBLE_CHOICES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'vc-help-choice';
+    b.dataset.sec = String(sec);
+    b.textContent = bubbleLabel(sec);
+    b.addEventListener('click', () => {
+      current = setBubbleSec(sec);
+      paint();
+    });
+    buttons.push(b);
+    row.appendChild(b);
+  }
+  paint();
+  box.appendChild(row);
+
+  const note2 = document.createElement('div');
+  note2.className = 'vc-help-note';
+  // 「消さない」を選んだ人が、古いセリフが残り続けるのを不具合と思わないように書いておく
+  note2.textContent =
+    '「消さない」を選ぶと、その人が次に発言するまでセリフが残ります（放置されたままにならないよう、10分で消えます）。';
+  box.appendChild(note2);
+
+  body.appendChild(box);
+
+  const box2 = document.createElement('div');
+  box2.className = 'vc-help-box';
+  const h2 = document.createElement('div');
+  h2.className = 'vc-help-h';
+  h2.textContent = 'ウィンドウの位置と大きさ';
+  const n2 = document.createElement('div');
+  n2.className = 'vc-help-note';
+  n2.textContent =
+    'チャットとYouTubeチャットは、上の帯をつかんで動かせます。右下のつまみで大きさも変えられます。位置と大きさはこの端末に保存され、次に来たときも同じ配置で始まります。元に戻したいときは、帯の「位置を戻す」を押してください。（スマホでは配置が固定です）';
+  box2.append(h2, n2);
+  body.appendChild(box2);
 }
 
 /** つかいかたタブの中身。誰でも見られる */
@@ -328,6 +417,17 @@ export function initHelpUI({ slot, getRole }) {
     });
     tabs.appendChild(usageTab);
 
+    // 表示のせってい（誰でも触れる。自分の画面だけに効く）
+    const setTab = document.createElement('button');
+    setTab.type = 'button';
+    setTab.className = 'vc-help-tab' + (activeTab === 'settings' ? ' active' : '');
+    setTab.textContent = '表示のせってい';
+    setTab.addEventListener('click', () => {
+      activeTab = 'settings';
+      render();
+    });
+    tabs.appendChild(setTab);
+
     if (showAdminTab) {
       const adminTab = document.createElement('button');
       adminTab.type = 'button';
@@ -346,6 +446,8 @@ export function initHelpUI({ slot, getRole }) {
 
     if (activeTab === 'admin' && showAdminTab) {
       renderAdmin(body);
+    } else if (activeTab === 'settings') {
+      renderSettings(body);
     } else {
       renderUsage(body);
     }

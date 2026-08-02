@@ -3,6 +3,7 @@ import { GUEST_HAIR } from './guestlook.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createTextSprite } from './avatar.js';
 import { playClap } from './sfx.js';
+import { bubbleMs } from './bubbletime.js';
 
 // ------------------------------------------------------------------
 // GLBアバター（Blender製・設計メッシュ版）
@@ -250,7 +251,9 @@ export function createGlbAvatar(config) {
     speechSprite.position.set(0, name ? NAME_Y + 0.4 : NAME_Y, 0);
     speechSprite.visible = namesVisible;
     body.add(speechSprite);
-    speechTimer = setTimeout(clearSpeech, 4000);
+    // 表示時間は本人の設定に従う（既定8秒）。4秒固定では読み切れなかった
+    // （loyさん 2026-08-03「もっと長くしないと読めない」）
+    speechTimer = setTimeout(clearSpeech, bubbleMs());
   }
 
   /** UI非表示（Hキー）に合わせて、名前と吹き出しも消す */

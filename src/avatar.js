@@ -785,9 +785,10 @@ export function createLegacyAvatar(config) {
     });
     speechSprite.position.set(0, speechBaseY, 0);
     upperGroup.add(speechSprite);
+    // 表示時間は本人の設定に従う（既定8秒。bubbletime.js）
     speechTimer = setTimeout(() => {
       clearSpeech();
-    }, 4000);
+    }, bubbleMs());
   }
 
   // ---- アニメーション ----

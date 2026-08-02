@@ -23,6 +23,7 @@ import { initLogsUI } from './logsui.js';
 import { initPeopleUI } from './people.js';
 import { initHelpUI } from './helpui.js';
 import { initNoticeBar } from './noticebar.js';
+import { initTopBar } from './topbar.js';
 import { initConnBanner } from './connbanner.js';
 import { initYouTubeChat } from './ytchat.js';
 
@@ -101,6 +102,7 @@ let blockedList = []; // 自分がブロックしている相手（解除UIに�
 let banList = []; // BAN一覧（管理者のみサーバーから届く）
 let kickLog = []; // キックの履歴（管理者のみ）。あとでBANするかの判断材料
 let noticeBar = null; // 運営メッセージの固定枠
+let topBar = null; // 右上のツールバー（会場と自分に関するボタン）
 // 接続が切れていることを出すバナー（2026-08-03追加）。
 // initNet より先に作る必要がある（繋がらないと分かるのが接続直後のため）
 let connBanner = null;
@@ -756,6 +758,13 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   chatRoot.classList.remove('hidden');
   avatarBtn.classList.remove('hidden');
 
+  // 右上のツールバー（2026-08-03追加）。
+  // 右下は「動画のコントローラー」だけにして、会場と自分に関するものはここへ集める
+  topBar = initTopBar();
+  // アバター変更もここに入れる（index.html に元からある要素を移動する）
+  avatarBtn.classList.add('vc-topbar-wide');
+  topBar.slot.appendChild(avatarBtn);
+
   // エモートバー（自分の分はローカルで即再生し、サーバーへも通知）
   initEmoteBar({
     onEmote: (id) => {
@@ -813,7 +822,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   // ヘルプ（❓）。運営向けタブは管理者・VIPにだけ出る。
   // 権限の見方は🚪パネルと揃える（ログイン未設定の環境では全員が運営扱いになる仕様のため、
   // myRole だけ見ると「操作はできるのに手引きが読めない」というちぐはぐが起きる）
-  helpUI = initHelpUI({ slot: videoPanel.slot, getRole: () => staffRole() });
+  helpUI = initHelpUI({ slot: topBar.slot, getRole: () => staffRole() });
   // 入場時点のイベント設定を反映する（この時点でUIが揃ったので改めて通す）
   applyEventSettings(currentEvent);
 
@@ -826,7 +835,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
 
   // イベント／ルームの移動パネル（管理者はイベント作成もここから）
   roomUI = initRoomUI({
-    slot: videoPanel.slot,
+    slot: topBar.slot,
     // イベント作成はVIPにも開放されている。個々のイベントを操作できるかは
     // サーバーが各イベントに付ける mine で判断するので、ここは役職だけ渡す
     getRole: () => staffRole(),
@@ -864,7 +873,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
 
   // 参加者パネル（ブロック／キック／BAN）
   peopleUI = initPeopleUI({
-    slot: videoPanel.slot,
+    slot: topBar.slot,
     getRole: () => staffRole(),
     getMyName: () => session.name,
     getPeople: () => (remote ? remote.list() : []),
@@ -901,7 +910,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   // スクリーン全画面（シアター）＝動画パネル内 ／ UI表示切替＝画面右上のアイコン
   initViewMode({
     controls,
+    // ⛶全画面は映像の機能なので動画パネルのまま。
+    // 🏷ネームプレート・👁UI非表示は右上バーの右端へ
     slot: videoPanel.slot,
+    toggleSlot: topBar,
     // ネームプレートと吹き出しは3D空間の中にあるのでCSSでは消えない。個別に切り替える。
     // 「UI非表示(H)」と「ネームプレートだけ非表示(N)」の両方をまとめた結果が来る
     // シアター表示中は会場の造形を消して、映像が柱で隠れないようにする

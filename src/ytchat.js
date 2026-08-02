@@ -18,6 +18,8 @@
 //   PCでも「別タブで開く」ボタンを常に出しておく。
 // ============================================================
 
+import { makeFloating, isFloatEnabled } from './floatwin.js';
+
 const STYLE_ID = 'vc-ytchat-style';
 
 function injectStyle() {
@@ -288,6 +290,12 @@ export function initYouTubeChat({ getVideoId, onRequestCode, onUnlink }) {
   setInterval(() => {
     if (shown) mount();
   }, 3000);
+
+  // 掴んで動かす・大きさを変える（2026-08-03追加）。
+  // 右下の動画コントロールと重なるのを、本人の手で逃がせるようにする
+  if (isFloatEnabled()) {
+    makeFloating(root, { key: 'ytchat', title: 'YouTube チャット', minW: 260, minH: 220 });
+  }
 
   renderLink();
 

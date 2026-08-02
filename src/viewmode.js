@@ -138,7 +138,13 @@ function isTypingTarget(el) {
 
 // controls: initControls の戻り値（setTheater を持つ）
 // slot: 右下の動画パネル内のボタン置き場（あればシアターボタンをそこに入れる）
-export function initViewMode({ controls, slot, onNamesVisible, onTheater } = {}) {
+/**
+ * @param {Object} p
+ * @param {HTMLElement} p.slot ⛶全画面を置く場所（動画パネル内。映像の機能なので）
+ * @param {{addTail:(el:HTMLElement)=>void}} [p.toggleSlot] 🏷 と 👁 を置く右上バー
+ *   （2026-08-03追加。渡さなければ従来どおり画面の右上隅に直接置く）
+ */
+export function initViewMode({ controls, slot, toggleSlot, onNamesVisible, onTheater } = {}) {
   injectStyle();
 
   // シアター表示ボタン（動画関連なので右下の動画パネルに入れる）
@@ -155,7 +161,6 @@ export function initViewMode({ controls, slot, onNamesVisible, onTheater } = {})
   uiToggle.type = 'button';
   uiToggle.title = 'UIの表示/非表示 (H)';
   uiToggle.textContent = '👁';
-  document.body.appendChild(uiToggle);
 
   // ネームプレート表示/非表示アイコン（UI非表示とは別に切れるようにする。2026-07-30 追加）
   const nameToggle = document.createElement('button');
@@ -163,7 +168,15 @@ export function initViewMode({ controls, slot, onNamesVisible, onTheater } = {})
   nameToggle.type = 'button';
   nameToggle.title = 'ネームプレートの表示/非表示 (N)';
   nameToggle.textContent = '\u{1F3F7}'; // 🏷
-  document.body.appendChild(nameToggle);
+  // 右上バーがあればその右端へまとめる（2026-08-03）。
+  // 無ければ従来どおり画面の右上隅へ直接置く
+  if (toggleSlot && toggleSlot.addTail) {
+    toggleSlot.addTail(nameToggle);
+    toggleSlot.addTail(uiToggle);
+  } else {
+    document.body.appendChild(nameToggle);
+    document.body.appendChild(uiToggle);
+  }
 
   const hint = document.createElement('div');
   hint.className = 'vc-theater-hint';

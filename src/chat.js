@@ -3,6 +3,7 @@
 // index.html の #chat-root 内にチャットパネルを構築する。
 
 import { APP_NAME } from './brand.js';
+import { makeFloating, isFloatEnabled } from './floatwin.js';
 
 const STYLE_ID = 'verse-chat-style';
 
@@ -13,10 +14,21 @@ function injectStyle() {
   style.textContent = `
     #chat-root {
       font-family: "Segoe UI", "Hiragino Sans", "Yu Gothic", sans-serif;
+      /* 2026-08-03: 掴んで動かす・大きさを変えるために、外枠を「箱」にした。
+         中身（ログと入力欄）は箱の大きさに追従する */
+      display: flex;
+      flex-direction: column;
+      width: 320px;
+      height: 300px;
+      max-width: calc(100vw - 32px);
+      max-height: calc(100vh - 120px);
     }
 
     .vc-chat-panel {
-      width: 320px;
+      /* 箱いっぱいに広がる。幅を固定していると、リサイズしても中が付いてこない */
+      flex: 1 1 auto;
+      min-height: 0;
+      width: 100%;
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -24,11 +36,16 @@ function injectStyle() {
     }
 
     .vc-chat-log {
-      width: 320px;
-      height: 220px;
+      /* 高さは箱の余りぶん。min-height:0 が無いと flex の中で縮まない */
+      flex: 1 1 auto;
+      min-height: 0;
+      width: 100%;
       overflow-y: auto;
-      background: rgba(10, 8, 24, 0.55);
-      border: 1px solid rgba(0, 255, 255, 0.35);
+      /* 2026-08-03: 透過が強すぎて、明るい映像の上だと文字が読めなかった
+         （loyさん「チャットの色が白くて文字が見えない」）。
+         会場は暗い前提なので、パネル自体をしっかり暗くして文字を浮かせる */
+      background: rgba(6, 5, 16, 0.92);
+      border: 1px solid rgba(0, 255, 255, 0.28);
       border-radius: 10px;
       padding: 10px 12px;
       box-sizing: border-box;
@@ -55,7 +72,7 @@ function injectStyle() {
     .vc-chat-line {
       margin: 0 0 6px 0;
       word-break: break-word;
-      color: #e8e8f5;
+      color: #f3f3ff;
       animation: vc-chat-fade-in 0.2s ease-out;
     }
     .vc-chat-line:last-child {
@@ -83,12 +100,12 @@ function injectStyle() {
     }
 
     .vc-chat-text {
-      color: #f1f1fa;
+      color: #ffffff;
     }
 
     .vc-chat-line.vc-system {
       text-align: center;
-      color: #9a9ab0;
+      color: #b9b9cf;
       font-size: 12px;
       font-style: italic;
       margin: 4px 0;
@@ -102,8 +119,8 @@ function injectStyle() {
     .vc-chat-input {
       flex: 1;
       min-width: 0;
-      background: rgba(10, 8, 24, 0.6);
-      border: 1px solid rgba(0, 255, 255, 0.35);
+      background: rgba(6, 5, 16, 0.92);
+      border: 1px solid rgba(0, 255, 255, 0.28);
       border-radius: 8px;
       padding: 8px 10px;
       color: #f1f1fa;
@@ -144,6 +161,25 @@ function injectStyle() {
 
     .vc-chat-send:active {
       filter: brightness(0.95);
+    }
+
+    /* スマホは掴んで動かせないので、箱にせず従来どおりの積み方に戻す。
+       積み方は style.css / mobile.js の --m-* 変数が決めている（2026-08-03） */
+    @media (max-width: 640px) {
+      #chat-root {
+        /* auto にすると、中身が幅100%を親に問い合わせて潰れる（実測252px）。
+           スマホは横いっぱいで使うので、明示的に指定する */
+        width: calc(100vw - 24px);
+        height: auto;
+        max-height: none;
+      }
+      .vc-chat-log {
+        /* 箱の伸縮をやめて、従来どおり決め打ちの高さにする。
+           mobile.js も同じ130pxを指定している（タッチ端末のときだけ読み込まれるので、
+           ここにも書いておかないと「細いPC画面」で高さが潰れる） */
+        flex: 0 0 auto;
+        height: 130px;
+      }
     }
   `;
   document.head.appendChild(style);
@@ -222,6 +258,11 @@ export function initChat({ onSend }) {
       handleSend();
     }
   });
+
+  // 掴んで動かす・大きさを変える（2026-08-03追加）。スマホでは無効
+  if (isFloatEnabled()) {
+    makeFloating(root, { key: 'chat', title: 'チャット', minW: 240, minH: 160 });
+  }
 
   // 具体的な会場名とルーム番号は、サーバーからwelcomeが届いた時点でヘッダーに出る
   addMessage('', `${APP_NAME} へようこそ！`, { system: true });
