@@ -182,8 +182,12 @@ export class LiveChatReader {
         }
       }
 
+      // ⚠ パスは `liveChat/messages`。`liveChatMessages` ではない。
+      //   googleapis パッケージのメソッド名が `liveChatMessages.list` なので
+      //   そのままURLに書いてしまい、**本文なしの404**が返って原因が分からなかった
+      //   （2026-08-03 実配信で踏んだ。エラー本文が空なので気づきにくい）
       const q = [
-        'liveChatMessages?part=snippet,authorDetails',
+        'liveChat/messages?part=snippet,authorDetails',
         `liveChatId=${encodeURIComponent(this.liveChatId)}`,
         `maxResults=${MAX_RESULTS}`,
       ];
