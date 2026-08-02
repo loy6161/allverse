@@ -101,6 +101,9 @@ let banList = []; // BAN一覧（管理者のみサーバーから届く）
 let kickLog = []; // キックの履歴（管理者のみ）。あとでBANするかの判断材料
 let noticeBar = null; // 運営メッセージの固定枠
 let ytChat = null; // YouTubeのライブチャット（連動イベントのときだけ出す）
+// YouTubeチャンネルとの連携状態（2026-08-03追加）。
+// welcome はUIの組み立てより先に来ることがあるので、ここで受けておいて後から流し込む
+let ytLinkState = { on: false, linked: false };
 let helpUI = null;
 let chatMode = 'local'; // 'local' … 独自チャット / 'youtube' … YouTubeへ一本化
 // キック/BAN/入場拒否の説明。設定されているときは、切断を「通信不良」として扱わない
@@ -440,8 +443,11 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     roomNumber,
     entryCode,
     handlers: {
-      onWelcome: ({ id, name: assignedName, av: assignedAv, room, peers, count, cap, screen, playback, role, canControl, isAdmin, event, events, blocked }) => {
+      onWelcome: ({ id, name: assignedName, av: assignedAv, room, peers, count, cap, screen, playback, role, canControl, isAdmin, event, events, blocked, yt }) => {
         myId = id;
+        // YouTubeとの連携状態。UIがまだ無い（入場直後）ことがあるので覚えておく
+        ytLinkState = yt || { on: false, linked: false };
+        if (ytChat) ytChat.setLinkState(ytLinkState);
         myRole = role || 'user';
         canControlVideo = canControl !== false;
         isAdminUser = isAdmin !== false;
@@ -636,9 +642,34 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
           : `${by} によってBANされました。このアカウントでは入れません。`;
       },
       onChat: (m) => {
+        // YouTube由来の発言は、自分のものでも吹き出しを出す。
+        // 自分はYouTube側に書いたので、会場の画面にはまだ何も出ていない
+        if (m.scope === 'yt') {
+          chat.addMessage(m.n, m.txt, { yt: true });
+          if (m.id === myId) {
+            if (player && player.userData.say) player.userData.say(m.txt);
+          } else {
+            remote.say(m.id, m.txt);
+          }
+          return;
+        }
         if (m.id === myId) return; // 自分の発言はローカルで表示済み
         chat.addMessage(m.n, m.txt);
         remote.say(m.id, m.txt);
+      },
+      // 合言葉が届いた（YouTubeのチャットに打つと繋がる）
+      onYtCode: ({ ok, code }) => {
+        if (ok && ytChat) ytChat.showCode(code);
+      },
+      // 繋がった／解除された
+      onYtLinked: ({ ok, ytName }) => {
+        ytLinkState = { ...ytLinkState, linked: Boolean(ok), ytName: ytName || '' };
+        if (ytChat) ytChat.setLinkState(ytLinkState);
+        if (ok) {
+          chat.addMessage('', `YouTubeチャンネルと繋がりました${ytName ? `（${ytName}）` : ''}。YouTubeでの発言があなたのアバターに出ます。`, { system: true });
+        } else {
+          chat.addMessage('', 'YouTubeチャンネルとの連携を解除しました。', { system: true });
+        }
       },
       onCount: (c) => updateCount(c),
       onPeerEmote: (m) => remote.emote(m.id, m.e),
@@ -727,7 +758,13 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   // 運営メッセージの固定枠（チャットに流すと見逃されるので別枠に出す）
   noticeBar = initNoticeBar();
   // YouTubeのライブチャット。連動イベントのときだけ出す
-  ytChat = initYouTubeChat({ getVideoId: () => liveScreen.getVideo() });
+  ytChat = initYouTubeChat({
+    getVideoId: () => liveScreen.getVideo(),
+    onRequestCode: () => net && net.requestYtCode(),
+    onUnlink: () => net && net.sendYtUnlink(),
+  });
+  // 入場時に受け取った連携状態を反映する（welcome の方が先に来るため）
+  ytChat.setLinkState(ytLinkState);
   // ヘルプ（❓）。運営向けタブは管理者・VIPにだけ出る。
   // 権限の見方は🚪パネルと揃える（ログイン未設定の環境では全員が運営扱いになる仕様のため、
   // myRole だけ見ると「操作はできるのに手引きが読めない」というちぐはぐが起きる）

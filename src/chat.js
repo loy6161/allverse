@@ -192,7 +192,9 @@ export function initChat({ onSend }) {
     } else {
       const nameSpan = document.createElement('span');
       nameSpan.className = 'vc-chat-name ' + (opts.self ? 'vc-name-self' : 'vc-name-other');
-      nameSpan.textContent = name;
+      // YouTube由来の発言は出所が分かるようにする。会場で打ったものと
+      // 見分けがつかないと、「消したのに残っている」等の誤解が起きる（2026-08-03追加）
+      nameSpan.textContent = opts.yt ? `▶ ${name}` : name;
 
       const textSpan = document.createElement('span');
       textSpan.className = 'vc-chat-text';

@@ -68,6 +68,26 @@ function injectStyle() {
 }
 .vc-yt-note { font-size: 11px; color: rgba(220,235,255,0.5); line-height: 1.6; }
 
+/* ---- 自分の発言をアバターに出す（合言葉での連携） ---- */
+.vc-yt-link {
+  border-top: 1px solid rgba(255,255,255,0.1);
+  padding: 8px 10px;
+  font-size: 11px; line-height: 1.7; color: #eaf6ff;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.vc-yt-link button {
+  align-self: flex-start;
+  border: 1px solid rgba(0,255,234,0.5); background: rgba(0,255,234,0.08);
+  color: #eaf6ff; border-radius: 8px; font-size: 11px; padding: 5px 10px; cursor: pointer;
+}
+.vc-yt-link button:hover { background: rgba(0,255,234,0.18); }
+.vc-yt-code {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 18px; font-weight: bold; letter-spacing: 2px;
+  color: #00ffea; user-select: all;
+}
+.vc-yt-linked { color: #7dffb0; }
+
 /* UI非表示（Hキー）に追従する */
 body.vc-ui-hidden .vc-yt { display: none; }
 
@@ -101,8 +121,10 @@ function canEmbed() {
 /**
  * @param {Object} p
  * @param {() => string} p.getVideoId いま流している動画のID
+ * @param {() => void} [p.onRequestCode] 合言葉をくれ、とサーバーに頼む
+ * @param {() => void} [p.onUnlink] 連携をやめる
  */
-export function initYouTubeChat({ getVideoId }) {
+export function initYouTubeChat({ getVideoId, onRequestCode, onUnlink }) {
   injectStyle();
 
   const root = document.createElement('div');
@@ -123,8 +145,69 @@ export function initYouTubeChat({ getVideoId }) {
 
   const body = document.createElement('div');
   body.className = 'vc-yt-body';
-  root.append(head, body);
+
+  // ---- 自分の発言をアバターに出す（合言葉での連携・2026-08-03追加） ----
+  //
+  // YouTubeのチャットは誰でも書けるので、そのままでは「会場にいるどのアバターの
+  // 発言なのか」が分からない。そこで会場側で合言葉を出し、それをYouTubeへ
+  // 打ってもらうことで、そのチャンネルと本人を結びつける。
+  // 一度繋げば次回以降は不要（サーバーが覚えている）。
+  const link = document.createElement('div');
+  link.className = 'vc-yt-link';
+  root.append(head, body, link);
   document.body.appendChild(root);
+
+  let linkState = { on: false, linked: false };
+
+  function renderLink() {
+    link.innerHTML = '';
+    if (!linkState.on) {
+      // サーバー側の読み取りが動いていない（APIキー未設定）。
+      // 出しても押せないだけなので、枠ごと消す
+      link.style.display = 'none';
+      return;
+    }
+    link.style.display = 'flex';
+
+    if (linkState.linked) {
+      const ok = document.createElement('div');
+      ok.className = 'vc-yt-linked';
+      ok.textContent = linkState.ytName
+        ? `✔ ${linkState.ytName} として連携済み。YouTubeでの発言があなたのアバターに出ます。`
+        : '✔ 連携済み。YouTubeでの発言があなたのアバターに出ます。';
+      const off = document.createElement('button');
+      off.type = 'button';
+      off.textContent = '連携をやめる';
+      off.addEventListener('click', () => {
+        if (onUnlink) onUnlink();
+      });
+      link.append(ok, off);
+      return;
+    }
+
+    if (linkState.code) {
+      const p = document.createElement('div');
+      p.textContent = 'この合言葉を YouTube のチャットに送ってください:';
+      const code = document.createElement('div');
+      code.className = 'vc-yt-code';
+      code.textContent = linkState.code;
+      const note = document.createElement('div');
+      note.className = 'vc-yt-note';
+      note.textContent = '送ると、あなたのYouTubeでの発言がアバターの上に出るようになります。10分で期限切れになります。';
+      link.append(p, code, note);
+      return;
+    }
+
+    const p = document.createElement('div');
+    p.textContent = 'YouTubeでの発言を、自分のアバターの上に出せます。';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '🔗 自分のチャンネルと繋ぐ';
+    btn.addEventListener('click', () => {
+      if (onRequestCode) onRequestCode();
+    });
+    link.append(p, btn);
+  }
 
   let shown = false;
   let mountedFor = '';
@@ -193,12 +276,25 @@ export function initYouTubeChat({ getVideoId }) {
     if (shown && mountedEmbed !== null && mountedEmbed !== canEmbed()) mount();
   });
 
+  renderLink();
+
   return {
     /** YouTube連動イベントのときだけ出す */
     setVisible(on) {
       shown = Boolean(on);
       root.classList.toggle('vc-yt-hidden', !shown);
       if (shown) mount();
+    },
+    /** 入場時に、読み取りが有効か・既に繋がっているかを受け取る */
+    setLinkState({ on, linked, ytName = '' }) {
+      linkState = { ...linkState, on: Boolean(on), linked: Boolean(linked), ytName };
+      if (linkState.linked) linkState.code = '';
+      renderLink();
+    },
+    /** 合言葉が届いた */
+    showCode(code) {
+      linkState.code = code || '';
+      renderLink();
     },
     /** 動画が差し替わったら貼り直す */
     refresh() {

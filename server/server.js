@@ -51,6 +51,9 @@ import {
   listChatLog,
 } from './store.js';
 import { summarize, gridSeries, autoStepMs, visitsCsv, seriesCsv, chatCsv } from './stats.js';
+// YouTubeのライブチャットを読んで、本人のアバターに吹き出しを出す（2026-08-03追加）
+import { LiveChatReader, isYouTubeReadEnabled, getYouTubeReadStatus } from './ytread.js';
+import { initYtLinks, issueCode, matchMessage, unlink, isLinked, ytLinkCount } from './ytlink.js';
 // ゲストの見た目はクライアントと同じ計算で決める（src/guestlook.js を両側で読む）。
 // 別々に持つと片方だけ直したときに姿がズレるので、1本のファイルを共有する
 import { guestLookFor } from '../src/guestlook.js';
@@ -844,6 +847,10 @@ async function handleJoin(client, msg) {
     // これを一緒にすると、VIPに管理者専用パネルが見えてしまう（押しても弾かれる）
     isAdmin: canControlVideo(client.role),
     canInteract: canInteract(client.role),
+    // YouTubeの発言を自分のアバターに出せる状態か（2026-08-03追加）。
+    // yt.on … サーバーが読み取りできる設定になっているか（キーの有無）
+    // yt.linked … この人が既にチャンネルを繋いでいるか（繋いでいれば合言葉は不要）
+    yt: { on: isYouTubeReadEnabled(), linked: isLinked(client.visitor) },
     ev: ev.id,
     event: toEventInfo(ev),
     room: roomNumber,
@@ -1538,8 +1545,145 @@ function handleBansRequest(client) {
   send(client.ws, { t: 'bans', list: [...bans.values()] });
 }
 
+// ------------------------------------------------------------
+// YouTubeチャットの読み取り → 本人のアバターに吹き出し（2026-08-03追加）
+//
+// これまでの「YouTubeチャット連動」は、YouTubeのチャット画面を会場に
+// はめ込んでいるだけで、こちらは中身を受け取っていなかった。
+// ここでサーバーが直接チャットを読み、合言葉で本人と結びついた発言だけを
+// 会場へ流す。結びついていない人の発言は流さない（誰の頭に出せばいいか
+// 分からないため。会場のチャット欄はYouTubeの埋め込みが担当している）。
+// ------------------------------------------------------------
+
+/** eventId -> LiveChatReader。連動ONで動画があるイベントのぶんだけ動かす */
+const ytReaders = new Map();
+
+/** そのイベントで読み取りを動かすべきか */
+function shouldReadYt(ev) {
+  return Boolean(
+    ev && ev.chatMode === 'youtube' && ev.videoId && isYouTubeReadEnabled(),
+  );
+}
+
+/**
+ * イベントの状態に合わせて読み取り係を増減させる。
+ * イベントの作成・設定変更・削除・起動時に呼ぶ。
+ *
+ * 動画が差し替わったら作り直す（liveChatId が別物になるため、
+ * 同じ係を使い回すと前の配信のチャットを読み続けてしまう）。
+ */
+function syncYtReaders() {
+  // 要らなくなったものを止める
+  for (const [eventId, reader] of ytReaders) {
+    const ev = events.get(eventId);
+    if (!shouldReadYt(ev) || reader.videoId !== ev.videoId) {
+      reader.stop();
+      ytReaders.delete(eventId);
+    }
+  }
+  // 足りないものを起こす
+  for (const ev of events.values()) {
+    if (!shouldReadYt(ev) || ytReaders.has(ev.id)) continue;
+    const reader = new LiveChatReader(ev.videoId, (msgs) => {
+      onYtMessages(ev.id, msgs);
+    });
+    ytReaders.set(ev.id, reader);
+    reader.start();
+    console.log(`[ytread] 読み取り開始: event=${ev.id} video=${ev.videoId}`);
+  }
+}
+
+/** そのイベントの中から、結びつけの鍵が一致する人を探す */
+function findClientByLinkKey(eventId, linkKey) {
+  for (const [key, members] of rooms) {
+    if (keyEventId(key) !== eventId) continue;
+    for (const client of members.values()) {
+      if (client.joined && client.visitor === linkKey) return client;
+    }
+  }
+  return null;
+}
+
+/**
+ * YouTubeから届いた発言をさばく。
+ * 結びついている人のものだけを、その人がいるルームへ流す。
+ */
+function onYtMessages(eventId, msgs) {
+  for (const msg of msgs) {
+    const hit = matchMessage(msg);
+    if (!hit) continue; // 関係ない人の発言＝吹き出しは出さない
+
+    const client = findClientByLinkKey(eventId, hit.linkKey);
+    if (!client) continue; // 繋いだ人が会場にいない（帰った後の発言など）
+
+    if (hit.justLinked) {
+      // 本人にだけ「繋がった」と知らせる。名前はYouTube側の表示名
+      send(client.ws, { t: 'yt-linked', ok: true, ytName: msg.name || '' });
+    }
+
+    const txt = clampString(msg.text, MAX_TXT_LEN);
+    if (!txt) continue;
+    client.lastChat = { txt, ts: Date.now() };
+
+    // 会場の発言と同じ形で流す。sc:'yt' はクライアントで出所を出し分けるため。
+    // from に本人を渡すことで、ブロックしている人には見えないまま保たれる
+    broadcastToRoom(
+      eventId,
+      client.room,
+      { t: 'chat', id: client.id, n: client.n, txt, sc: 'yt' },
+      null,
+      client,
+    );
+  }
+}
+
+/**
+ * 開発用: YouTubeの発言が届いたことにする（2026-08-03追加）
+ *
+ * 本物のチャットは「配信中でないと流れてこない」ので、
+ * これが無いと吹き出しの確認をライブ本番でしか行えない。
+ * それでは直しながら試すことができないため、注入口を用意した。
+ *
+ * ⚠ ローカル（Render以外）のループバック接続からしか受け付けない。
+ *   スクリーンショット用の /api/_shot と同じ守り方。
+ */
+function handleDevYtInject(body) {
+  const eventId = String(body?.eventId || '');
+  if (!events.has(eventId)) return { ok: false, why: 'イベントが見つかりません' };
+  const msg = {
+    channelId: String(body?.channelId || 'UC_dev_test'),
+    name: String(body?.name || 'テスト視聴者'),
+    text: String(body?.text || ''),
+  };
+  onYtMessages(eventId, [msg]);
+  return { ok: true, sent: msg };
+}
+
+/**
+ * yt-code: 合言葉をくれ、という要求。
+ * これをYouTubeのチャットに打つと、そのチャンネルが本人と結びつく。
+ */
+function handleYtCode(client, _msg) {
+  if (!client.joined) return;
+  if (!isYouTubeReadEnabled()) {
+    send(client.ws, { t: 'yt-code', ok: false, why: 'disabled' });
+    return;
+  }
+  const { code, expiresAt } = issueCode(client.visitor);
+  send(client.ws, { t: 'yt-code', ok: true, code, expiresAt });
+}
+
+/** yt-unlink: 結びつきを解除する（本人のぶんだけ） */
+async function handleYtUnlink(client, _msg) {
+  if (!client.joined) return;
+  const n = await unlink(client.visitor);
+  send(client.ws, { t: 'yt-linked', ok: false, removed: n });
+}
+
 const HANDLERS = {
   join: handleJoin,
+  'yt-code': handleYtCode,
+  'yt-unlink': handleYtUnlink,
   pos: handlePos,
   chat: handleChat,
   update: handleUpdate,
@@ -1562,6 +1706,10 @@ const HANDLERS = {
 
 /** 全員にイベント一覧を配る（人数が変わったとき・イベントが増減したとき） */
 function broadcastAllEvents() {
+  // イベントの作成・設定変更・動画差し替え・削除は、すべてここを通る。
+  // 読み取り係の増減もここに乗せておけば、経路ごとに呼び忘れることがない
+  syncYtReaders();
+
   // 2026-08-02: 合言葉を見せる範囲がイベントごとになった（VIPは自分のイベントだけ）ので、
   // 「管理者用／全員用」の2種類では足りない。人ごとに組み立てる。
   // イベント数もクライアント数も上限が小さい（20件×60人）ので負荷は問題にならない
@@ -1629,6 +1777,10 @@ function buildStatusJson() {
     entryGate: Boolean(ENTRY_KEY),
     // 設定ミスを画面から特定できるようにする（トークンは含めない）
     store: getStoreStatus(),
+    // YouTubeチャットの読み取り（2026-08-03追加）。APIキーそのものは出さない。
+    // reading … いま実際に読み取りが動いているイベントの数
+    // links   … 結びつき済みのチャンネル数
+    ytRead: { ...getYouTubeReadStatus(), reading: ytReaders.size, links: ytLinkCount() },
     uptime: Math.floor((Date.now() - startedAt) / 1000),
     // いま動いているのがどのコミットかを外から見られるようにする。
     // 2026-07-30、本番が9コミット前のまま止まっているのに気づけず、
@@ -2072,6 +2224,15 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // 開発用: YouTubeの発言が届いたことにする（ローカルのみ・上記 handleDevYtInject 参照）
+  if (ALLOW_SHOTS && isLoopback(req) && req.method === 'POST' && url === '/api/_yt-inject') {
+    const body = await readJsonBody(req).catch(() => null);
+    const out = handleDevYtInject(body || {});
+    res.writeHead(out.ok ? 200 : 400, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(out));
+    return;
+  }
+
   if (req.method === 'GET' && url === '/api/status') {
     const body = JSON.stringify(buildStatusJson());
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -2300,6 +2461,12 @@ async function boot() {
   // BANはメモリに載せておく。入場のたびにDBを叩かずに済ませるため
   for (const b of await loadBans()) bans.set(b.email, b);
 
+  // YouTubeとの結びつきもメモリに載せる。チャット1件ごとにDBを叩くと
+  // Turso（Singapore）への往復が積み上がって吹き出しが遅れる
+  const ytLinks = await initYtLinks();
+  // 復元したイベントに連動ONのものがあれば、ここで読み取りが始まる
+  syncYtReaders();
+
   // キックの締め出しも復元する。ここを消すと、再起動しただけで
   // 1時間の締め出しが解けてしまい、荒らし対策として役に立たない
   const timeouts = await loadKickTimeouts();
@@ -2319,6 +2486,13 @@ async function boot() {
     console.log(`  イベントログ: 有効${fixed ? `（前回の閉じ忘れ ${fixed}件を補正）` : ''}`);
     console.log(`  PORTAL連携API: ${STATS_TOKEN ? '有効（/api/stats.json）' : '無効（STATS_TOKEN 未設定）'}`);
     console.log(`  入口の鍵: ${ENTRY_KEY ? '有効（?k= が必要）' : '無効（ENTRY_KEY 未設定＝誰でも入れる）'}`);
+    console.log(
+      `  YouTubeチャット読み取り: ${
+        isYouTubeReadEnabled()
+          ? `有効（${getYouTubeReadStatus().intervalMs / 1000}秒おき・連携済み${ytLinks}件）`
+          : '無効（YOUTUBE_API_KEY 未設定）'
+      }`,
+    );
   });
 }
 

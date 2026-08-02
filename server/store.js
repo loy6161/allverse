@@ -209,6 +209,21 @@ export async function initStore() {
       )
     `);
     await db.execute('CREATE INDEX IF NOT EXISTS idx_chatlog_run ON chat_log(run_id, created_at)');
+    // YouTubeのチャンネルと、ブラウザ会場にいる本人の結びつき（2026-08-03追加）。
+    // 合言葉をYouTubeのチャットへ送ってもらい、その発言の channelId を本人と繋ぐ。
+    //
+    // ⚠ 一度繋いだら次回以降も有効にする（毎回合言葉を打たせると使われない）。
+    //   link_key は ログイン済み＝`m:<メールのハッシュ>` ／ ゲスト＝`v:<匿名ID>`。
+    //   **メールアドレスそのものは保存しない**（イベント記録と同じ方針）。
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS yt_links (
+        channel_id  TEXT PRIMARY KEY,
+        link_key    TEXT NOT NULL,
+        yt_name     TEXT NOT NULL DEFAULT '',
+        created_at  INTEGER NOT NULL
+      )
+    `);
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_ytlinks_key ON yt_links(link_key)');
     // サーバーが最後に生きていた時刻。再起動で「退場が書かれないまま」残った行を
     // どの時刻で閉じるかの根拠になる（詳細は closeOpenVisits）
     await db.execute(`
@@ -934,6 +949,69 @@ export async function listChatLog(runId, limit = 5000) {
   } catch (e) {
     console.warn('[store] チャットの読み込みに失敗:', e.message);
     return [];
+  }
+}
+
+// ------------------------------------------------------------
+// YouTubeチャンネルとの結びつき（2026-08-03追加）
+// ------------------------------------------------------------
+
+/**
+ * 結びつきを保存する。同じチャンネルを別の人が繋ぎ直したら上書きする
+ * （アカウントを持ち替えた場合に、古い持ち主のアバターへ吹き出しが出ると事故になるため）。
+ */
+export async function saveYtLink({ channelId, linkKey, ytName = '', createdAt = Date.now() }) {
+  if (!ready || !channelId || !linkKey) return false;
+  try {
+    await db.execute({
+      sql: `INSERT INTO yt_links (channel_id, link_key, yt_name, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(channel_id) DO UPDATE SET
+              link_key = excluded.link_key,
+              yt_name = excluded.yt_name,
+              created_at = excluded.created_at`,
+      args: [String(channelId), String(linkKey), String(ytName || ''), createdAt],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] YouTube連携の保存に失敗:', e.message);
+    return false;
+  }
+}
+
+/**
+ * 保存済みの結びつきを全件読む。
+ * 件数はイベント参加者ぶんしか増えないので、起動時に全部メモリへ載せて
+ * チャット1件ごとのDB往復を無くす（Turso は Singapore にあり往復が遅い）。
+ * @returns {Promise<Array<{channelId:string, linkKey:string, ytName:string}>>}
+ */
+export async function loadYtLinks() {
+  if (!ready) return [];
+  try {
+    const rs = await db.execute('SELECT channel_id, link_key, yt_name FROM yt_links');
+    return rs.rows.map((r) => ({
+      channelId: String(r.channel_id),
+      linkKey: String(r.link_key),
+      ytName: String(r.yt_name || ''),
+    }));
+  } catch (e) {
+    console.warn('[store] YouTube連携の読み込みに失敗:', e.message);
+    return [];
+  }
+}
+
+/** 結びつきを解除する（本人が「連携をやめる」を押したとき） */
+export async function deleteYtLinksFor(linkKey) {
+  if (!ready || !linkKey) return false;
+  try {
+    await db.execute({
+      sql: 'DELETE FROM yt_links WHERE link_key = ?',
+      args: [String(linkKey)],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] YouTube連携の解除に失敗:', e.message);
+    return false;
   }
 }
 

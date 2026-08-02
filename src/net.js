@@ -167,6 +167,8 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
               events: msg.events,
               persistent: msg.persistent,
               blocked: msg.blocked,
+              // YouTubeの発言を自分のアバターに出せる状態か（2026-08-03追加）
+              yt: msg.yt || { on: false, linked: false },
             });
           }
           break;
@@ -242,6 +244,14 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
         case 'chat':
           if (h.onChat) h.onChat({ id: msg.id, n: msg.n, txt: msg.txt, scope: msg.sc || 'local' });
           break;
+        // 合言葉が発行された（YouTubeのチャットに打つと本人と繋がる）
+        case 'yt-code':
+          if (h.onYtCode) h.onYtCode({ ok: msg.ok, code: msg.code, expiresAt: msg.expiresAt, why: msg.why });
+          break;
+        // 繋がった／解除された
+        case 'yt-linked':
+          if (h.onYtLinked) h.onYtLinked({ ok: msg.ok, ytName: msg.ytName || '', removed: msg.removed || 0 });
+          break;
         case 'count':
           if (h.onCount) h.onCount(msg.c);
           break;
@@ -316,6 +326,18 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     const s = String(txt == null ? '' : txt).slice(0, 200);
     if (!s) return;
     send({ t: 'chat', txt: s, sc: scope === 'stream' ? 'stream' : 'local' });
+  }
+
+  /** 合言葉をくれ、と頼む（YouTubeのチャットに打つと本人と繋がる） */
+  function requestYtCode() {
+    if (!joined) return;
+    send({ t: 'yt-code' });
+  }
+
+  /** YouTubeチャンネルとの結びつきを解除する */
+  function sendYtUnlink() {
+    if (!joined) return;
+    send({ t: 'yt-unlink' });
   }
 
   function sendUpdate(newName, newConfig) {
@@ -452,6 +474,8 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     sendBan,
     sendUnban,
     requestBans,
+    requestYtCode,
+    sendYtUnlink,
     close,
   };
 }
