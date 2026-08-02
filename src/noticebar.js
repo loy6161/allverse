@@ -25,12 +25,9 @@ function injectStyle() {
 .vc-notice {
   position: fixed;
   left: 50%; transform: translateX(-50%);
-  /* 2026-08-03: top:56px だと左上の操作ヒント（#controls-help）と重なり、
-     運営メッセージがヒントの上に乗って両方読めなくなっていた
-     （loyさん「運営コメントの位置も調整した方がいいね」）。
-     ヒントの下端（16 + ルーム名の高さ + 8 + ヒント）より下へ逃がす。
-     右上のツールバー（top:16, 高さ48）とも干渉しない高さ */
-  top: 84px;
+  /* 位置と幅は placeNotice() が実測して決める（2026-08-03）。
+     ここの値は、その計算が走る前の初期値でしかない */
+  top: 16px;
   width: min(680px, calc(100vw - 24px));
   box-sizing: border-box;
   padding: 9px 14px;
@@ -118,28 +115,63 @@ export function initNoticeBar() {
     if (current) {
       mark.textContent = MARKS[current.level] || '📢';
       text.textContent = current.text;
-      placeBelowHud();
+      placeNotice();
     }
   }
 
   /**
-   * 左上のHUD（会場名＋操作ヒント）の下に置く（2026-08-03追加）。
+   * 運営メッセージの置き場所（2026-08-03）。
    *
-   * 固定値で 56px → 84px と下げてみたが、操作ヒントは画面の幅で折り返して
-   * 高さが変わるため、どの値にしても重なる幅が必ず出てくる。
-   * ヒントの実際の下端を測って、その下に置くのが確実。
+   * loyさんの指示:
+   *   > 運営コメントも一番上にした方がスペース的にバランスいいよ。
+   *
+   * なので**画面の一番上（top:16px）に置く**。左上の会場名・右上のツールバーと
+   * 同じ段に並ぶことになるので、**その2つに届かない幅に抑える**。
+   * 幅で抑えずに「HUDの下へ逃がす」方式にすると、上の空きが余ったまま
+   * 3段（会場名／ヒント／運営メッセージ）に積み上がって窮屈になる。
+   *
+   * 画面が狭くて幅を確保できないときだけ、従来どおりHUDの下へ回す。
    */
-  function placeBelowHud() {
+  function placeNotice() {
+    // 緊急は画面幅いっぱいの帯なので、位置の計算に手を出さない
+    if (current && current.level === 'emergency') {
+      el.style.left = '';
+      el.style.width = '';
+      el.style.transform = '';
+      el.style.top = '';
+      return;
+    }
+
+    const room = document.getElementById('room-info');
+    const bar = document.querySelector('.vc-topbar');
+    const leftEnd = room ? room.getBoundingClientRect().right : 0;
+    const rightStart = bar ? bar.getBoundingClientRect().left : window.innerWidth;
+    const gap = rightStart - leftEnd - 24;
+
+    if (gap >= 260) {
+      // 一番上、会場名とツールバーの「間」に置く。
+      // ⚠ 画面の中央に寄せると、会場名の枠と1pxだけ重なるようなことが起きる。
+      //   空いている範囲の中で中央に置けば、幅がどう変わっても食い込まない
+      const w = Math.min(680, Math.floor(gap));
+      el.style.top = '16px';
+      el.style.width = `${w}px`;
+      el.style.left = `${Math.round(leftEnd + 12 + (gap - w) / 2)}px`;
+      el.style.transform = 'none';
+      return;
+    }
+
+    // 幅が足りない（狭い画面）。従来どおり画面中央・HUDの下へ
     const hud = document.getElementById('hud');
-    if (!hud) return;
-    const b = hud.getBoundingClientRect().bottom;
-    // HUDが隠れている（UI非表示中の緊急メッセージ等）ときは画面上部へ戻す
+    const b = hud ? hud.getBoundingClientRect().bottom : 60;
     el.style.top = `${Math.max(16, Math.round(b) + 10)}px`;
+    el.style.left = '50%';
+    el.style.width = '';
+    el.style.transform = 'translateX(-50%)';
   }
 
-  // 幅が変わるとヒントの折り返しも変わるので、置き直す
+  // 幅が変わると左右の空きも変わるので、置き直す
   window.addEventListener('resize', () => {
-    if (current) placeBelowHud();
+    if (current) placeNotice();
   });
 
   return {

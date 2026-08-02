@@ -31,9 +31,14 @@ function injectStyle() {
 
 .vc-help-panel {
   position: fixed;
-  right: 16px; bottom: 96px;
+  /* 2026-08-03: ボタンを右上バーへ移したので、パネルも右上から下へ開くようにした。
+     bottom基準のままだと、画面が低いときにパネルの上端が右上バーへ食い込み、
+     アバター変更ボタンなどが隠れる（loyさん「右上のパネルはアバター変更とかぶってる」）。
+     バーの下端（16+48）＋余白の位置から始める */
+  right: 16px; top: 74px;
   width: min(360px, calc(100vw - 32px));
-  max-height: 60vh; overflow-y: auto;
+  /* 下は動画のコントロール（高さ約72＋余白）まで。画面が低くても収まる */
+  max-height: calc(100vh - 190px); overflow-y: auto;
   padding: 14px 16px 16px;
   border-radius: 14px;
   background: linear-gradient(160deg, rgba(12,12,28,0.96), rgba(18,8,30,0.96));
