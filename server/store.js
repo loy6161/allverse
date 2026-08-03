@@ -92,6 +92,9 @@ export async function initStore() {
       `ALTER TABLE events ADD COLUMN notice_text TEXT NOT NULL DEFAULT ''`,
       // call_list … 使うコールのワード表のid（空文字＝使わない・2026-08-03追加）
       `ALTER TABLE events ADD COLUMN call_list TEXT NOT NULL DEFAULT ''`,
+      // brightness … 会場の明るさ 'normal'/'bright'/'brightest'（2026-08-04追加）。
+      //   運営(管理者・VIP)が決めて、そのイベントにいる全員に反映される
+      `ALTER TABLE events ADD COLUMN brightness TEXT NOT NULL DEFAULT 'normal'`,
     ]) {
       try {
         await db.execute(ddl);
@@ -293,7 +296,7 @@ export async function loadEvents() {
   try {
     const rs = await db.execute(
       `SELECT id, name, video_id, require_login, entry_code, capacity, vrc_bridge, created_at,
-              owner_email, npc_max, chat_mode, notice_level, notice_text, call_list
+              owner_email, npc_max, chat_mode, notice_level, notice_text, call_list, brightness
          FROM events`,
     );
     return rs.rows.map((r) => ({
@@ -311,6 +314,7 @@ export async function loadEvents() {
       noticeLevel: r.notice_level == null ? '' : String(r.notice_level),
       noticeText: r.notice_text == null ? '' : String(r.notice_text),
       callList: r.call_list == null ? '' : String(r.call_list),
+      brightness: r.brightness == null ? 'normal' : String(r.brightness),
     }));
   } catch (e) {
     console.warn('[store] イベント読み込みに失敗:', e.message);
@@ -324,8 +328,9 @@ export async function saveEvent(ev) {
   try {
     await db.execute({
       sql: `INSERT INTO events (id, name, video_id, require_login, entry_code, capacity, vrc_bridge, created_at,
-                                owner_email, npc_max, chat_mode, notice_level, notice_text, call_list)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                owner_email, npc_max, chat_mode, notice_level, notice_text, call_list,
+                                brightness)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               name = excluded.name,
               video_id = excluded.video_id,
@@ -338,7 +343,8 @@ export async function saveEvent(ev) {
               chat_mode = excluded.chat_mode,
               notice_level = excluded.notice_level,
               notice_text = excluded.notice_text,
-              call_list = excluded.call_list`,
+              call_list = excluded.call_list,
+              brightness = excluded.brightness`,
       args: [
         ev.id,
         ev.name,
@@ -354,6 +360,7 @@ export async function saveEvent(ev) {
         ev.noticeLevel || '',
         ev.noticeText || '',
         ev.callList || '',
+        ev.brightness || 'normal',
       ],
     });
     return true;

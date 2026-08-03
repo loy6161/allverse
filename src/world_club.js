@@ -322,7 +322,8 @@ export function createClubWorld(scene, { renderer } = {}) {
   // VRChat側は焼いた光（Bakery）で見せているが、それは持ってきていない。
   // ブラウザ側は素直にライトを置いて雰囲気を寄せる。影は落とさない（負荷とフラットな見た目のため）。
   // 白飛びの指摘（2026-07-30）を受けて全体的に落とし、色を夜寄りに振っている。
-  scene.add(new THREE.HemisphereLight(0x9a9cb4, 0x1a1220, 2.3));
+  const hemi = new THREE.HemisphereLight(0x9a9cb4, 0x1a1220, 2.3);
+  scene.add(hemi);
 
   const key = new THREE.DirectionalLight(0xffe6c8, 1.5);
   key.position.set(12, 26, 10);
@@ -343,6 +344,41 @@ export function createClubWorld(scene, { renderer } = {}) {
   const floorGlow = new THREE.PointLight(0xdfe8ff, 40, 46, 2);
   floorGlow.position.set(CLUB_SCREEN.x, 8, -6);
   scene.add(floorGlow);
+
+  // ---- 会場の明るさ（2026-08-04追加）----
+  //
+  // loyさん「もうちょっとブラウザ会場明るくていいかも」＋
+  // 「3段階を管理者+VIPは設定から調整できるといいかもね」「運営やVIPが変えて全体へ反映」。
+  //
+  // ⚠ ライトの強さだけを倍率で動かす。色は変えない。
+  //   色まで変えると「白すぎる」を直したとき(2026-07-30)の調整が壊れる。
+  //   環境マップ（金属の映り込み）も触らない。あれを明るくすると壁が白く浮く。
+  //
+  // ⚠ 上げすぎると床のゴールドのロゴと金属が白飛びする。
+  //   実際に見ながら決められるよう3段階に留め、いちばん上でも1.5倍までにしてある。
+  const BASE = {
+    hemi: hemi.intensity,
+    key: key.intensity,
+    back: back.intensity,
+    stageGlow: stageGlow.intensity,
+    floorGlow: floorGlow.intensity,
+  };
+  /** 明るさの段階 → 倍率。'normal' がこれまでの見た目（既定） */
+  const BRIGHTNESS = { normal: 1.0, bright: 1.22, brightest: 1.5 };
+
+  function setBrightness(level) {
+    const k = BRIGHTNESS[level] ? level : 'normal';
+    const f = BRIGHTNESS[k];
+    hemi.intensity = BASE.hemi * f;
+    key.intensity = BASE.key * f;
+    back.intensity = BASE.back * f;
+    // 演出の光（ステージのピンク・床の照り返し）は伸びを抑える。
+    // 同じ倍率で上げると、明るくというより「色が濃くなる」方向に転ぶため
+    const g = 1 + (f - 1) * 0.6;
+    stageGlow.intensity = BASE.stageGlow * g;
+    floorGlow.intensity = BASE.floorGlow * g;
+    return k;
+  }
 
   // 金属とガラスの映り込み用の環境マップ
   if (renderer) {
@@ -394,6 +430,8 @@ export function createClubWorld(scene, { renderer } = {}) {
     bounds: BOUNDS,
     spawnPoint: SPAWN,
     screen: CLUB_SCREEN,
+    /** 会場の明るさを変える（'normal' / 'bright' / 'brightest'）。運営が決めて全員に効く */
+    setBrightness,
     ready: loading,
     isLoaded: () => loaded,
     error: () => failed,

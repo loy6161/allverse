@@ -212,6 +212,17 @@ const ENABLE_CHAT_FIELD = true;
 const CHAT_SRC_YT = 'yt';
 const CHAT_SRC_LOCAL = 'local';
 
+/**
+ * 会場の明るさ（2026-08-04追加・loyさん要望）。
+ *
+ * > 明るさは、3段階を管理者+VIPは設定から調整できるといいかもね
+ * > 運営やVIPが変えて全体へ反映でいいよ
+ *
+ * ⚠ 個人ごとの設定ではなく**イベントの設定**。同じ会場にいる全員に同じ明るさで効く。
+ *   実際の見た目の調整は src/world_club.js の setBrightness が持つ。
+ */
+const BRIGHTNESS_LEVELS = new Set(['normal', 'bright', 'brightest']);
+
 // 運営メッセージの固定枠（2026-08-02追加）。チャットに流すと見逃されるので別枠にする
 const NOTICE_LEVELS = new Set(['info', 'important', 'emergency']);
 const MAX_NOTICE_LEN = 120;
@@ -453,6 +464,7 @@ function makeEvent({
   noticeLevel = '',
   noticeText = '',
   callList = '',
+  brightness = 'normal',
 }) {
   return {
     id,
@@ -475,6 +487,9 @@ function makeEvent({
     // コールのワード表のid。空文字＝使わない（2026-08-03追加）。
     // ライブ以外の観覧イベントでは反応させたくないので「未選択」を既定にしている
     callList: String(callList || ''),
+    // 会場の明るさ（2026-08-04追加・loyさん要望）。運営が決めて全員に反映される。
+    // 既定の 'normal' はこれまでの見た目そのまま（既存イベントの絵が変わらない）
+    brightness: BRIGHTNESS_LEVELS.has(brightness) ? brightness : 'normal',
     // 記録用の開催id。イベントidが将来使い回されても過去の記録と混ざらないように
     // 「id＋立てた時刻」で一意にする
     runId: `${id}-${createdAt}`,
@@ -550,6 +565,8 @@ function toEventInfo(ev) {
     notice: ev.noticeLevel ? { level: ev.noticeLevel, text: ev.noticeText } : null,
     // 使っているコールのワード表（空文字＝使わない）
     callList: ev.callList,
+    // 会場の明るさ。全員の画面に効く（2026-08-04追加）
+    brightness: ev.brightness,
   };
 }
 
@@ -1217,6 +1234,10 @@ async function handleEventUpdate(client, msg) {
   }
   if (msg.chatMode === 'local' || msg.chatMode === 'youtube') {
     ev.chatMode = msg.chatMode;
+  }
+  // 会場の明るさ。知らない値は無視する（既定に戻して驚かせない）
+  if (typeof msg.brightness === 'string' && BRIGHTNESS_LEVELS.has(msg.brightness)) {
+    ev.brightness = msg.brightness;
   }
   // 運営メッセージの固定枠。level を空にすると消える
   if (msg.notice !== undefined) {

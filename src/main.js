@@ -374,6 +374,9 @@ function applyEventSettings(ev) {
   if (Number.isFinite(ev.cap)) roomCapacity = ev.cap;
   if (Number.isFinite(ev.npcMax)) npcMaxFromServer = ev.npcMax;
   if (typeof ev.chatMode === 'string') applyChatMode(ev.chatMode);
+  // 会場の明るさ（2026-08-04追加）。運営が決めた値が全員に効く。
+  // 途中で変えられたときもここを通るので、その場で明るさが変わる
+  if (world && world.setBrightness) world.setBrightness(ev.brightness || 'normal');
   applyNotice(ev.notice || null);
   updateCount();
 }

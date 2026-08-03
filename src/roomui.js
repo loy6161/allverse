@@ -247,6 +247,34 @@ export function initRoomUI({
     ytLb.append(ytC, document.createTextNode('YouTubeチャット連動（会場のチャットは使わない）'));
     box.appendChild(ytLb);
 
+    // ---- 会場の明るさ（2026-08-04追加）----
+    // loyさん「3段階を管理者+VIPは設定から調整できるといいかもね」
+    //        「運営やVIPが変えて全体へ反映でいいよ」
+    // 個人設定ではなくイベントの設定。同じ会場にいる全員の画面が同時に変わる
+    const briTitle = document.createElement('div');
+    briTitle.className = 'vc-room-sub';
+    briTitle.textContent = '会場の明るさ';
+    box.appendChild(briTitle);
+
+    const briSel = document.createElement('select');
+    briSel.className = 'vc-room-input';
+    for (const [value, label] of [
+      ['normal', 'ふつう（これまでと同じ）'],
+      ['bright', '明るめ'],
+      ['brightest', 'いちばん明るい'],
+    ]) {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = label;
+      briSel.appendChild(o);
+    }
+    briSel.value = ev.brightness || 'normal';
+    box.appendChild(briSel);
+    const briHint = document.createElement('div');
+    briHint.className = 'vc-room-hint';
+    briHint.textContent = 'このイベントにいる全員の画面が明るくなります（保存を押すとすぐ反映）。';
+    box.appendChild(briHint);
+
     // ---- コールのワード表（2026-08-03追加）----
     // loyさん「リスト使う使わないも選べるとライブイベント以外の観覧イベントとかでも大丈夫」。
     // 既定は「使わない」。ライブでないイベントで勝手に反応させないため
@@ -327,6 +355,7 @@ export function initRoomUI({
         vrc: vrcC.checked,
         chatMode: ytC.checked ? 'youtube' : 'local',
         callList: callSel.value,
+        brightness: briSel.value,
         // 空欄は自動（-1）。数値ならその値を全体の上限にする
         npcMax: npcRaw === '' ? -1 : Math.max(0, Math.min(100, Number(npcRaw) || 0)),
         notice: { level: lvSel.value, text: noticeI.value.trim() },
