@@ -70,7 +70,7 @@ import {
   ytLinksLoadedAtBoot,
 } from './ytlink.js';
 // コメントの中身からエモートを決める（2026-08-03追加）
-import { emoteFromText } from './chatemote.js';
+import { emoteFromText, MAX_REPEAT } from './chatemote.js';
 // ゲストの見た目はクライアントと同じ計算で決める（src/guestlook.js を両側で読む）。
 // 別々に持つと片方だけ直したときに姿がズレるので、1本のファイルを共有する
 import { guestLookFor } from '../src/guestlook.js';
@@ -135,8 +135,10 @@ const EMOTE_DURATIONS = {
   dance: 4.0,
   heart: 3.0,
   // 2026-08-03: 4.0秒（持ち上げ＋2往復）→ 0.6秒（1往復だけ）に変更。
-  // 連打で振り続けられるようにするため。VRChat側は emd を見るので自動で追随する
-  penlight: 0.6,
+  // 2026-08-04: 0.6秒 → 1.8秒（3往復）に変更（loyさん要望「1回で3振り」）。
+  //   1往復ぶんの速さは 0.6秒のままで、回数だけ増やしてある。
+  //   VRChat側は emd を見るので自動で追随する（申し送りは不要）
+  penlight: 1.8,
   hop: 0.72,
   // スペシャルエモート（2026-08-03追加）
   fist: 1.4,
@@ -146,6 +148,17 @@ const EMOTE_DURATIONS = {
   firework: 2.6,
   cheers: 2.2,
 };
+/**
+ * エモートごとの繰り返し上限（2026-08-04追加）。
+ *
+ * ペンライトが1回3振り（1.8秒）になったので、10回まで繋ぐと弾幕1回で18秒に
+ * なってしまう。4回（12振り・7.2秒）で止める。
+ * 変更前が 0.6秒×10＝6秒だったので、体感の長さはほぼ変わらない。
+ * ⚠ src/avatar_glb.js の EMOTE_MAX_REPEAT と必ず同じ値にすること
+ */
+const EMOTE_MAX_REPEAT = { penlight: 4 };
+const maxRepeatFor = (id) => EMOTE_MAX_REPEAT[id] || MAX_REPEAT;
+
 const EMOTE_MIN_INTERVAL_MS = 500; // 1クライアントあたりのエモート最小間隔（連打防止）
 
 // スクリーン
@@ -1656,12 +1669,21 @@ function syncYtReaders() {
   // 足りないものを起こす
   for (const ev of events.values()) {
     if (!shouldReadYt(ev) || ytReaders.has(ev.id)) continue;
-    const reader = new LiveChatReader(ev.videoId, (msgs) => {
-      // onYtMessages は保存の結果を待つので非同期。ここで転ばせない
-      onYtMessages(ev.id, msgs).catch((e) => {
-        console.warn('[ytread] 発言の処理で失敗:', e?.message || e);
-      });
-    });
+    const reader = new LiveChatReader(
+      ev.videoId,
+      (msgs) => {
+        // onYtMessages は保存の結果を待つので非同期。ここで転ばせない
+        onYtMessages(ev.id, msgs).catch((e) => {
+          console.warn('[ytread] 発言の処理で失敗:', e?.message || e);
+        });
+      },
+      {
+        // そのイベントに誰もいなければ読まない（2026-08-04追加）。
+        // 吹き出しを出す相手がいないのにAPIの枠を使うのは丸損で、
+        // 会場を開けっぱなしにしただけで枠が切れる原因になっていた
+        shouldPoll: () => countInEvent(ev.id) > 0,
+      },
+    );
     ytReaders.set(ev.id, reader);
     reader.start();
     console.log(`[ytread] 読み取り開始: event=${ev.id} video=${ev.videoId}`);
@@ -2197,7 +2219,7 @@ function buildPresenceJson() {
       if (em && EMOTE_DURATIONS[em.id]) {
         // 繰り返しぶんだけ長さが伸びる（弾幕でペンライトを連続で振る等）。
         // VRChat側は emd を見ているので、これだけで正しい長さが伝わる
-        const times = Math.max(1, Math.min(10, Number(em.n) || 1));
+        const times = Math.max(1, Math.min(maxRepeatFor(em.id), Number(em.n) || 1));
         const seconds = EMOTE_DURATIONS[em.id] * times;
         if (nowMs - em.at <= seconds * 1000) {
           entry.em = em.id;

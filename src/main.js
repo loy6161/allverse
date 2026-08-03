@@ -29,6 +29,7 @@ import { initSettingsUI } from './settingsui.js';
 import { initAdminUI } from './adminui.js';
 import { initConnBanner } from './connbanner.js';
 import { initYouTubeChat } from './ytchat.js';
+import { initExitButton } from './exitbtn.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
@@ -799,6 +800,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   // アバター変更もここに入れる（index.html に元からある要素を移動する）
   avatarBtn.classList.add('vc-topbar-wide');
   topBar.slot.appendChild(avatarBtn);
+
+  // 退室（2026-08-04追加・テストユーザー要望）。
+  // タブを閉じるしか出る方法が無かったので、入場画面へ戻れるようにする
+  initExitButton({ slot: topBar.slot });
 
   // エモートバー（自分の分はローカルで即再生し、サーバーへも通知）
   emoteBar = initEmoteBar({

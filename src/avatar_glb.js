@@ -589,7 +589,9 @@ export function createGlbAvatar(config) {
   //        エモートバーには出さない（内部専用・2026-08-03追加）。
   //        長さ 0.72秒 は controls.js の物理そのまま（初速5.0 / 重力14.0 → 滞空 10/14秒）。
   //        ここを合わせないと、本人の画面と他人の画面で跳び方が食い違う
-  const EMOTE_DURATIONS = { wave: 2.5, clap: 2.5, jump: 2.0, dance: 4.0, heart: 3.0, penlight: 0.6, hop: 0.72,
+  // ⚠ penlight は 2026-08-04 に 0.6秒(1振り) → 1.8秒(3振り) へ変更（loyさん要望）。
+  //   1振りぶんの速さは変えていない（0.6秒 × 3）。server/server.js と必ず同じ値にすること
+  const EMOTE_DURATIONS = { wave: 2.5, clap: 2.5, jump: 2.0, dance: 4.0, heart: 3.0, penlight: 1.8, hop: 0.72,
     // ---- スペシャルエモート（2ページ目・2026-08-03追加）----
     fist: 1.4,      // コブシを上げる
     smile: 2.2,     // ニコニコマーク
@@ -616,6 +618,18 @@ export function createGlbAvatar(config) {
   ]);
   /** 1回の入力で繰り返せる上限。1人が延々と占有しないための歯止め */
   const MAX_REPEAT = 10;
+  /**
+   * エモートごとの繰り返し上限（2026-08-04追加）。
+   *
+   * ペンライトを1回3振り（1.8秒）にしたので、そのまま10回まで繋ぐと
+   * **弾幕1回で18秒振り続ける**ことになり長すぎる。
+   * 4回（＝12振り・7.2秒）に絞る。変更前が 0.6秒×10＝6秒だったので、体感はほぼ同じ。
+   * ⚠ server/server.js の EMOTE_MAX_REPEAT と必ず同じ値にすること
+   */
+  const EMOTE_MAX_REPEAT = { penlight: 4 };
+  const maxRepeatFor = (id) => EMOTE_MAX_REPEAT[id] || MAX_REPEAT;
+  /** ペンライト1回ぶんの振り数。EMOTE_DURATIONS.penlight = 0.6 × これ */
+  const PENLIGHT_SWINGS = 3;
 
   const HOP_V0 = 5.0;
   const HOP_G = 14.0;
@@ -693,7 +707,9 @@ export function createGlbAvatar(config) {
    */
   function playEmote(id, repeat = 1) {
     if (!EMOTE_DURATIONS[id]) return;
-    const times = REPEATABLE.has(id) ? Math.max(1, Math.min(MAX_REPEAT, Math.floor(repeat) || 1)) : 1;
+    const times = REPEATABLE.has(id)
+      ? Math.max(1, Math.min(maxRepeatFor(id), Math.floor(repeat) || 1))
+      : 1;
 
     // 同じものが再生中なら、続きとして時間を足す（ポーズは崩さない）
     if (emoteId === id && REPEATABLE.has(id) && emoteEnd > emoteT) {
@@ -826,13 +842,18 @@ export function createGlbAvatar(config) {
         //   > 連打すれば振り続けられるからライブっぽくなるんじゃない？
         //   以前は 4秒かけて「下から持ち上げてゆっくり2往復」だったので、
         //   連打しても持ち上げからやり直しになり、振り続けられなかった。
-        //   いまは 0.6秒＝**ちょうど1往復**。押すたびに1振りぶん進む。
+        //
+        // 2026-08-04 変更（loyさん）:
+        //   > ペンライトのエモートは1振りじゃなくて1回で3振り（ジャンプエモートと同じように）
+        //   1回押すと **3往復**（1.8秒）。1往復ぶんの速さは前と同じ 0.6秒のままで、
+        //   回数だけ増やしてある（速くすると振りが忙しなくなる）。
         //
         // ⚠ 立ち上がり（ease）を掛けない。掛けると押すたびに腕が下がって上がるので、
         //   連打しても「振り続けている」ようには見えない。
         // ⚠ sin は t=0 と t=dur の両方で 0（＝中央）になるようにしてある。
-        //   始まりと終わりの姿勢が同じなので、連打しても繋ぎ目が目立たない
-        const cycle = (t / dur) * Math.PI * 2;
+        //   始まりと終わりの姿勢が同じなので、連打しても繋ぎ目が目立たない。
+        //   PENLIGHT_SWINGS が整数である限りこれは保たれる
+        const cycle = (t / dur) * Math.PI * 2 * PENLIGHT_SWINGS;
         const swing = Math.sin(cycle);
         aimArm(armR, 1, [0.66 + swing * 0.4, 0.88, 0.3], 1);
         // 体を軽く沈めて拍を取る（振りの折り返しでいちばん沈む）
