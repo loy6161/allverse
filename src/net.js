@@ -339,7 +339,8 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
           if (h.onCount) h.onCount(msg.c);
           break;
         case 'emote':
-          if (h.onPeerEmote) h.onPeerEmote({ id: msg.id, e: msg.e });
+          // n = 繰り返し回数（YouTubeの弾幕などでまとめて届いたとき。既定1）
+          if (h.onPeerEmote) h.onPeerEmote({ id: msg.id, e: msg.e, n: msg.n || 1 });
           break;
         case 'screen':
           if (h.onScreen) h.onScreen({ v: msg.v, by: msg.by });
@@ -449,6 +450,12 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
   function requestYtCode() {
     if (!joined) return;
     send({ t: 'yt-code' });
+  }
+
+  /** 「コメントで自分のアバターを動かすか」をサーバーへ伝える（2026-08-03追加） */
+  function sendYtEmote(on) {
+    if (!joined) return;
+    send({ t: 'yt-emote', on: Boolean(on) });
   }
 
   /** YouTubeチャンネルとの結びつきを解除する */
@@ -598,6 +605,7 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     sendUnban,
     requestBans,
     requestYtCode,
+    sendYtEmote,
     sendYtUnlink,
     close,
   };

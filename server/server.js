@@ -54,6 +54,8 @@ import { summarize, gridSeries, autoStepMs, visitsCsv, seriesCsv, chatCsv } from
 // YouTubeのライブチャットを読んで、本人のアバターに吹き出しを出す（2026-08-03追加）
 import { LiveChatReader, isYouTubeReadEnabled, getYouTubeReadStatus } from './ytread.js';
 import { initYtLinks, issueCode, matchMessage, unlink, isLinked, ytLinkCount } from './ytlink.js';
+// コメントの中身からエモートを決める（2026-08-03追加）
+import { emoteFromText } from './chatemote.js';
 // ゲストの見た目はクライアントと同じ計算で決める（src/guestlook.js を両側で読む）。
 // 別々に持つと片方だけ直したときに姿がズレるので、1本のファイルを共有する
 import { guestLookFor } from '../src/guestlook.js';
@@ -1657,6 +1659,23 @@ function onYtMessages(eventId, msgs) {
     if (!txt) continue;
     client.lastChat = { txt, ts: Date.now() };
 
+    // コメントの中身に応じてエモートを出す（2026-08-03追加・loyさん発案）。
+    // 本人が「自分のアバターを動かさない」を選んでいる場合は出さない
+    if (client.ytEmote !== false) {
+      const em = emoteFromText(msg.text);
+      if (em && EMOTE_IDS.has(em.id)) {
+        const now = Date.now();
+        client.emote = { id: em.id, at: now, n: em.n };
+        broadcastToRoom(
+          eventId,
+          client.room,
+          { t: 'emote', id: client.id, e: em.id, n: em.n },
+          null,
+          client,
+        );
+      }
+    }
+
     // 会場の発言と同じ形で流す。sc:'yt' はクライアントで出所を出し分けるため。
     // from に本人を渡すことで、ブロックしている人には見えないまま保たれる
     broadcastToRoom(
@@ -1705,6 +1724,16 @@ function handleYtCode(client, _msg) {
   send(client.ws, { t: 'yt-code', ok: true, code, expiresAt });
 }
 
+/**
+ * yt-emote: 「YouTubeのコメントで自分のアバターを動かすか」の切り替え（2026-08-03追加）。
+ * 吹き出しと同じく本人の好みなので、端末側の設定をそのまま預かる。
+ * ⚠ 保存はしない。入場のたびにクライアントが送り直す（設定は端末が持っている）
+ */
+function handleYtEmote(client, msg) {
+  if (!client.joined) return;
+  client.ytEmote = msg.on !== false;
+}
+
 /** yt-unlink: 結びつきを解除する（本人のぶんだけ） */
 async function handleYtUnlink(client, _msg) {
   if (!client.joined) return;
@@ -1715,6 +1744,7 @@ async function handleYtUnlink(client, _msg) {
 const HANDLERS = {
   join: handleJoin,
   'yt-code': handleYtCode,
+  'yt-emote': handleYtEmote,
   'yt-unlink': handleYtUnlink,
   pos: handlePos,
   chat: handleChat,
@@ -1903,11 +1933,14 @@ function buildPresenceJson() {
       //   押している間ずっと、という状態は存在しない
       const em = client.emote;
       if (em && EMOTE_DURATIONS[em.id]) {
-        const durMs = EMOTE_DURATIONS[em.id] * 1000;
-        if (nowMs - em.at <= durMs) {
+        // 繰り返しぶんだけ長さが伸びる（弾幕でペンライトを連続で振る等）。
+        // VRChat側は emd を見ているので、これだけで正しい長さが伝わる
+        const times = Math.max(1, Math.min(10, Number(em.n) || 1));
+        const seconds = EMOTE_DURATIONS[em.id] * times;
+        if (nowMs - em.at <= seconds * 1000) {
           entry.em = em.id;
           entry.emt = Math.floor(em.at / 1000);
-          entry.emd = EMOTE_DURATIONS[em.id];
+          entry.emd = seconds;
         }
       }
 

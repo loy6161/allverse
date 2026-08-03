@@ -14,6 +14,7 @@
 // ============================================================
 
 const KEY = 'vc.bubbleSec';
+const CHAT_EMOTE_KEY = 'vc.chatEmote';
 
 /** 既定。4秒だと読み切れないという指摘を受けて延ばした */
 export const DEFAULT_BUBBLE_SEC = 8;
@@ -61,4 +62,30 @@ export function bubbleMs() {
   const sec = getBubbleSec();
   if (sec === BUBBLE_FOREVER) return 10 * 60 * 1000;
   return sec * 1000;
+}
+
+// ============================================================
+// YouTubeのコメントで自分のアバターを動かすか（2026-08-03追加）
+//
+// loyさん「吹き出しと同じようにユーザー設定でいいと思う」。
+// 端末に保存し、入場のたびにサーバーへ送り直す（サーバーは覚えない）。
+// 既定はON——連携した人にとっては「動くこと」自体が見返りなので、
+// わざわざ探して有効にしてもらう形にはしない。
+// ============================================================
+
+export function getChatEmote() {
+  try {
+    return localStorage.getItem(CHAT_EMOTE_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+export function setChatEmote(on) {
+  try {
+    localStorage.setItem(CHAT_EMOTE_KEY, on ? 'on' : 'off');
+  } catch {
+    /* 保存できなくてもその場では効く */
+  }
+  return Boolean(on);
 }

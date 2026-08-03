@@ -109,10 +109,10 @@ export function initRemotePlayers(scene) {
     if (peer.root.userData.say) peer.root.userData.say(txt);
   }
 
-  function emote(id, emoteId) {
+  function emote(id, emoteId, repeat = 1) {
     const peer = peers.get(id);
     if (!peer) return;
-    if (peer.root.userData.playEmote) peer.root.userData.playEmote(emoteId);
+    if (peer.root.userData.playEmote) peer.root.userData.playEmote(emoteId, repeat);
   }
 
   function count() {

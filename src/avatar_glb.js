@@ -602,10 +602,27 @@ export function createGlbAvatar(config) {
   // 花火の打ち上げ（2026-08-03）。玉が昇る時間と、開く高さ（アバターの頭上からの距離）
   const LAUNCH_SEC = 0.75;
   const BURST_Y = 3.4;
+  /**
+   * 連投で「続きとして繋げてよい」エモート（2026-08-03 loyさん指示）。
+   *
+   * > ハート、星、ニコニコ、花火みたいになにかが出るものは連投だと邪魔くさいから
+   * > それ以外はOK
+   *
+   * 何かを出すもの（heart / star / smile / firework）は入れない。
+   * 連投されると画面が埋まってしまうため、最後の1回だけ再生する。
+   */
+  const REPEATABLE = new Set([
+    'wave', 'clap', 'jump', 'dance', 'penlight', 'hop', 'fist', 'headbang', 'cheers',
+  ]);
+  /** 1回の入力で繰り返せる上限。1人が延々と占有しないための歯止め */
+  const MAX_REPEAT = 10;
+
   const HOP_V0 = 5.0;
   const HOP_G = 14.0;
   let emoteId = null;
   let emoteT = 0;
+  /** いまのエモートが終わる時刻（秒）。繰り返しのぶんだけ伸びる */
+  let emoteEnd = 0;
   let lastBeat = -1; // 拍手音を1打につき1回だけ鳴らすための直前の拍番号
   let heartCount = 0; // これまでに出したハートの数
   const ease = (t, dur, edge) => Math.min(1, Math.min(t, dur - t) / edge);
@@ -657,11 +674,37 @@ export function createGlbAvatar(config) {
     _aimQuat.setFromUnitVectors(rest, _aimTmp);
     arm.quaternion.identity().slerp(_aimQuat, Math.max(0, Math.min(1, env)));
   }
-  function playEmote(id) {
+  /**
+   * エモートを再生する。
+   *
+   * @param {string} id エモートid
+   * @param {number} [repeat=1] 繰り返す回数（YouTubeの弾幕などでまとめて来たとき）
+   *
+   * 2026-08-03 追加（loyさん）:
+   *   > アニメーション中に次の入力があった場合はアニメーション継続にできる？
+   *   > 今って1回1回途切れてるから。
+   *   以前は毎回 resetPose() してから0秒目に戻していたので、連投すると
+   *   1回ごとに腕が下りて上がる＝途切れて見えていた。
+   *   **同じエモートが再生中なら、リセットせずに残り時間を足す**ようにした。
+   *   これで「絵文字10個の弾幕＝10回ぶん振り続ける」が成立する。
+   *
+   * ⚠ 何かが出るもの（ハート・星・ニコニコ・花火）は繰り返さない。
+   *   連投されると画面が埋まって邪魔になる（loyさん指示）。
+   */
+  function playEmote(id, repeat = 1) {
     if (!EMOTE_DURATIONS[id]) return;
+    const times = REPEATABLE.has(id) ? Math.max(1, Math.min(MAX_REPEAT, Math.floor(repeat) || 1)) : 1;
+
+    // 同じものが再生中なら、続きとして時間を足す（ポーズは崩さない）
+    if (emoteId === id && REPEATABLE.has(id) && emoteEnd > emoteT) {
+      emoteEnd += EMOTE_DURATIONS[id] * times;
+      return;
+    }
+
     resetPose();
     emoteId = id;
     emoteT = 0;
+    emoteEnd = EMOTE_DURATIONS[id] * times;
     lastBeat = -1;
     if (id === 'penlight') {
       ensurePenlight();
@@ -929,11 +972,16 @@ export function createGlbAvatar(config) {
     if (emoteId) {
       const dur = EMOTE_DURATIONS[emoteId];
       emoteT += dt;
-      if (emoteT >= dur) {
+      if (emoteT >= emoteEnd) {
         resetPose();
         emoteId = null;
       } else {
-        applyEmote(emoteId, emoteT, dur);
+        // 繰り返しているときは、1周ぶんの中の位置に折り返して渡す。
+        // こうすると各アニメーションは「1周だけ」を書いたままで繰り返せる。
+        // ⚠ 花火のように「1回だけ」の作りをしているものは REPEATABLE に入れていないので、
+        //   ここを通っても times=1 のまま＝従来どおり
+        const phase = REPEATABLE.has(emoteId) ? emoteT % dur : emoteT;
+        applyEmote(emoteId, phase, dur);
         return;
       }
     }

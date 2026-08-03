@@ -6,6 +6,7 @@ import { preloadAvatars } from './avatar_glb.js';
 import { initJoinScreen, openCustomizer } from './join.js';
 import { openPlacePicker } from './placepick.js';
 import { saveLocalPrefs } from './prefs.js';
+import { getChatEmote } from './bubbletime.js';
 import { initMobile } from './mobile.js';
 import { initChat } from './chat.js';
 import { initSimPlayers } from './players.js';
@@ -465,6 +466,9 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         myId = id;
         // YouTubeとの連携状態。UIがまだ無い（入場直後）ことがあるので覚えておく
         ytLinkState = yt || { on: false, linked: false };
+        // 「コメントでアバターを動かすか」は端末の設定。入場のたびに伝え直す
+        // （サーバーは覚えていないので、送らないと既定のONで動いてしまう）
+        if (net && !demoMode) net.sendYtEmote(getChatEmote());
         if (ytChat) ytChat.setLinkState(ytLinkState);
         myRole = role || 'user';
         canControlVideo = canControl !== false;
@@ -700,7 +704,16 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         }
       },
       onCount: (c) => updateCount(c),
-      onPeerEmote: (m) => remote.emote(m.id, m.e),
+      onPeerEmote: (m) => {
+        // ⚠ 自分のぶんも来る。エモートバーから出したものは既にローカルで再生しているが、
+        //   **YouTubeのコメント由来はサーバー発**なので、ここで再生しないと
+        //   「他人には見えているのに自分だけ動かない」状態になる（2026-08-03）
+        if (m.id === myId) {
+          if (player && player.userData.playEmote) player.userData.playEmote(m.e, m.n || 1);
+          return;
+        }
+        remote.emote(m.id, m.e, m.n || 1);
+      },
       onScreen: ({ v, by }) => {
         liveScreen.setVideo(v);
         if (screenUI) screenUI.setCurrent(v);
@@ -917,6 +930,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     // エモートの並べ方・並び順を変えたら、バーを描き直す
     onEmotePrefsChange: () => {
       if (emoteBar && emoteBar.refreshPrefs) emoteBar.refreshPrefs();
+    },
+    // 「コメントでアバターを動かす」の切り替えは、サーバーが判断に使うので伝える
+    onChatEmoteChange: (on) => {
+      if (net && !demoMode) net.sendYtEmote(on);
     },
   });
 

@@ -11,7 +11,7 @@
 // 会場全体に効く設定（定員・合言葉・運営メッセージ等）は🚪パネルのまま。
 // ============================================================
 
-import { getBubbleSec, setBubbleSec, BUBBLE_CHOICES, bubbleLabel } from './bubbletime.js';
+import { getBubbleSec, setBubbleSec, BUBBLE_CHOICES, bubbleLabel, getChatEmote, setChatEmote } from './bubbletime.js';
 import { getEmoteLayout, setEmoteLayout, resetEmoteOrder } from './emoteprefs.js';
 
 /**
@@ -19,7 +19,7 @@ import { getEmoteLayout, setEmoteLayout, resetEmoteOrder } from './emoteprefs.js
  * @param {HTMLElement} body 描き先
  * @param {{onEmotePrefsChange?:()=>void}} [p] 設定を変えたときに知らせる相手
  */
-export function renderDisplaySettings(body, { onEmotePrefsChange } = {}) {
+export function renderDisplaySettings(body, { onEmotePrefsChange, onChatEmoteChange } = {}) {
   body.innerHTML = '';
 
   // ---- エモートの並べ方（2026-08-03追加） ----
@@ -77,6 +77,44 @@ export function renderDisplaySettings(body, { onEmotePrefsChange } = {}) {
   });
   boxE.appendChild(resetBtn);
   body.appendChild(boxE);
+
+  // ---- YouTubeのコメントでアバターを動かす（2026-08-03追加） ----
+  const boxC = document.createElement('div');
+  boxC.className = 'vc-help-box';
+  const hC = document.createElement('div');
+  hC.className = 'vc-help-h';
+  hC.textContent = 'YouTubeのコメントでアバターを動かす';
+  boxC.appendChild(hC);
+  const noteC = document.createElement('div');
+  noteC.className = 'vc-help-note';
+  noteC.textContent =
+    'YouTubeチャンネルを連携していると、自分のコメントに合わせてアバターがエモートします（888で拍手、乾杯で乾杯、そのほかの絵文字はペンライト）。連投したぶんだけ続けて動きます。';
+  boxC.appendChild(noteC);
+
+  const rowC = document.createElement('div');
+  rowC.className = 'vc-help-choices';
+  let curChat = getChatEmote();
+  const chatBtns = [];
+  function paintChat() {
+    for (const b of chatBtns) b.classList.toggle('active', (b.dataset.v === 'on') === curChat);
+  }
+  for (const [v, label] of [['on', '動かす'], ['off', '動かさない']]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'vc-help-choice';
+    b.dataset.v = v;
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      curChat = setChatEmote(v === 'on');
+      paintChat();
+      if (onChatEmoteChange) onChatEmoteChange(curChat);
+    });
+    chatBtns.push(b);
+    rowC.appendChild(b);
+  }
+  paintChat();
+  boxC.appendChild(rowC);
+  body.appendChild(boxC);
 
   // ---- 吹き出しの表示時間 ----
   const box = document.createElement('div');
