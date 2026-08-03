@@ -46,6 +46,28 @@ const BOUNDS = { minX: -13, maxX: 25, minZ: -16.5, maxZ: 5 };
 /** 入場位置。ステージ正面の少し手前（ステージ前端は z=-18） */
 const SPAWN = new THREE.Vector3(CLUB_SCREEN.x, 0, -6);
 
+/**
+ * ステージの上（2026-08-04追加）。管理人・VIPだけが上がれる範囲。
+ *
+ * 実測値（このファイル冒頭のコメント）から取っている:
+ *   ステージ天面 y=2.78（モデルを FLOOR_TOP_Y=1.4 下げるので、床からは 1.38）
+ *   ステージ前端 z=-18.07 ／ 背面ガラス z=-30 ／ 背面の幅 20.86m
+ *
+ * ⚠ minZ は背面ガラスより少し手前(-29)にしてある。ぴったりに置くと
+ *   ガラスや装飾の柱にめり込んで見える。
+ * ⚠ maxZ は客席の手前端(-16.5)と繋げてある。ここに隙間があると
+ *   「客席からステージへ歩いて上がれない」孤島になる。
+ * ⚠ この範囲の座標は presence.json を通じてVRChat側へそのまま流れる。
+ *   高さは送っていないので、向こうで床の高さに合わせる対応が要る（申し送り⑧）。
+ */
+const STAGE = {
+  minX: -5.5,
+  maxX: 15.3,
+  minZ: -29,
+  maxZ: -16.5,
+  topY: 2.78 - FLOOR_TOP_Y,
+};
+
 function makePlaceholderTexture() {
   const c = document.createElement('canvas');
   c.width = 512;
@@ -430,6 +452,8 @@ export function createClubWorld(scene, { renderer } = {}) {
     bounds: BOUNDS,
     spawnPoint: SPAWN,
     screen: CLUB_SCREEN,
+    /** ステージの上。管理人・VIPだけが上がれる（イベント設定でON/OFF） */
+    stage: STAGE,
     /** 会場の明るさを変える（'normal' / 'bright' / 'brightest'）。運営が決めて全員に効く */
     setBrightness,
     ready: loading,

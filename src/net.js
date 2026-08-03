@@ -1,6 +1,7 @@
 import { AVATAR_PARTS } from './avatar.js';
 import { getVisitorId } from './visitorid.js';
 import { GUEST_HAIR } from './guestlook.js';
+import { formatAccessories } from './accessory.js';
 
 // ------------------------------------------------------------------
 // アバターconfig（hex色形式） ⇔ av（プリセット番号形式）の相互変換
@@ -23,7 +24,9 @@ export function configToAv(config) {
   // 古いクライアント・古い保存データでも見た目は変わらない
   const ht = AVATAR_PARTS.heights.includes(cfg.height) ? cfg.height : 'mid';
   const o = AVATAR_PARTS.outfits.includes(cfg.outfit) ? cfg.outfit : AVATAR_PARTS.outfits[0];
-  const ac = AVATAR_PARTS.accessories.includes(cfg.accessory) ? cfg.accessory : AVATAR_PARTS.accessories[0];
+  // アクセサリーは複数（"wing+halo"）を許す（2026-08-04）。
+  // 形は文字列のままなので presence の契約（v=1）は変わらない
+  const ac = formatAccessories(cfg.accessory);
   return {
     h,
     o,
@@ -49,7 +52,7 @@ export function avToConfig(av) {
   const hairStyle =
     a.h === GUEST_HAIR || AVATAR_PARTS.hairStyles.includes(a.h) ? a.h : AVATAR_PARTS.hairStyles[0];
   const outfit = AVATAR_PARTS.outfits.includes(a.o) ? a.o : AVATAR_PARTS.outfits[0];
-  const accessory = AVATAR_PARTS.accessories.includes(a.ac) ? a.ac : AVATAR_PARTS.accessories[0];
+  const accessory = formatAccessories(a.ac);
   // 知らない値・未指定はすべて 'mid' に倒す（受け取り側の後方互換）
   const height = AVATAR_PARTS.heights.includes(a.ht) ? a.ht : 'mid';
   return {

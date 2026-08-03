@@ -7,6 +7,12 @@ import { fetchConfig, getConfig, renderLoginButton, getIdToken, isSignedIn } fro
 import { APP_NAME, APP_TAGLINE } from './brand.js';
 import { loadLocalPrefs, saveLocalPrefs, fetchServerPrefs } from './prefs.js';
 import { UPDATES } from './updates.js';
+import {
+  parseAccessories,
+  formatAccessories,
+  toggleAccessory,
+  MAX_ACCESSORIES,
+} from './accessory.js';
 
 // 入場画面の「📢 お知らせ」欄に出す件数。多すぎると縦に伸びすぎるため5件に絞る
 const UPDATES_DISPLAY_COUNT = 5;
@@ -230,6 +236,15 @@ function injectStyle() {
   border-color: #00ffea;
   color: #ffffff;
   box-shadow: 0 0 12px rgba(0, 255, 234, 0.4);
+}
+
+/* アクセサリー行の下に出す一言（複数選べることの説明・2026-08-04追加）。
+   行は flex なので、幅いっぱいを取らせて改行させる */
+.customize-hint {
+  flex-basis: 100%;
+  font-size: 10px;
+  color: rgba(230, 240, 255, 0.55);
+  margin-top: 2px;
 }
 
 .swatch-row {
@@ -551,7 +566,9 @@ function buildCustomizeScreen({
   // 旧保存configとの互換: 新フィールドが無ければ既定を補い、廃止した髪型はフォールバック
   if (!AVATAR_PARTS.hairStyles.includes(config.hairStyle)) config.hairStyle = AVATAR_PARTS.hairStyles[0];
   if (!AVATAR_PARTS.outfits.includes(config.outfit)) config.outfit = AVATAR_PARTS.outfits[0];
-  if (!AVATAR_PARTS.accessories.includes(config.accessory)) config.accessory = 'none';
+  // アクセサリーは複数付けになった（"wing+halo"）。ここで正規化すれば、
+  // 古い保存データ（1つだけ）も新しいデータも同じ形になる
+  config.accessory = formatAccessories(config.accessory);
   // 身長は 2026-08-03 追加。それ以前の保存データには入っていないので既定へ倒す
   if (!AVATAR_PARTS.heights.includes(config.height)) config.height = 'mid';
   if (!AVATAR_PARTS.hairColors.includes(config.hairColor)) config.hairColor = AVATAR_PARTS.hairColors[1];
@@ -647,9 +664,48 @@ function buildCustomizeScreen({
       el.appendChild(btn);
     });
   }
+  /**
+   * アクセサリーだけ**複数選べる**（2026-08-04・テストユーザー要望）。
+   * ほかの行は1つだけなので buildButtonRow を使えない。
+   *
+   * ⚠「なし」は他と同時に選べない特別扱い。押したら全部外す。
+   * ⚠ 上限(3つ)に達しているときに新しく押すと、いちばん古いものが外れる。
+   *   押しても何も起きない方が「壊れている」と思われやすい。
+   */
+  function buildAccessoryRow() {
+    const el = document.getElementById('accessory-buttons');
+    if (!el) return;
+    const paint = () => {
+      const on = parseAccessories(config.accessory);
+      el.querySelectorAll('.hair-btn').forEach((b) => {
+        const v = b.dataset.value;
+        const sel = v === 'none' ? on.length === 0 : on.includes(v);
+        b.classList.toggle('selected', sel);
+      });
+    };
+    for (const value of AVATAR_PARTS.accessories) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.value = value;
+      btn.className = 'hair-btn';
+      btn.textContent = ACCESSORY_LABELS[value] || value;
+      btn.addEventListener('click', () => {
+        config.accessory = value === 'none' ? 'none' : toggleAccessory(config.accessory, value);
+        paint();
+        rebuildPreviewAvatar();
+      });
+      el.appendChild(btn);
+    }
+    paint();
+    const hint = document.createElement('div');
+    hint.className = 'customize-hint';
+    hint.textContent = `${MAX_ACCESSORIES}つまで同時に付けられます（もう一度押すと外れます）`;
+    el.appendChild(hint);
+  }
+
   buildButtonRow('hairstyle-buttons', AVATAR_PARTS.hairStyles, HAIR_LABELS, 'hairStyle');
   buildButtonRow('outfit-buttons', AVATAR_PARTS.outfits, OUTFIT_LABELS, 'outfit');
-  buildButtonRow('accessory-buttons', AVATAR_PARTS.accessories, ACCESSORY_LABELS, 'accessory');
+  buildAccessoryRow();
   buildButtonRow('height-buttons', AVATAR_PARTS.heights, HEIGHT_LABELS, 'height');
 
   // ---- 色スウォッチ ----

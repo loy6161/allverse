@@ -4,6 +4,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createTextSprite } from './avatar.js';
 import { playClap } from './sfx.js';
 import { bubbleMs } from './bubbletime.js';
+import { parseAccessories } from './accessory.js';
 
 // ------------------------------------------------------------------
 // GLBアバター（Blender製・設計メッシュ版）
@@ -78,7 +79,6 @@ function loadPart(key) {
 
 function partsFor(config) {
   const outfit = GLB_OUTFITS.includes(config.outfit) ? config.outfit : GLB_OUTFITS[0];
-  const acc = GLB_ACCESSORIES.includes(config.accessory) ? config.accessory : 'none';
   const keys = [`body_${outfit}`];
   // ゲストは髪なし（2026-08-02）。アクセの 'none' と同じで、単に足さないだけ。
   // 新しい3Dアセットが要らないうえ、シルエットで一目でゲストと分かる
@@ -86,7 +86,9 @@ function partsFor(config) {
     const hair = GLB_STYLES.includes(config.hairStyle) ? config.hairStyle : GLB_STYLES[0];
     keys.push(`hair_${hair}`);
   }
-  if (acc !== 'none') keys.push(`acc_${acc}`);
+  // アクセサリーは複数付けられる（2026-08-04）。"wing+halo" のように来る。
+  // 判定は accessory.js に集約してある（サーバーと同じものを読む）
+  for (const acc of parseAccessories(config.accessory)) keys.push(`acc_${acc}`);
   return keys;
 }
 

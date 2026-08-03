@@ -243,6 +243,27 @@ function staffRole() {
   return myRole;
 }
 
+/**
+ * ステージに上がれるかを操作系へ伝える（2026-08-04追加）。
+ *
+ * テストユーザーの要望:
+ *   > 管理人+VIPはステージにのれるようにしたい。（イベント設定でON/OFFあり）
+ *
+ * **イベント設定がON** かつ **自分が管理者かVIP** の両方が要る。
+ * ⚠ 権限の見方は🚪パネルと揃える（staffRole）。生の myRole だけを見ると、
+ *   ログイン未設定のローカルで「操作はできるのに上がれない」がちぐはぐになる。
+ * ⚠ ここでOFFにしても、既にステージの上にいる人はその場に残る。
+ *   足元から床が消えたように落とすと、何が起きたか分からないため
+ *   （動けば客席側へ丸められて自然に降りる）。
+ */
+function applyStageAccess() {
+  if (!controls || !controls.setStageAllowed) return;
+  const role = staffRole();
+  const allowed = Boolean(currentEvent && currentEvent.stageAccess)
+    && (role === 'admin' || role === 'vip');
+  controls.setStageAllowed(allowed);
+}
+
 /** 権限をネームプレートの見た目に変換する（管理者=👑 / VIP=⭐） */
 function badgeForRole(role) {
   return role === 'admin' || role === 'vip' ? role : '';
@@ -251,6 +272,8 @@ function badgeForRole(role) {
 /** 権限に応じてUIの出し分けをする（動画操作は管理者のみ） */
 function applyRoleToUi() {
   if (videoPanel) videoPanel.setControllable(canControlVideo);
+  // 権限が確定するのはイベント設定より後のことがあるので、ここでも通す
+  applyStageAccess();
   if (screenUI) screenUI.setVisible(canControlVideo);
 }
 
@@ -377,6 +400,9 @@ function applyEventSettings(ev) {
   // 会場の明るさ（2026-08-04追加）。運営が決めた値が全員に効く。
   // 途中で変えられたときもここを通るので、その場で明るさが変わる
   if (world && world.setBrightness) world.setBrightness(ev.brightness || 'normal');
+  // ステージに上がれるか（2026-08-04追加）。イベント設定がONで、
+  // かつ自分が管理者かVIPのときだけ。どちらか欠けたら上がれない
+  applyStageAccess();
   applyNotice(ev.notice || null);
   updateCount();
 }
@@ -430,6 +456,9 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
 
   controls = initControls(camera, player, renderer.domElement, {
     bounds: world.bounds,
+    // ステージの範囲（2026-08-04追加）。無いワールドでは undefined になり、
+    // その場合は登壇そのものが成立しない（従来どおり客席だけ）
+    stage: world.stage,
     // シアター表示でカメラを寄せる先。ワールドごとにスクリーンの位置が違う
     screen: world.screen,
     // 自分は物理でジャンプするが、高さは誰にも送っていない（presence も x/z/向き だけ）。

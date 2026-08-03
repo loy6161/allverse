@@ -74,6 +74,8 @@ import { emoteFromText, MAX_REPEAT } from './chatemote.js';
 // ゲストの見た目はクライアントと同じ計算で決める（src/guestlook.js を両側で読む）。
 // 別々に持つと片方だけ直したときに姿がズレるので、1本のファイルを共有する
 import { guestLookFor } from '../src/guestlook.js';
+// アクセサリーの複数付け（2026-08-04）。判定はクライアントと同じ1本を読む
+import { formatAccessories } from '../src/accessory.js';
 import {
   verifyIdToken,
   roleForEmail,
@@ -465,6 +467,7 @@ function makeEvent({
   noticeText = '',
   callList = '',
   brightness = 'normal',
+  stageAccess = false,
 }) {
   return {
     id,
@@ -490,6 +493,9 @@ function makeEvent({
     // 会場の明るさ（2026-08-04追加・loyさん要望）。運営が決めて全員に反映される。
     // 既定の 'normal' はこれまでの見た目そのまま（既存イベントの絵が変わらない）
     brightness: BRIGHTNESS_LEVELS.has(brightness) ? brightness : 'normal',
+    // ステージに上がれるか（2026-08-04追加・テストユーザー要望）。
+    // ONにしても上がれるのは管理者とVIPだけ。既定はOFF（普段は誰も上がらない）
+    stageAccess: Boolean(stageAccess),
     // 記録用の開催id。イベントidが将来使い回されても過去の記録と混ざらないように
     // 「id＋立てた時刻」で一意にする
     runId: `${id}-${createdAt}`,
@@ -567,6 +573,8 @@ function toEventInfo(ev) {
     callList: ev.callList,
     // 会場の明るさ。全員の画面に効く（2026-08-04追加）
     brightness: ev.brightness,
+    // ステージに上がれるか。ONでも上がれるのは管理者・VIPだけ（2026-08-04追加）
+    stageAccess: ev.stageAccess,
   };
 }
 
@@ -705,10 +713,20 @@ function validCoord(value) {
   return value;
 }
 
-/** av はそのまま中継する想定だが、最低限オブジェクトであることだけ担保する */
+/**
+ * av はそのまま中継する想定だが、最低限オブジェクトであることだけ担保する。
+ *
+ * ⚠ `ac`（アクセサリー）だけはここで正規化する（2026-08-04追加）。
+ *   複数付け（"wing+halo"）に対応したので、**presence.json を通じて
+ *   VRChat側へそのまま流れる**。知らないidや長すぎる並びを素通しすると、
+ *   向こうの分割処理にゴミが渡る。上限3つ・排他・未知idの除去はここで済ませる。
+ */
 function sanitizeAv(av) {
-  if (av && typeof av === 'object' && !Array.isArray(av)) return av;
-  return {};
+  if (!av || typeof av !== 'object' || Array.isArray(av)) return {};
+  if (typeof av.ac === 'string') {
+    return { ...av, ac: formatAccessories(av.ac) };
+  }
+  return av;
 }
 
 /** JSON文字列として安全にwsへ送信する（送信失敗は無視） */
@@ -1239,6 +1257,8 @@ async function handleEventUpdate(client, msg) {
   if (typeof msg.brightness === 'string' && BRIGHTNESS_LEVELS.has(msg.brightness)) {
     ev.brightness = msg.brightness;
   }
+  // ステージに上がれるか（上がれるのは管理者・VIPだけ。ここはその許可の有無）
+  if (msg.stageAccess !== undefined) ev.stageAccess = Boolean(msg.stageAccess);
   // 運営メッセージの固定枠。level を空にすると消える
   if (msg.notice !== undefined) {
     const lv = msg.notice && typeof msg.notice.level === 'string' ? msg.notice.level : '';

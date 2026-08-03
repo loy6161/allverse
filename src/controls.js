@@ -5,8 +5,56 @@ import { EYE_Y } from './avatar.js';
 // - WASD / 矢印キー: カメラ基準で移動（アバターは進行方向を向く）
 // - ドラッグ: カメラ旋回、ホイール: ズーム
 // - 三人称の最短からさらに寄せると一人称になる（引くと三人称へ戻る）
-export function initControls(camera, avatar, domElement, { bounds, onJump, screen } = {}) {
+export function initControls(camera, avatar, domElement, { bounds, onJump, screen, stage } = {}) {
   const keys = new Set();
+
+  // ---- ステージ登壇（2026-08-04追加・テストユーザー要望）----
+  //
+  //   > 管理人+VIPはステージにのれるようにしたい。（イベント設定でON/OFFあり）
+  //
+  // 許可されている間だけ、歩ける範囲がステージのぶん広がる。
+  // ⚠ ステージ天面は床より高いので、**足元の高さも一緒に変える**。
+  //   ここを忘れると、ステージの中に埋まって歩くことになる。
+  // ⚠ VRChat側にはこの座標がそのまま流れる（高さは送っていない）。
+  //   向こうは「その座標の床の高さに置く」対応が要る（申し送り⑧）。
+  let stageAllowed = false;
+  const STAGE = stage || null;
+
+  /** いまステージに上がってよいか（権限＋イベント設定の両方が要る） */
+  function setStageAllowed(on) {
+    stageAllowed = Boolean(on) && Boolean(STAGE);
+  }
+
+  /** その位置がステージの上か */
+  function onStage(x, z) {
+    if (!stageAllowed || !STAGE) return false;
+    return x >= STAGE.minX && x <= STAGE.maxX && z >= STAGE.minZ && z <= STAGE.maxZ;
+  }
+
+  /** その位置の足元の高さ。ステージの上なら天面、それ以外は床(0) */
+  function groundYAt(x, z) {
+    return onStage(x, z) ? STAGE.topY : 0;
+  }
+
+  /**
+   * 歩ける範囲に丸める。
+   *
+   * ⚠ 範囲は「客席の矩形」と「ステージの矩形」の**2つの和**なので、
+   *   単純な clamp では表せない。xを先に丸めてから、そのxで許される
+   *   zの範囲を決める、という順にしている。
+   *   （ステージは客席の真正面にあり、xの範囲が客席に含まれるので成り立つ）
+   */
+  function clampToArea(x, z) {
+    const canStage = stageAllowed && STAGE;
+    const minX = canStage ? Math.min(bounds.minX, STAGE.minX) : bounds.minX;
+    const maxX = canStage ? Math.max(bounds.maxX, STAGE.maxX) : bounds.maxX;
+    const cx = THREE.MathUtils.clamp(x, minX, maxX);
+    // そのxがステージの幅に入っているときだけ、奥（ステージ側）へ行ける
+    const inStageX = canStage && cx >= STAGE.minX && cx <= STAGE.maxX;
+    const minZ = inStageX ? Math.min(bounds.minZ, STAGE.minZ) : bounds.minZ;
+    const cz = THREE.MathUtils.clamp(z, minZ, bounds.maxZ);
+    return { x: cx, z: cz };
+  }
   let yaw = 0; // カメラの水平角（0 = ステージ(-z)方向を向く）
   // 見下ろし角。0.35 だと視線が下を向きすぎて、スクリーンの上側が画面外へ切れていた
   // （clubVERSEのスクリーンは高さ9m・中心 y=6.6 と大きいため。2026-07-30 修正）。
@@ -73,15 +121,12 @@ export function initControls(camera, avatar, domElement, { bounds, onJump, scree
 
   function setMoveTarget(point) {
     if (!point) return;
-    moveTarget = new THREE.Vector3(
-      THREE.MathUtils.clamp(point.x, bounds.minX, bounds.maxX),
-      0,
-      THREE.MathUtils.clamp(point.z, bounds.minZ, bounds.maxZ),
-    );
+    const p = clampToArea(point.x, point.z);
+    moveTarget = new THREE.Vector3(p.x, 0, p.z);
     ensureTargetMark();
     if (targetMark) {
-      // 床のわずかに上に置く（同じ高さだとちらつく）
-      targetMark.position.set(moveTarget.x, 0.02, moveTarget.z);
+      // 床のわずかに上に置く（同じ高さだとちらつく）。ステージの上なら天面の上
+      targetMark.position.set(moveTarget.x, groundYAt(p.x, p.z) + 0.02, moveTarget.z);
       targetMark.visible = true;
     }
   }
@@ -289,8 +334,9 @@ export function initControls(camera, avatar, domElement, { bounds, onJump, scree
         const step = Math.min(SPEED * dt, dist2); // 行き過ぎて往復しないよう残り距離で頭打ち
         avatar.position.x += (dx / dist2) * step;
         avatar.position.z += (dz / dist2) * step;
-        avatar.position.x = THREE.MathUtils.clamp(avatar.position.x, bounds.minX, bounds.maxX);
-        avatar.position.z = THREE.MathUtils.clamp(avatar.position.z, bounds.minZ, bounds.maxZ);
+        const c = clampToArea(avatar.position.x, avatar.position.z);
+        avatar.position.x = c.x;
+        avatar.position.z = c.z;
         if (!firstPerson) turnTowards(Math.atan2(dx, dz), dt);
       }
     }
@@ -309,8 +355,9 @@ export function initControls(camera, avatar, domElement, { bounds, onJump, scree
       move.copy(forward).multiplyScalar(fw).addScaledVector(right, side).normalize();
 
       avatar.position.addScaledVector(move, SPEED * dt);
-      avatar.position.x = THREE.MathUtils.clamp(avatar.position.x, bounds.minX, bounds.maxX);
-      avatar.position.z = THREE.MathUtils.clamp(avatar.position.z, bounds.minZ, bounds.maxZ);
+      const c = clampToArea(avatar.position.x, avatar.position.z);
+      avatar.position.x = c.x;
+      avatar.position.z = c.z;
 
       // 進行方向へ滑らかに回頭（一人称のときは下で視線方向に合わせるのでここでは触らない）
       if (!firstPerson) turnTowards(Math.atan2(move.x, move.z), dt);
@@ -321,15 +368,27 @@ export function initControls(camera, avatar, domElement, { bounds, onJump, scree
     if (firstPerson) turnTowards(yaw + Math.PI, dt);
     if (avatar.userData.setMoving) avatar.userData.setMoving(moving);
 
+    // 足元の高さ。ステージの上に乗ったらその天面が地面になる（2026-08-04追加）
+    const groundY = groundYAt(avatar.position.x, avatar.position.z);
+
     // ジャンプ（放物線で上下し、着地したら止める）
     if (airborne) {
       velocityY -= GRAVITY * dt;
       avatar.position.y += velocityY * dt;
-      if (avatar.position.y <= 0) {
-        avatar.position.y = 0;
+      if (avatar.position.y <= groundY) {
+        avatar.position.y = groundY;
         velocityY = 0;
         airborne = false;
       }
+    } else if (avatar.position.y !== groundY) {
+      // 歩いてステージへ上がった／降りたとき。
+      // ⚠ 段差を一瞬で移動させると視点が飛ぶので、少しずつ寄せる。
+      //   降りるときは落下に見えるよう、上がるときより速くする
+      const up = groundY > avatar.position.y;
+      const speed = up ? 6 : 12;
+      const diff = groundY - avatar.position.y;
+      const step = Math.sign(diff) * Math.min(Math.abs(diff), speed * dt);
+      avatar.position.y += step;
     }
 
     // シアターモード中はアバター追従をやめ、スクリーン正面に固定する
@@ -370,6 +429,9 @@ export function initControls(camera, avatar, domElement, { bounds, onJump, scree
     jump,
     setTheater,
     isTheater: () => theater,
+    /** ステージに上がってよいかを切り替える（権限＋イベント設定で決まる） */
+    setStageAllowed,
+    isOnStage: () => onStage(avatar.position.x, avatar.position.z),
     setFirstPerson,
     isFirstPerson: () => firstPerson,
     // バーチャルジョイスティック等からのアナログ入力（-1〜1）

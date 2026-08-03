@@ -247,6 +247,16 @@ export function initRoomUI({
     ytLb.append(ytC, document.createTextNode('YouTubeチャット連動（会場のチャットは使わない）'));
     box.appendChild(ytLb);
 
+    // ---- ステージ登壇（2026-08-04追加・テストユーザー要望）----
+    // 「管理人+VIPはステージにのれるようにしたい。（イベント設定でON/OFFあり）」
+    // ONにしても上がれるのは管理者とVIPだけ。お客さんは今までどおり客席から出られない
+    const stgLb = document.createElement('label');
+    const stgC = document.createElement('input');
+    stgC.type = 'checkbox';
+    stgC.checked = Boolean(ev.stageAccess);
+    stgLb.append(stgC, document.createTextNode('ステージに上がれるようにする（管理者・VIPのみ）'));
+    box.appendChild(stgLb);
+
     // ---- 会場の明るさ（2026-08-04追加）----
     // loyさん「3段階を管理者+VIPは設定から調整できるといいかもね」
     //        「運営やVIPが変えて全体へ反映でいいよ」
@@ -356,6 +366,7 @@ export function initRoomUI({
         chatMode: ytC.checked ? 'youtube' : 'local',
         callList: callSel.value,
         brightness: briSel.value,
+        stageAccess: stgC.checked,
         // 空欄は自動（-1）。数値ならその値を全体の上限にする
         npcMax: npcRaw === '' ? -1 : Math.max(0, Math.min(100, Number(npcRaw) || 0)),
         notice: { level: lvSel.value, text: noticeI.value.trim() },
