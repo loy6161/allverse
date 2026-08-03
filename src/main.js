@@ -104,6 +104,7 @@ let banList = []; // BAN一覧（管理者のみサーバーから届く）
 let kickLog = []; // キックの履歴（管理者のみ）。あとでBANするかの判断材料
 let noticeBar = null; // 運営メッセージの固定枠
 let topBar = null; // 右上のツールバー（会場と自分に関するボタン）
+let emoteBar = null; // エモートバー（並べ方の設定を変えたら描き直す）
 let settingsUI = null; // ⚙設定パネル（表示設定・参加者・NPC設定）
 // 接続が切れていることを出すバナー（2026-08-03追加）。
 // initNet より先に作る必要がある（繋がらないと分かるのが接続直後のため）
@@ -768,7 +769,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   topBar.slot.appendChild(avatarBtn);
 
   // エモートバー（自分の分はローカルで即再生し、サーバーへも通知）
-  initEmoteBar({
+  emoteBar = initEmoteBar({
     onEmote: (id) => {
       if (myRole === 'guest') {
         chat.addMessage('', 'エモートを使うにはログインが必要です', { system: true });
@@ -909,7 +910,15 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
 
   // ⚙設定パネル（2026-08-03追加）。表示設定・参加者・NPC設定をここへ集めた。
   // ヘルプ（読むところ）と設定（変えるところ）を分けるため
-  settingsUI = initSettingsUI({ slot: topBar.slot, people: peopleUI, rooms: roomUI });
+  settingsUI = initSettingsUI({
+    slot: topBar.slot,
+    people: peopleUI,
+    rooms: roomUI,
+    // エモートの並べ方・並び順を変えたら、バーを描き直す
+    onEmotePrefsChange: () => {
+      if (emoteBar && emoteBar.refreshPrefs) emoteBar.refreshPrefs();
+    },
+  });
 
   // welcomeが先に来ている場合に備えて、権限の反映をここでもう一度実行する
   applyRoleToUi();

@@ -476,12 +476,9 @@ export function initRoomUI({
       if (adminExtra && adminExtra.element) panel.appendChild(adminExtra.element);
     }
 
-    // ---- NPC（賑やかし）の人数 ----
-    // 2026-08-02: **誰でも触れる**ようにした（「NPCが邪魔」という声があったため）。
-    // 動かせるのは自分の画面だけで、他の人には影響しない。
-    // 上限は管理者がイベント設定で決めていて、それを超えては増やせない
-    // （管理者が0にすれば、このスライダーの最大も0になり全員の画面から消える）。
-    panel.appendChild(buildNpcSection());
+    // ⚠ NPCの人数調整は 2026-08-03 に⚙設定パネルへ移した（loyさん
+    //   「ルーム画面にNPC設定はいらなくなるね」）。ここには出さない。
+    //   部品（buildNpcSection）は renderNpcInto から使われ続ける
   }
 
   /** NPCの人数スライダー。上限は管理者が決めた値 */

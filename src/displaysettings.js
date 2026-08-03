@@ -12,13 +12,71 @@
 // ============================================================
 
 import { getBubbleSec, setBubbleSec, BUBBLE_CHOICES, bubbleLabel } from './bubbletime.js';
+import { getEmoteLayout, setEmoteLayout, resetEmoteOrder } from './emoteprefs.js';
 
 /**
  * 表示のせっていを描く。
  * @param {HTMLElement} body 描き先
+ * @param {{onEmotePrefsChange?:()=>void}} [p] 設定を変えたときに知らせる相手
  */
-export function renderDisplaySettings(body) {
+export function renderDisplaySettings(body, { onEmotePrefsChange } = {}) {
   body.innerHTML = '';
+
+  // ---- エモートの並べ方（2026-08-03追加） ----
+  // loyさん「ページ切り替えじゃなくて2段にもできるようにしたいね。選べる方がいい」
+  const boxE = document.createElement('div');
+  boxE.className = 'vc-help-box';
+  const hE = document.createElement('div');
+  hE.className = 'vc-help-h';
+  hE.textContent = 'エモートの並べ方';
+  boxE.appendChild(hE);
+
+  const noteE = document.createElement('div');
+  noteE.className = 'vc-help-note';
+  noteE.textContent =
+    '画面下のエモートを、6個ずつ切り替えて使うか、12個を2段で全部出すかを選べます。';
+  boxE.appendChild(noteE);
+
+  const rowE = document.createElement('div');
+  rowE.className = 'vc-help-choices';
+  let curLayout = getEmoteLayout();
+  const layoutBtns = [];
+  function paintLayout() {
+    for (const b of layoutBtns) b.classList.toggle('active', b.dataset.v === curLayout);
+  }
+  for (const [v, label] of [['page', '6個ずつ（0キーで切替）'], ['rows', '12個を2段で出す']]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'vc-help-choice';
+    b.dataset.v = v;
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      curLayout = setEmoteLayout(v);
+      paintLayout();
+      if (onEmotePrefsChange) onEmotePrefsChange();
+    });
+    layoutBtns.push(b);
+    rowE.appendChild(b);
+  }
+  paintLayout();
+  boxE.appendChild(rowE);
+
+  const noteE2 = document.createElement('div');
+  noteE2.className = 'vc-help-note';
+  noteE2.textContent =
+    'エモートはドラッグで入れ替えられます（パソコンのみ）。よく使うものを数字キーの手前に置いておけます。数字キー1〜6は印が付いている段に効き、0で段が切り替わります。';
+  boxE.appendChild(noteE2);
+
+  const resetBtn = document.createElement('button');
+  resetBtn.type = 'button';
+  resetBtn.className = 'vc-help-choice';
+  resetBtn.textContent = '並び順を元に戻す';
+  resetBtn.addEventListener('click', () => {
+    resetEmoteOrder();
+    if (onEmotePrefsChange) onEmotePrefsChange();
+  });
+  boxE.appendChild(resetBtn);
+  body.appendChild(boxE);
 
   // ---- 吹き出しの表示時間 ----
   const box = document.createElement('div');

@@ -3,6 +3,8 @@
 // 画面下部中央に配置する丸いエモートボタン群。クリック/タップ、または数字キー1〜6で
 // onEmote(id) を呼び出す。連打防止のため発火後0.5秒はボタンを一時的に無効化する。
 
+import { getEmoteLayout, getEmoteOrder, setEmoteOrder } from './emoteprefs.js';
+
 const STYLE_ID = 'vc-emotebar-style';
 
 // エモートは2ページ。数字キー1〜6は「いま開いているページ」に対応する。
@@ -29,6 +31,19 @@ const EMOTE_PAGES = [
 ];
 
 const COOLDOWN_MS = 500;
+
+// ページ送りボタンの絵柄
+const SPECIAL_MARK = '\u{2728}';
+const NORMAL_MARK = '\u{1F44B}';
+
+// 並び順の既定（1段目＝ふつう / 2段目＝スペシャル）と、idからの逆引き
+const DEFAULT_ORDER = EMOTE_PAGES.flat().map((e) => e.id);
+const EMOTE_BY_ID = Object.fromEntries(EMOTE_PAGES.flat().map((e) => [e.id, e]));
+
+// タッチ端末では並べ替えを無効にする（押すのとドラッグの区別が付きにくいため）
+const IS_TOUCH =
+  typeof window !== 'undefined' &&
+  ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 
 function injectStyle() {
   if (document.getElementById(STYLE_ID)) return;
@@ -100,6 +115,29 @@ function injectStyle() {
     .vc-emote-page {
       border-color: rgba(255, 0, 229, 0.6);
       background: rgba(255, 0, 229, 0.14);
+    }
+
+    /* 2段表示（2026-08-03追加）。12個を上下に分けて全部出す */
+    .vc-emote-bar.vc-emote-rows {
+      flex-direction: column;
+      gap: 6px;
+      border-radius: 26px;
+    }
+    .vc-emote-row { display: flex; gap: 10px; }
+    /* 数字キーが効いている段が分かるようにする */
+    .vc-emote-row-active { position: relative; }
+    .vc-emote-row-active::before {
+      content: '';
+      position: absolute; left: -8px; top: 4px; bottom: 4px; width: 3px;
+      border-radius: 2px;
+      background: rgba(0, 255, 234, 0.8);
+    }
+
+    /* 並べ替え中の見え方 */
+    .vc-emote-dragging { opacity: 0.4; }
+    .vc-emote-dropzone {
+      border-color: rgba(255, 0, 229, 0.95) !important;
+      box-shadow: 0 0 16px rgba(255, 0, 229, 0.8);
     }
 
     .vc-emote-key {
@@ -176,38 +214,120 @@ export function initEmoteBar({ onEmote }) {
   bar.className = 'vc-emote-bar';
 
   const buttons = [];
-  /** いま開いているページ（0＝ふつう / 1＝スペシャル） */
+  /**
+   * いま数字キー1〜6が効く段（0＝1段目 / 1＝2段目）。
+   * ページ表示では「開いているページ」、2段表示では「キーが効く段」を表す
+   */
   let page = 0;
+  /** 'page'（6個ずつ・0キーで切替） or 'rows'（12個を2段で全部出す） */
+  let layout = getEmoteLayout();
+  /** 並び順（全12種のid）。前半6つが1段目、後半6つが2段目 */
+  let order = getEmoteOrder(DEFAULT_ORDER);
 
-  // ページを切り替えるボタン。バーの右端に置く
+  // ページを切り替えるボタン。ページ表示のときだけ出す
   const pageBtn = document.createElement('button');
   pageBtn.type = 'button';
   pageBtn.className = 'vc-emote-btn vc-emote-page';
+  pageBtn.addEventListener('click', () => {
+    page = page === 0 ? 1 : 0;
+    render();
+  });
 
-  function renderPage() {
-    bar.innerHTML = '';
-    buttons.length = 0;
-    EMOTE_PAGES[page].forEach((emote, index) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'vc-emote-btn';
-      btn.title = emote.label;
-      btn.setAttribute('aria-label', emote.label);
-      btn.textContent = emote.emoji;
+  /** 並び順から、その段に並ぶエモートを取り出す */
+  function rowOf(i) {
+    return order
+      .slice(i * 6, i * 6 + 6)
+      .map((id) => EMOTE_BY_ID[id])
+      .filter(Boolean);
+  }
 
+  // ---- ドラッグで入れ替え（2026-08-03追加） ----
+  // loyさん「エモートの配置はドラッグで入れ替え出来たらいいね」。
+  // ⚠ 掴んだものと落とした先を**入れ替える**（差し込みではない）。
+  //   差し込みだと他が全部ずれて、覚えた位置が崩れる
+  let dragId = null;
+
+  function makeBtn(emote, keyLabel) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'vc-emote-btn';
+    btn.title = emote.label;
+    btn.dataset.id = emote.id;
+    btn.setAttribute('aria-label', emote.label);
+    btn.textContent = emote.emoji;
+
+    if (keyLabel) {
       const keyBadge = document.createElement('span');
       keyBadge.className = 'vc-emote-key';
-      keyBadge.textContent = String(index + 1);
+      keyBadge.textContent = keyLabel;
       btn.appendChild(keyBadge);
+    }
 
-      btn.addEventListener('click', () => fire(emote.id, btn));
-      bar.appendChild(btn);
-      buttons.push(btn);
-    });
-    // ✨＝スペシャルへ / 👋＝ふつうへ
-    pageBtn.textContent = page === 0 ? '\u{2728}' : '\u{1F44B}';
-    pageBtn.title = page === 0 ? 'スペシャルエモートへ (0)' : 'ふつうのエモートへ (0)';
-    bar.appendChild(pageBtn);
+    btn.addEventListener('click', () => fire(emote.id, btn));
+
+    // 並べ替え。タッチ端末では無効（押すのとドラッグの区別が付きにくいため）
+    if (!IS_TOUCH) {
+      btn.draggable = true;
+      btn.addEventListener('dragstart', (e) => {
+        dragId = emote.id;
+        btn.classList.add('vc-emote-dragging');
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+      });
+      btn.addEventListener('dragend', () => {
+        dragId = null;
+        btn.classList.remove('vc-emote-dragging');
+      });
+      btn.addEventListener('dragover', (e) => {
+        if (!dragId || dragId === emote.id) return;
+        e.preventDefault();
+        btn.classList.add('vc-emote-dropzone');
+      });
+      btn.addEventListener('dragleave', () => btn.classList.remove('vc-emote-dropzone'));
+      btn.addEventListener('drop', (e) => {
+        e.preventDefault();
+        btn.classList.remove('vc-emote-dropzone');
+        if (!dragId || dragId === emote.id) return;
+        const a = order.indexOf(dragId);
+        const b = order.indexOf(emote.id);
+        if (a < 0 || b < 0) return;
+        [order[a], order[b]] = [order[b], order[a]];
+        setEmoteOrder(order);
+        render();
+      });
+    }
+
+    return btn;
+  }
+
+  function render() {
+    bar.innerHTML = '';
+    buttons.length = 0;
+    bar.classList.toggle('vc-emote-rows', layout === 'rows');
+
+    if (layout === 'rows') {
+      // 12個を2段で全部出す。数字キーが効く段には印を付ける
+      for (let i = 0; i < 2; i++) {
+        const row = document.createElement('div');
+        row.className = 'vc-emote-row' + (page === i ? ' vc-emote-row-active' : '');
+        rowOf(i).forEach((emote, index) => {
+          // キーの番号は「いま効く段」にだけ出す（出しっぱなしだと嘘になる）
+          const btn = makeBtn(emote, page === i ? String(index + 1) : '');
+          row.appendChild(btn);
+          buttons.push(btn);
+        });
+        bar.appendChild(row);
+      }
+    } else {
+      rowOf(page).forEach((emote, index) => {
+        const btn = makeBtn(emote, String(index + 1));
+        bar.appendChild(btn);
+        buttons.push(btn);
+      });
+      pageBtn.textContent = page === 0 ? SPECIAL_MARK : NORMAL_MARK;
+      pageBtn.title = page === 0 ? 'スペシャルエモートへ (0)' : 'ふつうのエモートへ (0)';
+      bar.appendChild(pageBtn);
+    }
+
     if (!enabled || cooling) {
       buttons.forEach((b) => {
         b.disabled = true;
@@ -215,12 +335,7 @@ export function initEmoteBar({ onEmote }) {
     }
   }
 
-  pageBtn.addEventListener('click', () => {
-    page = page === 0 ? 1 : 0;
-    renderPage();
-  });
-
-  renderPage();
+  render();
   document.body.appendChild(bar);
 
   function fire(id, btn) {
@@ -254,13 +369,16 @@ export function initEmoteBar({ onEmote }) {
     // 「エモート操作はNumPadだけで完結したほうが便利」——数字キー1〜6と同じ並びに
     // 0 があるので、テンキーから手を離さずにページを行き来できる
     if (e.key === '0') {
+      // ページ表示なら「開くページ」、2段表示なら「数字キーが効く段」を切り替える
       page = page === 0 ? 1 : 0;
-      renderPage();
+      render();
       return;
     }
     const idx = ['1', '2', '3', '4', '5', '6'].indexOf(e.key);
     if (idx === -1) return;
-    fire(EMOTE_PAGES[page][idx].id, buttons[idx]);
+    const list = rowOf(page);
+    if (!list[idx]) return;
+    fire(list[idx].id, null);
   }
   window.addEventListener('keydown', onKeydown);
 
@@ -279,5 +397,14 @@ export function initEmoteBar({ onEmote }) {
     bar.remove();
   }
 
-  return { setEnabled, destroy };
+  return {
+    setEnabled,
+    destroy,
+    /** ⚙設定で並べ方や並び順を変えたときに呼ぶ（2026-08-03追加） */
+    refreshPrefs() {
+      layout = getEmoteLayout();
+      order = getEmoteOrder(DEFAULT_ORDER);
+      render();
+    },
+  };
 }
