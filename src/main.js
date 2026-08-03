@@ -26,6 +26,7 @@ import { initHelpUI } from './helpui.js';
 import { initNoticeBar } from './noticebar.js';
 import { initTopBar } from './topbar.js';
 import { initSettingsUI } from './settingsui.js';
+import { initAdminUI } from './adminui.js';
 import { initConnBanner } from './connbanner.js';
 import { initYouTubeChat } from './ytchat.js';
 
@@ -106,7 +107,10 @@ let kickLog = []; // キックの履歴（管理者のみ）。あとでBANす�
 let noticeBar = null; // 運営メッセージの固定枠
 let topBar = null; // 右上のツールバー（会場と自分に関するボタン）
 let emoteBar = null; // エモートバー（並べ方の設定を変えたら描き直す）
-let settingsUI = null; // ⚙設定パネル（表示設定・参加者・NPC設定）
+let settingsUI = null; // ⚙設定パネル（表示設定・参加者・NPC設定・管理）
+let adminUI = null; // 管理タブ（コールのワード・運営メンバー）
+let callLists = []; // コールのワード表（運営のみサーバーから届く）
+let staffList = []; // 運営メンバー一覧（管理者のみ）
 // 接続が切れていることを出すバナー（2026-08-03追加）。
 // initNet より先に作る必要がある（繋がらないと分かるのが接続直後のため）
 let connBanner = null;
@@ -659,6 +663,16 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
           system: true,
         });
       },
+      // コールのワード表・運営メンバーの一覧が届いた（管理タブ用・2026-08-03追加）
+      onCallLists: (lists) => {
+        callLists = lists || [];
+        if (settingsUI && settingsUI.refreshIfAdminOpen) settingsUI.refreshIfAdminOpen();
+        if (roomUI && roomUI.setCallLists) roomUI.setCallLists(callLists);
+      },
+      onStaffList: (list) => {
+        staffList = list || [];
+        if (settingsUI && settingsUI.refreshIfAdminOpen) settingsUI.refreshIfAdminOpen();
+      },
       onKicks: (list) => {
         kickLog = list || [];
         if (peopleUI) peopleUI.refresh();
@@ -923,10 +937,37 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
 
   // ⚙設定パネル（2026-08-03追加）。表示設定・参加者・NPC設定をここへ集めた。
   // ヘルプ（読むところ）と設定（変えるところ）を分けるため
+  // 管理タブ（コールのワード・運営メンバー）。2026-08-03追加
+  adminUI = initAdminUI({
+    getLists: () => callLists,
+    getStaff: () => staffList,
+    getRole: () => staffRole(),
+    onSaveList: (list) => {
+      if (net && !demoMode) net.sendCallListSave(list);
+    },
+    onDeleteList: (id) => {
+      if (net && !demoMode) net.sendCallListDelete(id);
+    },
+    onSaveStaff: (email, role) => {
+      if (net && !demoMode) net.sendStaffSave(email, role);
+    },
+    onDeleteStaff: (email) => {
+      if (net && !demoMode) net.sendStaffDelete(email);
+    },
+    // 開いたときに最新を取りに行く（他の運営が変えているかもしれない）
+    onRefresh: () => {
+      if (!net || demoMode) return;
+      net.requestCallLists();
+      if (myRole === 'admin') net.requestStaff();
+    },
+  });
+
   settingsUI = initSettingsUI({
     slot: topBar.slot,
     people: peopleUI,
     rooms: roomUI,
+    admin: adminUI,
+    getRole: () => staffRole(),
     // エモートの並べ方・並び順を変えたら、バーを描き直す
     onEmotePrefsChange: () => {
       if (emoteBar && emoteBar.refreshPrefs) emoteBar.refreshPrefs();

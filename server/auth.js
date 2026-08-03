@@ -33,6 +33,31 @@ function parseEmailList(raw) {
 const ADMIN_EMAILS = parseEmailList(process.env.ADMIN_EMAILS);
 const VIP_EMAILS = parseEmailList(process.env.VIP_EMAILS);
 
+/**
+ * 管理画面から足した運営メンバー（2026-08-03追加）。
+ *
+ * loyさん「VIP権限もいまはRenderいかないとなので、管理画面で追加管理できるとよいな」。
+ *
+ * ⚠ 環境変数のぶんとは**必ず別枠**にする。同じ入れ物にすると、
+ *   画面から全員消せてしまい「誰も管理できない会場」が出来て復旧できない。
+ *   環境変数側は「絶対に消えない管理者」として常に効かせる。
+ * @type {Map<string, {role:string, addedBy:string}>}
+ */
+let extraStaffMap = new Map();
+
+/** サーバー起動時とメンバー変更時に呼ぶ */
+export function setExtraStaff(map) {
+  extraStaffMap = map instanceof Map ? map : new Map();
+}
+
+/** 環境変数で決まっている運営メンバー（画面では「外せない」と示すために使う） */
+export function envStaffList() {
+  return [
+    ...[...ADMIN_EMAILS].map((email) => ({ email, role: 'admin', addedBy: 'Renderの設定' })),
+    ...[...VIP_EMAILS].map((email) => ({ email, role: 'vip', addedBy: 'Renderの設定' })),
+  ];
+}
+
 const client = CLIENT_ID ? new OAuth2Client(CLIENT_ID) : null;
 
 /** ログイン機能が使える状態か（クライアントに「ログインボタンを出すか」を伝える） */
@@ -79,8 +104,12 @@ export async function verifyIdToken(idToken) {
 export function roleForEmail(email) {
   if (!email) return 'guest';
   const e = String(email).toLowerCase();
+  // 環境変数が最優先。ここに載っている人は画面から外せない
   if (ADMIN_EMAILS.has(e)) return 'admin';
   if (VIP_EMAILS.has(e)) return 'vip';
+  // 管理画面から足したぶん（2026-08-03追加）
+  const extra = extraStaffMap.get(e);
+  if (extra) return extra.role === 'admin' ? 'admin' : 'vip';
   return 'user';
 }
 

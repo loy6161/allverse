@@ -49,6 +49,12 @@ import {
   listKickLog,
   addChatLog,
   listChatLog,
+  loadCallLists,
+  saveCallList,
+  deleteCallList,
+  loadStaff,
+  saveStaff,
+  deleteStaff,
 } from './store.js';
 import { summarize, gridSeries, autoStepMs, visitsCsv, seriesCsv, chatCsv } from './stats.js';
 // YouTubeのライブチャットを読んで、本人のアバターに吹き出しを出す（2026-08-03追加）
@@ -63,6 +69,8 @@ import {
   verifyIdToken,
   roleForEmail,
   defaultRole,
+  setExtraStaff,
+  envStaffList,
   isGlobalRole,
   canControlVideo,
   canInteract,
@@ -412,6 +420,7 @@ function makeEvent({
   chatMode = 'local',
   noticeLevel = '',
   noticeText = '',
+  callList = '',
 }) {
   return {
     id,
@@ -431,6 +440,9 @@ function makeEvent({
     // 運営メッセージの固定枠（'' なら出さない）
     noticeLevel: NOTICE_LEVELS.has(noticeLevel) ? noticeLevel : '',
     noticeText: String(noticeText || ''),
+    // コールのワード表のid。空文字＝使わない（2026-08-03追加）。
+    // ライブ以外の観覧イベントでは反応させたくないので「未選択」を既定にしている
+    callList: String(callList || ''),
     // 記録用の開催id。イベントidが将来使い回されても過去の記録と混ざらないように
     // 「id＋立てた時刻」で一意にする
     runId: `${id}-${createdAt}`,
@@ -504,6 +516,8 @@ function toEventInfo(ev) {
     chatMode: ev.chatMode,
     // 運営メッセージの固定枠。level が空なら出さない
     notice: ev.noticeLevel ? { level: ev.noticeLevel, text: ev.noticeText } : null,
+    // 使っているコールのワード表（空文字＝使わない）
+    callList: ev.callList,
   };
 }
 
@@ -1164,6 +1178,10 @@ async function handleEventUpdate(client, msg) {
     ev.npcMax = Number.isFinite(n) && n >= 0 ? Math.min(MAX_NPC, Math.trunc(n)) : -1;
   }
   // チャットの形（独自チャット / YouTubeへ一本化）
+  if (typeof msg.callList === 'string') {
+    // 存在しないidを指されたら「使わない」に倒す（消されたリストを指したまま残らないように）
+    ev.callList = callLists.has(msg.callList) ? msg.callList : '';
+  }
   if (msg.chatMode === 'local' || msg.chatMode === 'youtube') {
     ev.chatMode = msg.chatMode;
   }
@@ -1627,15 +1645,32 @@ function syncYtReaders() {
   }
 }
 
-/** そのイベントの中から、結びつけの鍵が一致する人を探す */
+/**
+ * そのイベントの中から、結びつけの鍵が一致する人を探す。
+ *
+ * ⚠ **いちばん新しい接続を選ぶ**（2026-08-03 修正）。
+ *   同じ人の接続が2つある状況が普通に起きる:
+ *     ・再接続した直後、古い接続がまだ切れきっていない
+ *     ・本人がタブを2枚開いている
+ *   最初に見つかった方を返すと**古い方に向けて送ってしまい**、
+ *   本人の画面では何も起きない（実際にこれで吹き出しもエモートも出なかった）。
+ *   接続idは c1, c2, … と増えるので、番号が大きい方が新しい。
+ */
 function findClientByLinkKey(eventId, linkKey) {
+  let best = null;
+  let bestSeq = -1;
   for (const [key, members] of rooms) {
     if (keyEventId(key) !== eventId) continue;
     for (const client of members.values()) {
-      if (client.joined && client.visitor === linkKey) return client;
+      if (!client.joined || client.visitor !== linkKey) continue;
+      const seq = Number(String(client.id).replace(/^c/, '')) || 0;
+      if (seq > bestSeq) {
+        best = client;
+        bestSeq = seq;
+      }
     }
   }
-  return null;
+  return best;
 }
 
 /**
@@ -1662,7 +1697,7 @@ function onYtMessages(eventId, msgs) {
     // コメントの中身に応じてエモートを出す（2026-08-03追加・loyさん発案）。
     // 本人が「自分のアバターを動かさない」を選んでいる場合は出さない
     if (client.ytEmote !== false) {
-      const em = emoteFromText(msg.text);
+      const em = emoteFromText(msg.text, callWordsFor(events.get(eventId)));
       if (em && EMOTE_IDS.has(em.id)) {
         const now = Date.now();
         client.emote = { id: em.id, at: now, n: em.n };
@@ -1724,6 +1759,186 @@ function handleYtCode(client, _msg) {
   send(client.ws, { t: 'yt-code', ok: true, code, expiresAt });
 }
 
+// ------------------------------------------------------------
+// コールのワード表（2026-08-03追加）
+//
+// loyさんの指示:
+//   > リストを複数保存できて、リストを切り替えられるといいかもね。
+//   > clubVERSE用リスト、一般用リスト、未選択、みたいに、
+//   > リスト使う使わないも選べるとライブイベント以外の観覧イベントとかでも大丈夫。
+//
+// なのでリストは**会場全体で共有**し、**どれを使うかはイベントごと**に選ぶ形にした。
+// 一度作ったリストを毎回作り直さずに使い回せる。
+// ------------------------------------------------------------
+
+/** id -> {id, name, words} */
+const callLists = new Map();
+
+const MAX_CALL_LISTS = 20;
+const MAX_CALL_WORDS = 100;
+const MAX_CALL_WORD_LEN = 30;
+
+/** そのイベントで使うワード表（未選択なら null） */
+function callWordsFor(ev) {
+  if (!ev || !ev.callList) return null;
+  const list = callLists.get(ev.callList);
+  return list ? list.words : null;
+}
+
+/** クライアントへ渡す形 */
+function callListsForClient() {
+  return Array.from(callLists.values()).map((l) => ({ id: l.id, name: l.name, words: l.words }));
+}
+
+/** 入力を安全な形に整える。長いワード順に並べ替えて返す（判定の順番がそのまま効く） */
+function sanitizeCallWords(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const item of raw) {
+    const w = clampString(item && item.w, MAX_CALL_WORD_LEN).trim();
+    const e = String((item && item.e) || '');
+    if (!w || !EMOTE_IDS.has(e)) continue;
+    out.push({ w, e });
+    if (out.length >= MAX_CALL_WORDS) break;
+  }
+  // 長いワードを先に見る（「リバーブ」より「リバーブ最高」を優先させるため）
+  out.sort((a, b) => b.w.length - a.w.length);
+  return out;
+}
+
+function broadcastCallLists() {
+  const payload = { t: 'call-lists', lists: callListsForClient() };
+  for (const members of rooms.values()) {
+    for (const client of members.values()) {
+      // 運営だけが使う情報なので、一般参加者には配らない
+      if (canControlVideo(client.role) || client.role === 'vip') send(client.ws, payload);
+    }
+  }
+}
+
+/** call-list-save: リストを作る・書き換える（管理者・VIP） */
+async function handleCallListSave(client, msg) {
+  if (!client.joined) return;
+  if (!canCreateEvent(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'staff-only' });
+    return;
+  }
+  const name = clampString(msg && msg.name, MAX_EVENT_NAME_LEN).trim();
+  if (!name) return;
+  const id = typeof msg.id === 'string' && callLists.has(msg.id) ? msg.id : `cl${Date.now().toString(36)}`;
+  if (!callLists.has(id) && callLists.size >= MAX_CALL_LISTS) {
+    send(client.ws, { t: 'denied', reason: 'too-many-lists' });
+    return;
+  }
+  const words = sanitizeCallWords(msg.words);
+  callLists.set(id, { id, name, words });
+  await saveCallList({ id, name, words });
+  broadcastCallLists();
+}
+
+/** call-list-delete: リストを消す（管理者・VIP） */
+async function handleCallListDelete(client, msg) {
+  if (!client.joined) return;
+  if (!canCreateEvent(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'staff-only' });
+    return;
+  }
+  const id = String((msg && msg.id) || '');
+  if (!callLists.has(id)) return;
+  callLists.delete(id);
+  await deleteCallList(id);
+  // 消したリストを使っていたイベントは「使わない」に戻す（宙に浮かせない）
+  for (const ev of events.values()) {
+    if (ev.callList === id) ev.callList = '';
+  }
+  broadcastCallLists();
+  broadcastAllEvents();
+}
+
+/** call-lists: 一覧をくれ（運営が管理画面を開いたとき） */
+function handleCallListsRequest(client) {
+  if (!client.joined) return;
+  if (!canCreateEvent(client.role)) return;
+  send(client.ws, { t: 'call-lists', lists: callListsForClient() });
+}
+
+// ------------------------------------------------------------
+// 運営メンバーの管理（2026-08-03追加）
+//
+//   > VIP権限もいまはRenderいかないとなので、管理画面で追加管理できるとよいな
+//
+// ⚠ 環境変数（ADMIN_EMAILS / VIP_EMAILS）は**触らない**。
+//   画面から全員消せると「誰も管理できない会場」が出来て復旧できないため、
+//   環境変数側を「絶対に消えない管理者」とし、ここは追加ぶんだけを扱う。
+//   画面には env 由来のものも出すが、**外せないように**してある
+// ------------------------------------------------------------
+
+const MAX_STAFF = 100;
+
+/** 画面から足した運営メンバー。email -> {role, addedBy} */
+const extraStaff = new Map();
+
+function staffListForClient() {
+  return [
+    ...envStaffList().map((x) => ({ ...x, fixed: true })),
+    ...Array.from(extraStaff.entries()).map(([email, v]) => ({
+      email,
+      role: v.role,
+      addedBy: v.addedBy,
+      fixed: false,
+    })),
+  ];
+}
+
+function broadcastStaff() {
+  const payload = { t: 'staff-list', list: staffListForClient() };
+  for (const members of rooms.values()) {
+    for (const client of members.values()) {
+      if (canControlVideo(client.role)) send(client.ws, payload);
+    }
+  }
+}
+
+/** staff-save: 運営メンバーを足す/役を変える（管理者だけ） */
+async function handleStaffSave(client, msg) {
+  if (!client.joined) return;
+  if (!canControlVideo(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'admin-only' });
+    return;
+  }
+  const email = String((msg && msg.email) || '').trim().toLowerCase();
+  const role = msg && msg.role === 'admin' ? 'admin' : 'vip';
+  // ざっくりした形の確認。厳密な検証はGoogleログイン時に行われる
+  if (!email || !email.includes('@') || email.length > 120) return;
+  if (!extraStaff.has(email) && extraStaff.size >= MAX_STAFF) return;
+  extraStaff.set(email, { role, addedBy: client.n });
+  setExtraStaff(extraStaff);
+  await saveStaff({ email, role, addedBy: client.n });
+  broadcastStaff();
+}
+
+/** staff-delete: 運営メンバーを外す（管理者だけ。環境変数のぶんは外せない） */
+async function handleStaffDelete(client, msg) {
+  if (!client.joined) return;
+  if (!canControlVideo(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'admin-only' });
+    return;
+  }
+  const email = String((msg && msg.email) || '').trim().toLowerCase();
+  if (!extraStaff.has(email)) return;
+  extraStaff.delete(email);
+  setExtraStaff(extraStaff);
+  await deleteStaff(email);
+  broadcastStaff();
+}
+
+/** staff-list: 一覧をくれ（管理者が管理画面を開いたとき） */
+function handleStaffListRequest(client) {
+  if (!client.joined) return;
+  if (!canControlVideo(client.role)) return;
+  send(client.ws, { t: 'staff-list', list: staffListForClient() });
+}
+
 /**
  * yt-emote: 「YouTubeのコメントで自分のアバターを動かすか」の切り替え（2026-08-03追加）。
  * 吹き出しと同じく本人の好みなので、端末側の設定をそのまま預かる。
@@ -1744,6 +1959,12 @@ async function handleYtUnlink(client, _msg) {
 const HANDLERS = {
   join: handleJoin,
   'yt-code': handleYtCode,
+  'call-list-save': handleCallListSave,
+  'call-list-delete': handleCallListDelete,
+  'call-lists': handleCallListsRequest,
+  'staff-save': handleStaffSave,
+  'staff-delete': handleStaffDelete,
+  'staff-list': handleStaffListRequest,
   'yt-emote': handleYtEmote,
   'yt-unlink': handleYtUnlink,
   pos: handlePos,
@@ -2540,6 +2761,13 @@ async function boot() {
 
   // BANはメモリに載せておく。入場のたびにDBを叩かずに済ませるため
   for (const b of await loadBans()) bans.set(b.email, b);
+
+  // コールのワード表を読む（2026-08-03追加）
+  for (const l of await loadCallLists()) callLists.set(l.id, l);
+
+  // 画面から足した運営メンバーを読む。環境変数のぶんとは別枠で持つ
+  for (const st of await loadStaff()) extraStaff.set(st.email, { role: st.role, addedBy: st.addedBy });
+  setExtraStaff(extraStaff);
 
   // YouTubeとの結びつきもメモリに載せる。チャット1件ごとにDBを叩くと
   // Turso（Singapore）への往復が積み上がって吹き出しが遅れる

@@ -104,5 +104,26 @@ console.log('\n[8] 何かが出るものは繰り返さない');
 ok('ハートは1回だけ', r('\u{2764}\u{2764}\u{2764}').n <= 3); // 判定側は数えるが、再生側で1回に落とす
 ok('www は1回だけ', r('wwwwwwww').n === 1, String(r('wwwwwwww').n));
 
+console.log('\n[9] コールのワード（管理画面で登録するもの・2026-08-03追加）');
+const CALLS = [
+  { w: 'リバーブ最高', e: 'firework' },
+  { w: 'リバーブ', e: 'penlight' },
+  { w: 'オイオイ', e: 'fist' },
+];
+const c = (t) => emoteFromText(t, CALLS);
+ok('ワードそのままで反応', c('リバーブ').id === 'penlight', JSON.stringify(c('リバーブ')));
+ok('「！」が付いても反応（ゆるい判定）', c('リバーブ！').id === 'penlight');
+ok('文中に入っていても反応', c('やっぱりリバーブいいね').id === 'penlight');
+ok(
+  '長いワードが優先される',
+  c('リバーブ最高！').id === 'firework',
+  JSON.stringify(c('リバーブ最高！')),
+);
+ok('別のワードは別のエモート', c('オイオイオイ').id === 'fist');
+ok('登録していない言葉は無反応', c('こんばんは') === null, JSON.stringify(c('こんばんは')));
+ok('リスト未選択（null）なら反応しない', emoteFromText('リバーブ！', null) === null);
+ok('空のリストでも落ちない', emoteFromText('リバーブ！', []) === null);
+ok('ワードは絵文字より先に見る', c('リバーブ\u{1F44F}\u{1F44F}').id === 'penlight');
+
 console.log(`\n=== ${pass + fail}項目中 ${pass} PASS / ${fail} FAIL ===`);
 process.exit(fail ? 1 : 0);

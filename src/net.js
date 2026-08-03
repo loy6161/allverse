@@ -360,6 +360,14 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
         case 'kicks':
           if (h.onKicks) h.onKicks(msg.list || []);
           break;
+        // コールのワード表（管理画面・2026-08-03追加）
+        case 'call-lists':
+          if (h.onCallLists) h.onCallLists(msg.lists || []);
+          break;
+        // 運営メンバー一覧（管理者のみ）
+        case 'staff-list':
+          if (h.onStaffList) h.onStaffList(msg.list || []);
+          break;
         default:
           break;
       }
@@ -450,6 +458,32 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
   function requestYtCode() {
     if (!joined) return;
     send({ t: 'yt-code' });
+  }
+
+  // ---- 管理画面（2026-08-03追加） ----
+  function requestCallLists() {
+    if (!joined) return;
+    send({ t: 'call-lists' });
+  }
+  function sendCallListSave(list) {
+    if (!joined) return;
+    send({ t: 'call-list-save', id: list.id, name: list.name, words: list.words });
+  }
+  function sendCallListDelete(id) {
+    if (!joined) return;
+    send({ t: 'call-list-delete', id });
+  }
+  function requestStaff() {
+    if (!joined) return;
+    send({ t: 'staff-list' });
+  }
+  function sendStaffSave(email, role) {
+    if (!joined) return;
+    send({ t: 'staff-save', email, role });
+  }
+  function sendStaffDelete(email) {
+    if (!joined) return;
+    send({ t: 'staff-delete', email });
   }
 
   /** 「コメントで自分のアバターを動かすか」をサーバーへ伝える（2026-08-03追加） */
@@ -605,6 +639,12 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     sendUnban,
     requestBans,
     requestYtCode,
+    requestCallLists,
+    sendCallListSave,
+    sendCallListDelete,
+    requestStaff,
+    sendStaffSave,
+    sendStaffDelete,
     sendYtEmote,
     sendYtUnlink,
     close,

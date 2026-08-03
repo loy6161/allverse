@@ -148,6 +148,9 @@ export function initRoomUI({
 
   let events = [];
   let open = false;
+  /** コールのワード表（管理タブで作ったもの）。イベント設定の選択肢に出す */
+  let callLists = [];
+
   let npcNumEl = null; // NPCの人数表示（自動補充で増減するので参照を持っておく）
 
   function closePanel() {
@@ -244,6 +247,35 @@ export function initRoomUI({
     ytLb.append(ytC, document.createTextNode('YouTubeチャット連動（会場のチャットは使わない）'));
     box.appendChild(ytLb);
 
+    // ---- コールのワード表（2026-08-03追加）----
+    // loyさん「リスト使う使わないも選べるとライブイベント以外の観覧イベントとかでも大丈夫」。
+    // 既定は「使わない」。ライブでないイベントで勝手に反応させないため
+    const callLb = document.createElement('div');
+    callLb.className = 'vc-room-title';
+    callLb.textContent = 'コールのワード';
+    box.appendChild(callLb);
+    const callSel = document.createElement('select');
+    callSel.className = 'vc-room-input';
+    {
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = '使わない';
+      callSel.appendChild(none);
+      for (const l of callLists) {
+        const op = document.createElement('option');
+        op.value = l.id;
+        op.textContent = `${l.name}（${l.words.length}語）`;
+        if (l.id === ev.callList) op.selected = true;
+        callSel.appendChild(op);
+      }
+    }
+    box.appendChild(callSel);
+    const callHint = document.createElement('div');
+    callHint.className = 'vc-room-hint';
+    callHint.textContent =
+      'YouTubeのコメントにこのリストの言葉が入っていたら、連携している人のアバターが動きます。リストは ⚙設定 →「管理」で作れます。';
+    box.appendChild(callHint);
+
     // ---- NPCの全体上限（管理者が決める。各自はこの範囲でしか出せない）----
     const npcTitle = document.createElement('div');
     npcTitle.className = 'vc-room-hint';
@@ -294,6 +326,7 @@ export function initRoomUI({
         requireLogin: loginC.checked,
         vrc: vrcC.checked,
         chatMode: ytC.checked ? 'youtube' : 'local',
+        callList: callSel.value,
         // 空欄は自動（-1）。数値ならその値を全体の上限にする
         npcMax: npcRaw === '' ? -1 : Math.max(0, Math.min(100, Number(npcRaw) || 0)),
         notice: { level: lvSel.value, text: noticeI.value.trim() },
@@ -575,6 +608,10 @@ export function initRoomUI({
       if (!host) return;
       host.innerHTML = '';
       host.appendChild(buildNpcSection());
+    },
+    /** コールのワード表が届いた／変わったときに差し替える（2026-08-03追加） */
+    setCallLists(lists) {
+      callLists = Array.isArray(lists) ? lists : [];
     },
     /** 自動補充でNPCが増減したときに、開いているパネルの人数表示を合わせる */
     refreshNpc() {

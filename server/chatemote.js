@@ -122,9 +122,28 @@ function countMatches(text, re) {
  * @param {string} text コメント本文
  * @returns {{id:string, n:number}|null} 出すエモートと繰り返し回数。無反応なら null
  */
-export function emoteFromText(text) {
+export function emoteFromText(text, callWords = null) {
   const s = String(text || '');
   if (!s) return null;
+
+  // ---- ⓪ コールのワード（管理画面で登録したもの・2026-08-03追加） ----
+  //
+  // loyさん:
+  //   > 曲のコールとかあるけど、その時は絵文字じゃないから、コールにもペンラ反応するといいな
+  //   > ゆるくていいよ。「リバーブ」ってコールでも「リバーブ！」って打つ人もいるし
+  //
+  // なので**含まれていれば拾う**（ゆるい判定）。
+  // ⚠ 長いワードから先に見る。「リバーブ」と「リバーブ最高」が両方登録されている場合、
+  //   短い方が先に当たると長い方の指定が死ぬため
+  if (Array.isArray(callWords) && callWords.length) {
+    for (const item of callWords) {
+      const w = String((item && item.w) || '');
+      if (!w) continue;
+      if (s.includes(w)) {
+        return { id: String(item.e || 'penlight'), n: 1 };
+      }
+    }
+  }
 
   // ---- ① 文字の合図（絵文字より先に見る） ----
   // ライブでは 888 や www が絵文字より使われるので、こちらを優先する

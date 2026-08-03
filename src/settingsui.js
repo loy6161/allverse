@@ -83,7 +83,7 @@ function injectStyle() {
  * @param {{renderInto:(el:HTMLElement)=>void, detach:()=>void}} p.people 参加者の描画を持つモジュール
  * @param {{renderNpcInto:(el:HTMLElement)=>void}} p.rooms NPC調整の描画を持つモジュール
  */
-export function initSettingsUI({ slot, people, rooms, onEmotePrefsChange, onChatEmoteChange }) {
+export function initSettingsUI({ slot, people, rooms, admin, getRole, onEmotePrefsChange, onChatEmoteChange }) {
   injectStyle();
 
   const btn = document.createElement('button');
@@ -140,11 +140,18 @@ export function initSettingsUI({ slot, people, rooms, onEmotePrefsChange, onChat
 
     const tabs = document.createElement('div');
     tabs.className = 'vc-set-tabs';
-    for (const [id, label] of [
+    // 「管理」は運営（管理者・VIP）にだけ出す。
+    // 一般の人に見えても押せないだけで混乱するので、タブごと出さない
+    const role = getRole ? getRole() : 'user';
+    const isStaff = role === 'admin' || role === 'vip';
+    if (activeTab === 'admin' && !isStaff) activeTab = 'display';
+    const tabDefs = [
       ['display', '表示設定'],
       ['people', '参加者'],
       ['npc', 'NPC設定'],
-    ]) {
+    ];
+    if (isStaff) tabDefs.push(['admin', '管理']);
+    for (const [id, label] of tabDefs) {
       const t = document.createElement('button');
       t.type = 'button';
       t.className = 'vc-set-tab' + (activeTab === id ? ' active' : '');
@@ -164,6 +171,8 @@ export function initSettingsUI({ slot, people, rooms, onEmotePrefsChange, onChat
 
     if (activeTab === 'people') {
       if (people && people.renderInto) people.renderInto(body);
+    } else if (activeTab === 'admin') {
+      if (admin && admin.renderInto) admin.renderInto(body);
     } else if (activeTab === 'npc') {
       if (rooms && rooms.renderNpcInto) rooms.renderNpcInto(body);
     } else {
@@ -171,5 +180,12 @@ export function initSettingsUI({ slot, people, rooms, onEmotePrefsChange, onChat
     }
   }
 
-  return { close: closePanel, isOpen: () => open };
+  return {
+    close: closePanel,
+    isOpen: () => open,
+    /** 管理の一覧がサーバーから届いたときに呼ぶ（開いていれば描き直す） */
+    refreshIfAdminOpen() {
+      if (open && activeTab === 'admin') render();
+    },
+  };
 }

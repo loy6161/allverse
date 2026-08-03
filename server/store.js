@@ -90,6 +90,8 @@ export async function initStore() {
       `ALTER TABLE events ADD COLUMN chat_mode TEXT NOT NULL DEFAULT 'local'`,
       `ALTER TABLE events ADD COLUMN notice_level TEXT NOT NULL DEFAULT ''`,
       `ALTER TABLE events ADD COLUMN notice_text TEXT NOT NULL DEFAULT ''`,
+      // call_list … 使うコールのワード表のid（空文字＝使わない・2026-08-03追加）
+      `ALTER TABLE events ADD COLUMN call_list TEXT NOT NULL DEFAULT ''`,
     ]) {
       try {
         await db.execute(ddl);
@@ -226,6 +228,43 @@ export async function initStore() {
       )
     `);
     await db.execute('CREATE INDEX IF NOT EXISTS idx_ytlinks_key ON yt_links(link_key)');
+    // コールのワード表（2026-08-03追加）。
+    //
+    // loyさんの要望:
+    //   > 曲のコールとかあるけど、その時は絵文字じゃないから、コールにもペンラ反応するといいな
+    //   > 新曲も増えたりするから、都度実装は手間なのでファイル更新で対応できるとよいね
+    //   > それか、ワード管理画面みたいなのがあるといい
+    //
+    // ファイル方式ではなくDB＋管理画面にした理由:
+    //   ファイルだと**追加のたびにデプロイが要る**＝loyさんが自分で足せない。
+    //   コールはその日のセトリで変わるので、開演前にその場で足せることに意味がある。
+    //
+    // words は [{w:"ワード", e:"エモートid"}] のJSON。
+    // 件数が少ない（1リスト数十件）ので、行に分けずまとめて持つ方が扱いやすい
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS call_lists (
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        words      TEXT NOT NULL DEFAULT '[]',
+        updated_at INTEGER NOT NULL
+      )
+    `);
+
+    // 運営メンバー（2026-08-03追加）。
+    //
+    //   > VIP権限もいまはRenderいかないとなので、管理画面で追加管理できるとよいな
+    //
+    // ⚠ 環境変数（ADMIN_EMAILS / VIP_EMAILS）は**そのまま残す**。
+    //   画面から全員消せると「誰も管理できない会場」が出来て復旧できないため、
+    //   環境変数側は「絶対に消えない管理者」として扱い、ここは**追加ぶんだけ**を持つ
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS staff (
+        email      TEXT PRIMARY KEY,
+        role       TEXT NOT NULL,
+        added_by   TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      )
+    `);
     // サーバーが最後に生きていた時刻。再起動で「退場が書かれないまま」残った行を
     // どの時刻で閉じるかの根拠になる（詳細は closeOpenVisits）
     await db.execute(`
@@ -254,7 +293,7 @@ export async function loadEvents() {
   try {
     const rs = await db.execute(
       `SELECT id, name, video_id, require_login, entry_code, capacity, vrc_bridge, created_at,
-              owner_email, npc_max, chat_mode, notice_level, notice_text
+              owner_email, npc_max, chat_mode, notice_level, notice_text, call_list
          FROM events`,
     );
     return rs.rows.map((r) => ({
@@ -271,6 +310,7 @@ export async function loadEvents() {
       chatMode: r.chat_mode == null ? 'local' : String(r.chat_mode),
       noticeLevel: r.notice_level == null ? '' : String(r.notice_level),
       noticeText: r.notice_text == null ? '' : String(r.notice_text),
+      callList: r.call_list == null ? '' : String(r.call_list),
     }));
   } catch (e) {
     console.warn('[store] イベント読み込みに失敗:', e.message);
@@ -284,8 +324,8 @@ export async function saveEvent(ev) {
   try {
     await db.execute({
       sql: `INSERT INTO events (id, name, video_id, require_login, entry_code, capacity, vrc_bridge, created_at,
-                                owner_email, npc_max, chat_mode, notice_level, notice_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                owner_email, npc_max, chat_mode, notice_level, notice_text, call_list)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               name = excluded.name,
               video_id = excluded.video_id,
@@ -297,7 +337,8 @@ export async function saveEvent(ev) {
               npc_max = excluded.npc_max,
               chat_mode = excluded.chat_mode,
               notice_level = excluded.notice_level,
-              notice_text = excluded.notice_text`,
+              notice_text = excluded.notice_text,
+              call_list = excluded.call_list`,
       args: [
         ev.id,
         ev.name,
@@ -312,6 +353,7 @@ export async function saveEvent(ev) {
         ev.chatMode || 'local',
         ev.noticeLevel || '',
         ev.noticeText || '',
+        ev.callList || '',
       ],
     });
     return true;
@@ -1024,6 +1066,102 @@ export async function deleteYtLinksFor(linkKey) {
     return true;
   } catch (e) {
     console.warn('[store] YouTube連携の解除に失敗:', e.message);
+    return false;
+  }
+}
+
+// ------------------------------------------------------------
+// コールのワード表（2026-08-03追加）
+// ------------------------------------------------------------
+
+/** 全リストを読む。@returns {Promise<Array<{id,name,words}>>} */
+export async function loadCallLists() {
+  if (!ready) return [];
+  try {
+    const rs = await db.execute('SELECT id, name, words FROM call_lists ORDER BY name');
+    return rs.rows.map((r) => {
+      let words = [];
+      try {
+        words = JSON.parse(String(r.words)) || [];
+      } catch {
+        words = [];
+      }
+      return { id: String(r.id), name: String(r.name), words };
+    });
+  } catch (e) {
+    console.warn('[store] コールのリスト読み込みに失敗:', e.message);
+    return [];
+  }
+}
+
+export async function saveCallList({ id, name, words }) {
+  if (!ready || !id) return false;
+  try {
+    await db.execute({
+      sql: `INSERT INTO call_lists (id, name, words, updated_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              name = excluded.name, words = excluded.words, updated_at = excluded.updated_at`,
+      args: [String(id), String(name || ''), JSON.stringify(words || []), Date.now()],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] コールのリスト保存に失敗:', e.message);
+    return false;
+  }
+}
+
+export async function deleteCallList(id) {
+  if (!ready || !id) return false;
+  try {
+    await db.execute({ sql: 'DELETE FROM call_lists WHERE id = ?', args: [String(id)] });
+    return true;
+  } catch (e) {
+    console.warn('[store] コールのリスト削除に失敗:', e.message);
+    return false;
+  }
+}
+
+// ------------------------------------------------------------
+// 運営メンバー（2026-08-03追加）
+// ------------------------------------------------------------
+
+export async function loadStaff() {
+  if (!ready) return [];
+  try {
+    const rs = await db.execute('SELECT email, role, added_by FROM staff');
+    return rs.rows.map((r) => ({
+      email: String(r.email),
+      role: String(r.role),
+      addedBy: String(r.added_by || ''),
+    }));
+  } catch (e) {
+    console.warn('[store] 運営メンバーの読み込みに失敗:', e.message);
+    return [];
+  }
+}
+
+export async function saveStaff({ email, role, addedBy = '' }) {
+  if (!ready || !email) return false;
+  try {
+    await db.execute({
+      sql: `INSERT INTO staff (email, role, added_by, created_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(email) DO UPDATE SET role = excluded.role, added_by = excluded.added_by`,
+      args: [String(email).toLowerCase(), String(role), String(addedBy), Date.now()],
+    });
+    return true;
+  } catch (e) {
+    console.warn('[store] 運営メンバーの保存に失敗:', e.message);
+    return false;
+  }
+}
+
+export async function deleteStaff(email) {
+  if (!ready || !email) return false;
+  try {
+    await db.execute({ sql: 'DELETE FROM staff WHERE email = ?', args: [String(email).toLowerCase()] });
+    return true;
+  } catch (e) {
+    console.warn('[store] 運営メンバーの削除に失敗:', e.message);
     return false;
   }
 }
