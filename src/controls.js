@@ -25,13 +25,20 @@ export function initControls(camera, avatar, domElement, { bounds, onJump, scree
     stageAllowed = Boolean(on) && Boolean(STAGE);
   }
 
-  /** その位置がステージの上か */
+  /**
+   * その位置が「ステージの天面の上」か。
+   *
+   * ⚠ 歩ける範囲(maxZ)とは別に、**天面が始まるz(topFromZ)** で判定する。
+   *   maxZ で判定すると、ステージ前端より手前（客席の一番前の床）でも浮いてしまう。
+   *   topFromZ が無いワールドでは maxZ に倒す（この判定を持たない会場でも動くように）。
+   */
   function onStage(x, z) {
     if (!stageAllowed || !STAGE) return false;
-    return x >= STAGE.minX && x <= STAGE.maxX && z >= STAGE.minZ && z <= STAGE.maxZ;
+    const topZ = typeof STAGE.topFromZ === 'number' ? STAGE.topFromZ : STAGE.maxZ;
+    return x >= STAGE.minX && x <= STAGE.maxX && z >= STAGE.minZ && z <= topZ;
   }
 
-  /** その位置の足元の高さ。ステージの上なら天面、それ以外は床(0) */
+  /** その位置の足元の高さ。ステージの天面の上なら天面、それ以外は床(0) */
   function groundYAt(x, z) {
     return onStage(x, z) ? STAGE.topY : 0;
   }

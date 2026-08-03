@@ -103,14 +103,28 @@ console.log('\n[4] ★上がれる範囲の座標が、VRChatへ送る形に正�
 const toVrcX = (x) => Math.round((-x + -209.0) * 10) / 10;
 const toVrcZ = (z) => Math.round((z + -71.91) * 10) / 10;
 // src/world_club.js の STAGE
-const STAGE = { minX: -5.5, maxX: 15.3, minZ: -29, maxZ: -16.5 };
+const STAGE = { minX: -5.5, maxX: 15.3, minZ: -29, maxZ: -16.5, topFromZ: -18.07 };
 const vx = [toVrcX(STAGE.minX), toVrcX(STAGE.maxX)].sort((a, b) => a - b);
 const vz = [toVrcZ(STAGE.minZ), toVrcZ(STAGE.maxZ)].sort((a, b) => a - b);
-console.log(`  ステージのVRC座標: X ${vx[0]}〜${vx[1]} ／ Z ${vz[0]}〜${vz[1]}`);
-ok('申し送り⑧で伝えたXの範囲と合う（-224〜-204）',
+console.log(`  歩ける範囲のVRC座標: X ${vx[0]}〜${vx[1]} ／ Z ${vz[0]}〜${vz[1]}`);
+console.log(`  天面が始まるZ: ${toVrcZ(STAGE.topFromZ)}`);
+ok('申し送り⑧で伝えたXの範囲と合う（-224.3〜-203.5）',
   Math.abs(vx[0] - -224.3) < 0.2 && Math.abs(vx[1] - -203.5) < 0.2, `${vx[0]}〜${vx[1]}`);
-ok('申し送り⑧で伝えたZの範囲と合う（-102〜-88）',
+// ⚠ 申し送り⑧の初版は「-102〜-90」と書いていたが、実装は客席と地続き（-88.4まで）。
+//   VRChat側からの確認で食い違いに気づいたので、正しい値を正本にする
+ok('Zの範囲は客席と地続き（-100.9〜-88.4）',
   Math.abs(vz[0] - -100.91) < 0.2 && Math.abs(vz[1] - -88.41) < 0.2, `${vz[0]}〜${vz[1]}`);
+
+console.log('\n[4-2] ★ステージ前端より手前は「床」のまま（浮かない）');
+// ここを maxZ で判定すると、客席の一番前の床の上で1.38m浮く。
+// VRChat側の「段差の真上でレイが変なものを拾うのでは」という指摘で見つかった穴
+const onStageTop = (z) => z >= STAGE.minZ && z <= STAGE.topFromZ;
+ok('客席の端(-16.5)では天面に乗らない', !onStageTop(-16.5));
+ok('ステージ手前の床(-17)でも天面に乗らない', !onStageTop(-17));
+ok('前端(-18.07)から天面に乗る', onStageTop(-18.07));
+ok('ステージ中央(-24)は天面', onStageTop(-24));
+ok('奥の端(-29)も天面', onStageTop(-29));
+console.log(`  → 高さが変わるのは VRC Z=${toVrcZ(STAGE.topFromZ)} より奥だけ`);
 
 console.log('\n[5] ステージと客席が繋がっている（歩いて上がれる）');
 // 客席の手前端(minZ=-16.5)とステージのmaxZが同じか重なっていないと、
