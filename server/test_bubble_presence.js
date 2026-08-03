@@ -112,6 +112,8 @@ const codeMsg = await waitFor(ws, 'yt-code');
 ok('合言葉が発行された', codeMsg.ok === true && /^AV-/.test(codeMsg.code || ''),
   codeMsg.code || codeMsg.why);
 
+// yt-linked は注入の応答より先に届くので、待ち受けを先に張る
+const linkedMsg = waitFor(ws, 'yt-linked').catch(() => null);
 const linked = await post('/api/_yt-inject', {
   eventId: evId,
   channelId: CHANNEL,
@@ -119,7 +121,21 @@ const linked = await post('/api/_yt-inject', {
   text: `${codeMsg.code} つなげます`,
 });
 ok('注入口が受け付けた', linked.ok === true, JSON.stringify(linked));
-await waitFor(ws, 'yt-linked').catch(() => null);
+const lm = await linkedMsg;
+ok('本人に「繋がった」が届く', Boolean(lm && lm.ok), JSON.stringify(lm));
+// ★ 2026-08-03 追加。保存できたかを本人に伝える（saved）。
+//   ここが false のまま黙っていたせいで、再起動で結びつきが消えた理由が
+//   誰にも分からなかった。DBが有効なら true でなければならない
+const st = await (await fetch(`${HTTP_URL}/api/status`)).json();
+if (st.store.ready) {
+  ok('保存できたと本人に伝わる（saved:true）', lm && lm.saved === true, JSON.stringify(lm && lm.saved));
+  ok('保存の失敗が記録されていない', st.ytRead.linkWrite.fails === 0,
+    JSON.stringify(st.ytRead.linkWrite));
+} else {
+  ok('DB無しなら「保存できなかった」と本人に伝わる', lm && lm.saved === false,
+    JSON.stringify(lm && lm.saved));
+  ok('保存の失敗が記録される', st.ytRead.linkWrite.fails > 0, JSON.stringify(st.ytRead.linkWrite));
+}
 await sleep(200);
 
 console.log('\n[4] YouTubeのコメントは c に載る');

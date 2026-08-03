@@ -333,7 +333,16 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
           break;
         // 繋がった／解除された
         case 'yt-linked':
-          if (h.onYtLinked) h.onYtLinked({ ok: msg.ok, ytName: msg.ytName || '', removed: msg.removed || 0 });
+          // saved … 結びつきを保存できたか。false なら次にサーバーが再起動した
+          //          時点で消える（本人に伝えないと「繋がったのに出ない」になる）
+          if (h.onYtLinked) {
+            h.onYtLinked({
+              ok: msg.ok,
+              ytName: msg.ytName || '',
+              removed: msg.removed || 0,
+              saved: msg.saved !== false,
+            });
+          }
           break;
         case 'count':
           if (h.onCount) h.onCount(msg.c);

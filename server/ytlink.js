@@ -35,12 +35,21 @@ const links = new Map();
 /** 合言葉 -> { linkKey, expiresAt }（発行中で、まだ打たれていないもの） */
 const pending = new Map();
 
+/** 起動時に何件読めたか。0だと「保存が効いていない」の手がかりになる（2026-08-03追加） */
+let loadedAtBoot = -1;
+
 /** 起動時にDBから読み込む。DBが無い（メモリ運用）ときは空のまま動く */
 export async function initYtLinks() {
   const rows = await loadYtLinks();
   links.clear();
   for (const r of rows) links.set(r.channelId, r.linkKey);
+  loadedAtBoot = links.size;
   return links.size;
+}
+
+/** 起動時に読めた件数（-1＝まだ読んでいない）。/api/status に出す */
+export function ytLinksLoadedAtBoot() {
+  return loadedAtBoot;
 }
 
 /** いま何件結びついているか（管理者向けの状態表示用） */
@@ -120,15 +129,20 @@ export function matchMessage(msg) {
   // 結びついた。合言葉は使い捨て（同じ合言葉を他人が打っても効かないように）
   pending.delete(code);
   links.set(msg.channelId, p.linkKey);
-  // 保存は待たない。失敗しても今の会は動き、次回また合言葉を打てばよい
-  saveYtLink({
+
+  // ⚠ 保存の結果を **呼び出し側へ渡す**（2026-08-03 変更）。
+  //   以前は `.catch(() => {})` で握りつぶしていたので、保存できていなくても
+  //   本人には「繋がりました」と出て、**再起動して初めて消えていたと分かる**状態だった。
+  //   結びつけは1人1回しか起きないので、ここだけ結果を待っても配信の負担にならない
+  //   （毎コメントの処理はこの分岐を通らない）。
+  const savePromise = saveYtLink({
     channelId: msg.channelId,
     linkKey: p.linkKey,
     ytName: msg.name || '',
     createdAt: Date.now(),
-  }).catch(() => {});
+  }).catch(() => false);
 
-  return { linkKey: p.linkKey, justLinked: true };
+  return { linkKey: p.linkKey, justLinked: true, savePromise };
 }
 
 /** その人の結びつきを解除する（本人が「連携をやめる」を押したとき） */

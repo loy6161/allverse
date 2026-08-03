@@ -53,11 +53,58 @@ export function isYouTubeReadEnabled() {
   return Boolean(API_KEY);
 }
 
-/** 設定状況の要約（/api/status に出して設定ミスを画面から特定するため）。キーそのものは絶対に出さない */
+// ------------------------------------------------------------
+// 読み取りの健康状態（2026-08-03追加）
+//
+// なぜ要るのか:
+//   「YouTubeにコメントしたのに会場に出ない」が起きたとき、外から分かるのは
+//   「キーが設定されている」「読み取りが動いている」だけで、
+//   **取れているのか・失敗しているのか・枠切れなのかが何も見えなかった**。
+//   Renderのログを見に行かないと切り分けられず、配信中には間に合わない。
+//   ここに最後の結果を残して /api/status から見えるようにする。
+// ------------------------------------------------------------
+
+const health = {
+  lastOkAt: 0,        // 最後に取得できた時刻（ミリ秒）
+  lastCount: 0,       // そのとき受け取った件数
+  totalMsgs: 0,       // 起動してからの累計件数
+  lastErrorAt: 0,     // 最後に失敗した時刻
+  lastError: '',      // その理由（quotaExceeded など）
+  fails: 0,           // 連続失敗回数（0に戻ったら復活した合図）
+  nextInMs: 0,        // 次に見に行くまでの間隔（枠切れで伸びる）
+};
+
+function noteReadOk(count, nextInMs) {
+  health.lastOkAt = Date.now();
+  health.lastCount = count;
+  health.totalMsgs += count;
+  health.lastError = '';
+  health.fails = 0;
+  health.nextInMs = nextInMs;
+}
+
+function noteReadError(message, nextInMs) {
+  health.lastErrorAt = Date.now();
+  health.lastError = message;
+  health.fails += 1;
+  health.nextInMs = nextInMs;
+}
+
+/** 設定状況と直近の結果（/api/status 用）。キーそのものは絶対に出さない */
 export function getYouTubeReadStatus() {
+  const now = Date.now();
+  const ago = (t) => (t ? Math.round((now - t) / 1000) : null);
   return {
     keySet: Boolean(API_KEY),
     intervalMs: INTERVAL_MS,
+    // ↓ ここから2026-08-03追加。「取れているのか」を外から見るためのもの
+    lastOkAgoSec: ago(health.lastOkAt),   // null＝起動してから一度も取れていない
+    lastCount: health.lastCount,
+    totalMsgs: health.totalMsgs,
+    lastErrorAgoSec: ago(health.lastErrorAt),
+    lastError: health.lastError,
+    fails: health.fails,
+    nextInMs: health.nextInMs,
   };
 }
 
@@ -177,7 +224,9 @@ export class LiveChatReader {
           // まだ配信が始まっていない／もう終わった。
           // 枠を無駄に使わないよう、少し待ってから見に行く
           this.lastError = 'この動画はいまライブ配信中ではありません';
-          this.schedule(Math.max(INTERVAL_MS * 3, 30_000));
+          const waitMs = Math.max(INTERVAL_MS * 3, 30_000);
+          noteReadError(this.lastError, waitMs);
+          this.schedule(waitMs);
           return;
         }
       }
@@ -212,7 +261,9 @@ export class LiveChatReader {
       // YouTubeが指定してくる待ち時間は下限として必ず守る。
       // こちらの既定（枠の節約）とどちらか長い方を採る
       const wantMs = Number(data.pollingIntervalMillis) || 0;
-      this.schedule(Math.max(INTERVAL_MS, wantMs));
+      const nextMs = Math.max(INTERVAL_MS, wantMs);
+      noteReadOk(msgs.length, nextMs);
+      this.schedule(nextMs);
     } catch (err) {
       this.lastError = err?.message || String(err);
 
@@ -229,6 +280,7 @@ export class LiveChatReader {
         ? Math.min(this.backoffMs * 2, MAX_BACKOFF_MS)
         : INTERVAL_MS * 2;
       console.warn('[ytread]', this.videoId, this.lastError);
+      noteReadError(this.lastError, this.backoffMs);
       this.schedule(this.backoffMs);
     }
   }

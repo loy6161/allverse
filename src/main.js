@@ -708,11 +708,16 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         if (ok && ytChat) ytChat.showCode(code);
       },
       // 繋がった／解除された
-      onYtLinked: ({ ok, ytName }) => {
+      onYtLinked: ({ ok, ytName, saved }) => {
         ytLinkState = { ...ytLinkState, linked: Boolean(ok), ytName: ytName || '' };
         if (ytChat) ytChat.setLinkState(ytLinkState);
         if (ok) {
           chat.addMessage('', `YouTubeチャンネルと繋がりました${ytName ? `（${ytName}）` : ''}。YouTubeでの発言があなたのアバターに出ます。`, { system: true });
+          // 保存できていないと、サーバーが入れ替わった時点で繋がりが消える。
+          // 黙っていると「繋がったはずなのに出ない」になるので、その場で言う
+          if (saved === false) {
+            chat.addMessage('', '⚠ ただし、この繋がりを保存できませんでした。サーバーが入れ替わると消えるので、そのときはもう一度合言葉を打ってください。', { system: true });
+          }
         } else {
           chat.addMessage('', 'YouTubeチャンネルとの連携を解除しました。', { system: true });
         }

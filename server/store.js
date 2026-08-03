@@ -1011,12 +1011,48 @@ export async function listChatLog(runId, limit = 5000) {
 // YouTubeチャンネルとの結びつき（2026-08-03追加）
 // ------------------------------------------------------------
 
+// 保存の失敗を残す場所（2026-08-03追加）。
+//
+// なぜ要るのか:
+//   結びつきの保存は「配信中に発言が遅れないよう」投げっぱなしにしてあり、
+//   失敗しても誰にも見えなかった。その結果、**再起動したら全員の結びつきが
+//   消えていて、原因も分からない**という状態になった（実際に起きた）。
+//   ログはRenderを見に行かないと読めず、配信中には間に合わない。
+const ytLinkWrite = { lastErrorAt: 0, lastError: '', fails: 0, oks: 0 };
+
+function noteYtLinkWriteError(message) {
+  ytLinkWrite.lastErrorAt = Date.now();
+  ytLinkWrite.lastError = message;
+  ytLinkWrite.fails += 1;
+}
+
+/** 結びつきの保存がうまくいっているか（/api/status 用） */
+export function getYtLinkWriteHealth() {
+  return {
+    oks: ytLinkWrite.oks,
+    fails: ytLinkWrite.fails,
+    lastError: ytLinkWrite.lastError,
+    lastErrorAgoSec: ytLinkWrite.lastErrorAt
+      ? Math.round((Date.now() - ytLinkWrite.lastErrorAt) / 1000)
+      : null,
+  };
+}
+
 /**
  * 結びつきを保存する。同じチャンネルを別の人が繋ぎ直したら上書きする
  * （アカウントを持ち替えた場合に、古い持ち主のアバターへ吹き出しが出ると事故になるため）。
  */
 export async function saveYtLink({ channelId, linkKey, ytName = '', createdAt = Date.now() }) {
-  if (!ready || !channelId || !linkKey) return false;
+  // ⚠ ここで false を返すと、呼び出し側は「保存できなかった」と分かる。
+  //   握りつぶすと**再起動で結びつきが消えた理由が誰にも分からない**（2026-08-03 実際に起きた）
+  if (!ready) {
+    noteYtLinkWriteError('永続化が無効（DBに繋がっていない）');
+    return false;
+  }
+  if (!channelId || !linkKey) {
+    noteYtLinkWriteError('channelId か linkKey が空');
+    return false;
+  }
   try {
     await db.execute({
       sql: `INSERT INTO yt_links (channel_id, link_key, yt_name, created_at)
@@ -1027,9 +1063,11 @@ export async function saveYtLink({ channelId, linkKey, ytName = '', createdAt = 
               created_at = excluded.created_at`,
       args: [String(channelId), String(linkKey), String(ytName || ''), createdAt],
     });
+    ytLinkWrite.oks += 1;
     return true;
   } catch (e) {
     console.warn('[store] YouTube連携の保存に失敗:', e.message);
+    noteYtLinkWriteError(e?.message || String(e));
     return false;
   }
 }

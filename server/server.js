@@ -19,6 +19,7 @@ import {
   initStore,
   isPersistent,
   getStoreStatus,
+  getYtLinkWriteHealth,
   loadEvents,
   saveEvent,
   updateEventVideo,
@@ -59,7 +60,15 @@ import {
 import { summarize, gridSeries, autoStepMs, visitsCsv, seriesCsv, chatCsv } from './stats.js';
 // YouTubeのライブチャットを読んで、本人のアバターに吹き出しを出す（2026-08-03追加）
 import { LiveChatReader, isYouTubeReadEnabled, getYouTubeReadStatus } from './ytread.js';
-import { initYtLinks, issueCode, matchMessage, unlink, isLinked, ytLinkCount } from './ytlink.js';
+import {
+  initYtLinks,
+  issueCode,
+  matchMessage,
+  unlink,
+  isLinked,
+  ytLinkCount,
+  ytLinksLoadedAtBoot,
+} from './ytlink.js';
 // コメントの中身からエモートを決める（2026-08-03追加）
 import { emoteFromText } from './chatemote.js';
 // ゲストの見た目はクライアントと同じ計算で決める（src/guestlook.js を両側で読む）。
@@ -1648,7 +1657,10 @@ function syncYtReaders() {
   for (const ev of events.values()) {
     if (!shouldReadYt(ev) || ytReaders.has(ev.id)) continue;
     const reader = new LiveChatReader(ev.videoId, (msgs) => {
-      onYtMessages(ev.id, msgs);
+      // onYtMessages は保存の結果を待つので非同期。ここで転ばせない
+      onYtMessages(ev.id, msgs).catch((e) => {
+        console.warn('[ytread] 発言の処理で失敗:', e?.message || e);
+      });
     });
     ytReaders.set(ev.id, reader);
     reader.start();
@@ -1688,7 +1700,7 @@ function findClientByLinkKey(eventId, linkKey) {
  * YouTubeから届いた発言をさばく。
  * 結びついている人のものだけを、その人がいるルームへ流す。
  */
-function onYtMessages(eventId, msgs) {
+async function onYtMessages(eventId, msgs) {
   for (const msg of msgs) {
     const hit = matchMessage(msg);
     if (!hit) continue; // 関係ない人の発言＝吹き出しは出さない
@@ -1697,8 +1709,13 @@ function onYtMessages(eventId, msgs) {
     if (!client) continue; // 繋いだ人が会場にいない（帰った後の発言など）
 
     if (hit.justLinked) {
+      // 保存できたかを待ってから知らせる（2026-08-03 変更）。
+      // 保存できていないと**サーバーを再起動しただけで結びつきが消え**、
+      // 本人は「繋がったはずなのに出ない」としか分からない。それを起きた時点で伝える。
+      // 待つのは1人1回だけなので、毎コメントの処理は遅くならない
+      const saved = hit.savePromise ? await hit.savePromise : false;
       // 本人にだけ「繋がった」と知らせる。名前はYouTube側の表示名
-      send(client.ws, { t: 'yt-linked', ok: true, ytName: msg.name || '' });
+      send(client.ws, { t: 'yt-linked', ok: true, ytName: msg.name || '', saved });
     }
 
     const txt = clampString(msg.text, MAX_TXT_LEN);
@@ -1745,7 +1762,7 @@ function onYtMessages(eventId, msgs) {
  * ⚠ ローカル（Render以外）のループバック接続からしか受け付けない。
  *   スクリーンショット用の /api/_shot と同じ守り方。
  */
-function handleDevYtInject(body) {
+async function handleDevYtInject(body) {
   const eventId = String(body?.eventId || '');
   if (!events.has(eventId)) return { ok: false, why: 'イベントが見つかりません' };
   const msg = {
@@ -1753,7 +1770,8 @@ function handleDevYtInject(body) {
     name: String(body?.name || 'テスト視聴者'),
     text: String(body?.text || ''),
   };
-  onYtMessages(eventId, [msg]);
+  // 保存まで待ってから返す。待たないとテスト側が「まだ処理していない状態」を見てしまう
+  await onYtMessages(eventId, [msg]);
   return { ok: true, sent: msg };
 }
 
@@ -2075,7 +2093,18 @@ function buildStatusJson() {
     // YouTubeチャットの読み取り（2026-08-03追加）。APIキーそのものは出さない。
     // reading … いま実際に読み取りが動いているイベントの数
     // links   … 結びつき済みのチャンネル数
-    ytRead: { ...getYouTubeReadStatus(), reading: ytReaders.size, links: ytLinkCount() },
+    // linksLoadedAtBoot … 起動時にDBから読めた件数。
+    //   これが 0 なのに links が増えていくなら「保存が効いていない」。
+    //   linkWrite.fails が増えているなら、その理由が lastError に出る。
+    //   2026-08-03、再起動で結びつきが全部消えたのに原因が外から分からず、
+    //   配信中に切り分けられなかったので足した
+    ytRead: {
+      ...getYouTubeReadStatus(),
+      reading: ytReaders.size,
+      links: ytLinkCount(),
+      linksLoadedAtBoot: ytLinksLoadedAtBoot(),
+      linkWrite: getYtLinkWriteHealth(),
+    },
     uptime: Math.floor((Date.now() - startedAt) / 1000),
     // いま動いているのがどのコミットかを外から見られるようにする。
     // 2026-07-30、本番が9コミット前のまま止まっているのに気づけず、
@@ -2548,7 +2577,7 @@ const httpServer = http.createServer(async (req, res) => {
   // 開発用: YouTubeの発言が届いたことにする（ローカルのみ・上記 handleDevYtInject 参照）
   if (ALLOW_SHOTS && isLoopback(req) && req.method === 'POST' && url === '/api/_yt-inject') {
     const body = await readJsonBody(req).catch(() => null);
-    const out = handleDevYtInject(body || {});
+    const out = await handleDevYtInject(body || {});
     res.writeHead(out.ok ? 200 : 400, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(out));
     return;
