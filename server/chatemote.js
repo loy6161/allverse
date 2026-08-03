@@ -20,6 +20,21 @@
 export const MAX_REPEAT = 10;
 
 /**
+ * 「弾幕」とみなす絵文字の個数の下限（2026-08-03追加）。
+ * これ以上あって、かつ2種類以上混ざっていればペンライトへ倒す。
+ * 4個は「💙♬💙♬」がちょうど入る数（2種類×2回）
+ */
+export const BARRAGE_MIN = 4;
+
+/**
+ * 弾幕とみなさない「突出」の割合（2026-08-03追加）。
+ * いちばん多い絵文字がこの割合以上を占めるなら、混ざっていてもその絵文字を採る。
+ * 例: 👏👏👏⭐ は拍手が 3/4 = 0.75 なので拍手のまま。
+ *     💙♬💙♬… は 4/8 = 0.5 でどちらも突出せず、弾幕と判定される
+ */
+export const BARRAGE_TOP_SHARE = 0.6;
+
+/**
  * 決め打ちの絵文字 → エモート。
  * ⚠ 見た目が同じでも符号が違う絵文字がある（❤️ は U+2764 + 異体字セレクタ）ので、
  *   異体字セレクタを外してから比べる。
@@ -128,15 +143,39 @@ export function emoteFromText(text) {
     else others++;
   }
 
-  if (tally.size) {
-    let best = null;
-    let bestN = 0;
-    for (const [id, n] of tally) {
-      if (n > bestN) {
-        best = id;
-        bestN = n;
-      }
+  // ---- 混ざった弾幕はペンライトにする（2026-08-03 loyさん指摘） ----
+  //
+  //   > アーティスト指定の弾幕で 💙♬💙♬💙♬💙♬ や 🚀⭐️🚀⭐️🚀⭐️ などがあって、
+  //   > その場合ペンライトじゃなくてハートや🌟が優先されちゃう
+  //
+  // 弾幕は「2種類以上の絵文字を交互にたくさん並べる」形が多い。
+  // 一方、素直な反応（❤️❤️❤️ / 👏👏👏）は**同じ絵文字の繰り返し**になる。
+  // そこで **種類が2つ以上 かつ 合計が4個以上** なら弾幕とみなしてペンライトへ倒す。
+  //
+  // ⚠ 「👏⭐」のような軽い混ぜ方まで弾幕にしないため、個数の下限を置いている。
+  //   ここを外すと、ふつうの反応までペンライトになってしまう
+  const kinds = new Set([...tally.keys()]);
+  if (others > 0) kinds.add('_other');
+
+  // いちばん多い絵文字が全体の何割を占めるか
+  let best = null;
+  let bestN = 0;
+  for (const [id, n] of tally) {
+    if (n > bestN) {
+      best = id;
+      bestN = n;
     }
+  }
+  const topShare = Math.max(bestN, others) / found.length;
+
+  // ⚠ 「突出して多いものがある」ときは弾幕とみなさない。
+  //   👏👏👏⭐ は拍手が3/4を占めるので拍手のまま。
+  //   💙♬💙♬… は half-half なのでどちらも突出せず、弾幕と判定される
+  if (kinds.size >= 2 && found.length >= BARRAGE_MIN && topShare < BARRAGE_TOP_SHARE) {
+    return { id: 'penlight', n: Math.min(MAX_REPEAT, found.length) };
+  }
+
+  if (tally.size) {
     return { id: best, n: Math.min(MAX_REPEAT, bestN) };
   }
 
