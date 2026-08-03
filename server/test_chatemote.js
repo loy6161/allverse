@@ -55,6 +55,14 @@ ok('🍺 で乾杯', r('\u{1F37A}').id === 'cheers');
 ok('✊ でコブシ', r('\u{270A}').id === 'fist');
 ok('🤘 でヘッドバンキング', r('\u{1F918}').id === 'headbang');
 
+console.log('\n[3-2] ジャンプ（2026-08-03追加・12種で唯一割り当てが抜けていた）');
+ok('↑ でジャンプ', r('\u{2191}').id === 'jump', JSON.stringify(r('\u{2191}')));
+ok('↑↑↑ は3回ぶん', r('\u{2191}\u{2191}\u{2191}').n === 3, String(r('\u{2191}\u{2191}\u{2191}').n));
+ok('⤴️ でジャンプ', r('\u{2934}\u{FE0F}').id === 'jump');
+ok('⬆️ でジャンプ', r('\u{2B06}\u{FE0F}').id === 'jump');
+ok('🆙 でジャンプ', r('\u{1F199}').id === 'jump');
+ok('→（右矢印）は拾わない', r('\u{2192}') === null, JSON.stringify(r('\u{2192}')));
+
 console.log('\n[4] 指定以外の絵文字はペンライト（弾幕）');
 const barrage = r('\u{1F680}\u{1F680}\u{1F680}\u{1F680}\u{1F680}'); // 🚀×5
 ok('未指定の絵文字はペンライト', barrage.id === 'penlight', JSON.stringify(barrage));

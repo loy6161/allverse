@@ -88,7 +88,7 @@ export function renderDisplaySettings(body, { onEmotePrefsChange, onChatEmoteCha
   const noteC = document.createElement('div');
   noteC.className = 'vc-help-note';
   noteC.textContent =
-    'YouTubeチャンネルを連携していると、自分のコメントに合わせてアバターがエモートします（888で拍手、乾杯で乾杯、そのほかの絵文字はペンライト）。連投したぶんだけ続けて動きます。';
+    'YouTubeチャンネルを連携していると、自分のコメントに合わせてアバターがエモートします（888で拍手、乾杯で乾杯、↑でジャンプ、そのほかの絵文字はペンライト）。連投したぶんだけ続けて動きます。';
   boxC.appendChild(noteC);
 
   const rowC = document.createElement('div');
