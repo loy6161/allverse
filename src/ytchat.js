@@ -220,8 +220,18 @@ export function initYouTubeChat({ getVideoId, onRequestCode, onUnlink }) {
   let mountedFor = '';
 
   function chatUrl(videoId) {
-    // embed_domain は埋め込み元のホスト名。これが無いとYouTube側に拒否される
-    return `https://www.youtube.com/live_chat?v=${encodeURIComponent(videoId)}&embed_domain=${encodeURIComponent(location.hostname)}`;
+    // embed_domain は埋め込み元のホスト名。これが無いとYouTube側に拒否される。
+    //
+    // dark_theme=1（2026-08-03追加）:
+    //   YouTube側は既定で**白背景**のチャットを出す。暗い会場の中に白い板が入るだけでなく、
+    //   実際に**白背景に白い文字**になって読めない状態だった（loyさん指摘）。
+    //   ⚠ 中身はYouTubeのページなので、こちらのCSSでは一切手を出せない。
+    //     色を変える手段はこのパラメータしかない
+    return (
+      `https://www.youtube.com/live_chat?v=${encodeURIComponent(videoId)}` +
+      `&embed_domain=${encodeURIComponent(location.hostname)}` +
+      `&dark_theme=1`
+    );
   }
 
   function openExternal() {
