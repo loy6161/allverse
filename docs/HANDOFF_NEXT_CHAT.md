@@ -48,8 +48,9 @@ WS_URL=ws://localhost:5204/ws HTTP_URL=http://localhost:5204 node test_bubble_pr
 **`docs/HANDOFF_UNITY_6_AVATAR2.md` と `docs/HANDOFF_UNITY_7_BUBBLE.md` を
 VERSE CITY2025 チャットへ渡す。2枚まとめて渡せる。**
 
-⑦は**VRC客席の吹き出し**。WEB側は実装・テスト・実測まで済んでいて、
-**あとはUdon側にTMPの吹き出しを足すだけ**の状態。渡さないと絵が出ない。
+⑦は**VRC客席の吹き出し**。WEB側は実装・テスト・実測・本番反映まで完了。
+**VRChat側とは合意済み**（決定2に異論なし／受け入れ準備完了／NGフィルタは両側とも入れない）。
+**あとはUdon側にTMPの吹き出しを足すだけ**の状態。
 
 `av` に `ht`（身長）が増え、`bc`（肌色）が 0–8 に広がり、
 エモートの `emd`（長さ）が最大10回ぶんまで伸びるようになった。
