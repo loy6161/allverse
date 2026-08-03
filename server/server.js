@@ -177,8 +177,18 @@ const PRESENCE_MAX_WEB = 60;      // web[] の最大人数
 const PRESENCE_CHAT_WINDOW_MS = 30 * 1000; // c を付与する直近発言の有効期間
 const PRESENCE_CHAT_TXT_MAX = 40; // c[0] の最大文字数（30KB制約対応）
 
-// 「直近チャット」フィールド(c)は実装済みだが、運用判断が済むまで既定は無効。
-const ENABLE_CHAT_FIELD = false;
+// 「直近チャット」フィールド(c)。2026-08-03 有効化（申し送り⑦）。
+//
+// ⚠ 出すのは YouTube由来の発言だけ。会場の独自チャットは絶対に載せない。
+//    presence.json / live.json は認証なしの公開URLなので、載せた発言は
+//    「会場にいない人にも読める」。YouTubeのコメントは元から公開の場での発言なので
+//    再掲しても新たに漏れるものが無いが、会場チャットは入場者どうしの会話であって、
+//    公開のつもりで言われていない。詳細は docs/HANDOFF_UNITY_7_BUBBLE.md「決定2」
+const ENABLE_CHAT_FIELD = true;
+
+// lastChat.src に入る値。'yt' だけが presence.json の c に出る（上のコメント参照）
+const CHAT_SRC_YT = 'yt';
+const CHAT_SRC_LOCAL = 'local';
 
 // 運営メッセージの固定枠（2026-08-02追加）。チャットに流すと見逃されるので別枠にする
 const NOTICE_LEVELS = new Set(['info', 'important', 'emergency']);
@@ -398,7 +408,7 @@ function endVisitLog(client, closedBy = '') {
  * @property {number} z
  * @property {number} r
  * @property {boolean} m
- * @property {{txt:string, ts:number}|null} lastChat
+ * @property {{txt:string, ts:number, src:'yt'|'local'}|null} lastChat
  * @property {number[]} msgTimes
  */
 
@@ -967,7 +977,8 @@ function handleChat(client, msg) {
   let scope = msg.sc === 'stream' ? 'stream' : 'local';
   if (scope === 'stream' && !canControlVideo(client.role)) scope = 'local';
 
-  client.lastChat = { txt, ts: Date.now() };
+  // src:'local' ＝ 会場の独自チャット。presence.json には出さない（公開URLのため）
+  client.lastChat = { txt, ts: Date.now(), src: CHAT_SRC_LOCAL };
 
   // 会場チャットを記録する（2026-08-02 loyさん要望「何かあった時に証拠になるので」）。
   // ブロードキャストの前に await すると発言が遅れるので、記録は投げっぱなしにする。
@@ -1692,7 +1703,8 @@ function onYtMessages(eventId, msgs) {
 
     const txt = clampString(msg.text, MAX_TXT_LEN);
     if (!txt) continue;
-    client.lastChat = { txt, ts: Date.now() };
+    // src:'yt' ＝ YouTubeのコメント。これだけが presence.json の c に出る
+    client.lastChat = { txt, ts: Date.now(), src: CHAT_SRC_YT };
 
     // コメントの中身に応じてエモートを出す（2026-08-03追加・loyさん発案）。
     // 本人が「自分のアバターを動かさない」を選んでいる場合は出さない
@@ -2165,7 +2177,15 @@ function buildPresenceJson() {
         }
       }
 
-      if (ENABLE_CHAT_FIELD && client.lastChat && nowMs - client.lastChat.ts <= PRESENCE_CHAT_WINDOW_MS) {
+      // ★ src が 'yt' のものだけ。会場の独自チャットは載せない（ENABLE_CHAT_FIELD のコメント参照）。
+      //   ここを `client.lastChat.src !== CHAT_SRC_LOCAL` のような否定形で書かないこと。
+      //   将来 src が増えたときに、うっかり公開URLへ漏れる側に倒れる
+      if (
+        ENABLE_CHAT_FIELD &&
+        client.lastChat &&
+        client.lastChat.src === CHAT_SRC_YT &&
+        nowMs - client.lastChat.ts <= PRESENCE_CHAT_WINDOW_MS
+      ) {
         entry.c = [
           clampString(client.lastChat.txt, PRESENCE_CHAT_TXT_MAX),
           Math.floor(client.lastChat.ts / 1000),

@@ -25,6 +25,15 @@ node test_ytlink.js          # 27項目（合言葉の結びつけ）
 node test_emote_presence.js  # 17項目（presenceのem/emt/emd）※要サーバー起動
 node test_staff.js           # 53項目（権限）※要ログイン有効サーバー
 node test_entrykey.js        # 2項目（入口の鍵）
+node test_bubble_presence.js # 18項目（VRCへ出す吹き出し）※専用の起動が要る（下記）
+```
+
+`test_bubble_presence.js` だけ起動のしかたが違う（合言葉の発行にキーが要るため。ダミーで可）:
+
+```bash
+cd server
+YOUTUBE_API_KEY=dummy PORT=5204 node server.js
+WS_URL=ws://localhost:5204/ws HTTP_URL=http://localhost:5204 node test_bubble_presence.js
 ```
 
 ⚠ 廃止済みの4本（test.js / test_events.js / test_moderation.js / test_emote_screen.js）は
@@ -36,7 +45,11 @@ node test_entrykey.js        # 2項目（入口の鍵）
 
 ### 1. VRChat側へ申し送りを渡す（loyさんの作業・未実施）
 
-**`docs/HANDOFF_UNITY_6_AVATAR2.md` を VERSE CITY2025 チャットへ渡す。**
+**`docs/HANDOFF_UNITY_6_AVATAR2.md` と `docs/HANDOFF_UNITY_7_BUBBLE.md` を
+VERSE CITY2025 チャットへ渡す。2枚まとめて渡せる。**
+
+⑦は**VRC客席の吹き出し**。WEB側は実装・テスト・実測まで済んでいて、
+**あとはUdon側にTMPの吹き出しを足すだけ**の状態。渡さないと絵が出ない。
 
 `av` に `ht`（身長）が増え、`bc`（肌色）が 0–8 に広がり、
 エモートの `emd`（長さ）が最大10回ぶんまで伸びるようになった。
