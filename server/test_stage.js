@@ -103,7 +103,7 @@ console.log('\n[4] ★上がれる範囲の座標が、VRChatへ送る形に正�
 const toVrcX = (x) => Math.round((-x + -209.0) * 10) / 10;
 const toVrcZ = (z) => Math.round((z + -71.91) * 10) / 10;
 // src/world_club.js の STAGE
-const STAGE = { minX: -5.5, maxX: 15.3, minZ: -29, maxZ: -16.5, topFromZ: -18.07 };
+const STAGE = { minX: -5.5, maxX: 15.3, minZ: -29.6, maxZ: -16.5, topFromZ: -18.07 };
 const vx = [toVrcX(STAGE.minX), toVrcX(STAGE.maxX)].sort((a, b) => a - b);
 const vz = [toVrcZ(STAGE.minZ), toVrcZ(STAGE.maxZ)].sort((a, b) => a - b);
 console.log(`  歩ける範囲のVRC座標: X ${vx[0]}〜${vx[1]} ／ Z ${vz[0]}〜${vz[1]}`);
@@ -112,8 +112,11 @@ ok('申し送り⑧で伝えたXの範囲と合う（-224.3〜-203.5）',
   Math.abs(vx[0] - -224.3) < 0.2 && Math.abs(vx[1] - -203.5) < 0.2, `${vx[0]}〜${vx[1]}`);
 // ⚠ 申し送り⑧の初版は「-102〜-90」と書いていたが、実装は客席と地続き（-88.4まで）。
 //   VRChat側からの確認で食い違いに気づいたので、正しい値を正本にする
-ok('Zの範囲は客席と地続き（-100.9〜-88.4）',
-  Math.abs(vz[0] - -100.91) < 0.2 && Math.abs(vz[1] - -88.41) < 0.2, `${vz[0]}〜${vz[1]}`);
+ok('Zの範囲は客席と地続き（-101.5〜-88.4）',
+  Math.abs(vz[0] - -101.51) < 0.2 && Math.abs(vz[1] - -88.41) < 0.2, `${vz[0]}〜${vz[1]}`);
+// VRChat側が「天面」と実測した最奥（VRC Z=-101）を必ず含むこと。
+// -29 のままだと 0.09m 足りず、そこだけ床に落ちていた（2026-08-04 突き合わせで判明）
+ok('VRChat側が天面と実測した最奥(VRC Z=-101)を含む', vz[0] <= -101, `最奥 ${vz[0]}`);
 
 console.log('\n[4-2] ★ステージ前端より手前は「床」のまま（浮かない）');
 // ここを maxZ で判定すると、客席の一番前の床の上で1.38m浮く。

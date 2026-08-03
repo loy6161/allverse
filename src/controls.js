@@ -5,7 +5,12 @@ import { EYE_Y } from './avatar.js';
 // - WASD / 矢印キー: カメラ基準で移動（アバターは進行方向を向く）
 // - ドラッグ: カメラ旋回、ホイール: ズーム
 // - 三人称の最短からさらに寄せると一人称になる（引くと三人称へ戻る）
-export function initControls(camera, avatar, domElement, { bounds, onJump, screen, stage } = {}) {
+export function initControls(
+  camera,
+  avatar,
+  domElement,
+  { bounds, onJump, screen, stage, groundYAt: worldGroundYAt } = {},
+) {
   const keys = new Set();
 
   // ---- ステージ登壇（2026-08-04追加・テストユーザー要望）----
@@ -38,8 +43,17 @@ export function initControls(camera, avatar, domElement, { bounds, onJump, scree
     return x >= STAGE.minX && x <= STAGE.maxX && z >= STAGE.minZ && z <= topZ;
   }
 
-  /** その位置の足元の高さ。ステージの天面の上なら天面、それ以外は床(0) */
+  /**
+   * その位置の足元の高さ。
+   *
+   * ★ ワールドが `groundYAt` を持っていれば**そちらを使う**（2026-08-04）。
+   *   clubVERSE は実際のモデルにレイを撃って高さを拾う。ステージは矩形ではないので、
+   *   矩形で近似すると天面でない場所でも浮いてしまう（VRChat側の全域実測で判明）。
+   *   持っていないワールド用に、矩形＋天面の近似を残してある。
+   */
   function groundYAt(x, z) {
+    if (!stageAllowed) return 0; // 登壇していない人は常に床。無駄なレイも撃たない
+    if (worldGroundYAt) return worldGroundYAt(x, z);
     return onStage(x, z) ? STAGE.topY : 0;
   }
 

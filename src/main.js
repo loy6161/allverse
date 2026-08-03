@@ -459,6 +459,8 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     // ステージの範囲（2026-08-04追加）。無いワールドでは undefined になり、
     // その場合は登壇そのものが成立しない（従来どおり客席だけ）
     stage: world.stage,
+    // 足元の高さ。clubVERSE は実際のモデルにレイを撃って拾う（矩形の近似ではない）
+    groundYAt: world.groundYAt,
     // シアター表示でカメラを寄せる先。ワールドごとにスクリーンの位置が違う
     screen: world.screen,
     // 自分は物理でジャンプするが、高さは誰にも送っていない（presence も x/z/向き だけ）。

@@ -70,7 +70,10 @@ const SPAWN = new THREE.Vector3(CLUB_SCREEN.x, 0, -6);
 const STAGE = {
   minX: -5.5,
   maxX: 15.3,
-  minZ: -29,
+  // 背面ガラス(z=-30)の少し手前まで。
+  // ⚠ -29 だとVRChat側が天面と実測した位置（VRC Z=-101／ブラウザ z=-29.09）が
+  //   わずかに範囲外になり、そこだけ床に落ちていた（2026-08-04 突き合わせで判明）
+  minZ: -29.6,
   // 歩ける奥行きの手前端。客席と地続きにするため客席の端に合わせる
   maxZ: -16.5,
   // ここより奥（zが小さい側）が「ステージの上」。手前は客席の床のまま
@@ -449,6 +452,10 @@ export function createClubWorld(scene, { renderer } = {}) {
       });
       tuneMaterials(model);
       scene.add(model);
+      // ⚠ レイキャストは matrixWorld を見る。会場は二度と動かないので、ここで一度だけ確定させる。
+      //   これを入れないと、描画が始まる前にレイを撃ったとき**GLB内の座標のまま**当たり、
+      //   高さが 1.4m ズレる（2026-08-04 実際に踏んだ）
+      model.updateMatrixWorld(true);
       loaded = true;
       return model;
     })
@@ -457,6 +464,54 @@ export function createClubWorld(scene, { renderer } = {}) {
       console.error('[world_club] 会場の読み込みに失敗:', failed);
     });
 
+  // ---- ステージの上の高さ（2026-08-04追加）----
+  //
+  // ★ 矩形の近似をやめ、**実際のモデルの床をレイキャストで拾う**。
+  //
+  //   きっかけはVRChat側の実測報告（返答②）。あちらがワールド全域でレイを撃った結果、
+  //   **ステージは矩形ではなかった**。こちらの近似（x -5.5〜15.3／z -18.07〜-29）には、
+  //   実際には天面ではなく「段」や「床」の場所が含まれていて、
+  //   そこに立つとブラウザだけ 1.38m 浮くことになる。
+  //   VRChat側は形を仮定せず毎回床を拾う作りにしたので、こちらも同じにして揃える。
+  //
+  // ⚠ レイは「立てる面の最高＝ステージ天面のすぐ上」から**下向きに短く**撃つ。
+  //   高い位置から撃つと、天井や上空の物を拾って人が宙に浮く
+  //   （VRChat側が実際にこれを踏んだ。あちらは trapper という上空の物を拾っていた）。
+  // ⚠ 判定するのは**ステージの矩形の中だけ**。会場全体に広げると、
+  //   水面や小物を拾って客席の歩きが変わってしまう（いまは平らな床として扱っている）。
+  const _ray = new THREE.Raycaster();
+  const _from = new THREE.Vector3();
+  const _down = new THREE.Vector3(0, -1, 0);
+  // 撃ち始めの高さ。ステージ天面(1.38)より少し上。ここを上げると上空の物を拾い始める
+  const RAY_FROM_Y = STAGE.topY + 0.9;
+  // 撃つ長さ。床(0)まで届けばよい。長くすると床下の造形を拾う
+  const RAY_LEN = RAY_FROM_Y + 0.4;
+  /**
+   * 立てる面として認める高さの上限。
+   * ⚠ 天面(1.38)ちょうどで切らないこと。実測すると**段や縁で 1.49 まで出る**ので、
+   *   きつく切ると「そこだけ床に落ちる」不自然な段差になる（2026-08-04 実際に踏んだ）。
+   */
+  const STANDABLE_MAX_Y = STAGE.topY + 0.5;
+
+  /**
+   * その位置の「立てる面」の高さ。ステージの矩形の外、または未読み込みなら 0（床）。
+   * @returns {number} 足元のy
+   */
+  function groundYAt(x, z) {
+    if (!loaded || !model) return 0;
+    if (x < STAGE.minX || x > STAGE.maxX || z < STAGE.minZ || z > STAGE.maxZ) return 0;
+    _from.set(x, RAY_FROM_Y, z);
+    _ray.set(_from, _down);
+    _ray.far = RAY_LEN;
+    const hits = _ray.intersectObject(model, true);
+    if (!hits.length) return 0;
+    const y = hits[0].point.y;
+    // 想定外の高さを拾ったら床に落とす保険（VRChat側と同じ考え方）。
+    // 0未満（床下）や、立てる面としてあり得ない高さのものは信用しない
+    if (!Number.isFinite(y) || y < 0 || y > STANDABLE_MAX_Y) return 0;
+    return y;
+  }
+
   return {
     kind: 'club',
     bounds: BOUNDS,
@@ -464,6 +519,8 @@ export function createClubWorld(scene, { renderer } = {}) {
     screen: CLUB_SCREEN,
     /** ステージの上。管理人・VIPだけが上がれる（イベント設定でON/OFF） */
     stage: STAGE,
+    /** その位置の足元の高さ。ステージの実形状をレイで拾う（矩形の近似ではない） */
+    groundYAt,
     /** 会場の明るさを変える（'normal' / 'bright' / 'brightest'）。運営が決めて全員に効く */
     setBrightness,
     ready: loading,
