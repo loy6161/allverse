@@ -154,6 +154,13 @@ function injectStyle() {
       box-shadow: 0 0 10px rgba(255, 0, 255, 0.25);
     }
 
+    /* 「会場チャットを開く」（2026-08-04追加・運営だけに見える）。
+       入力欄と同じ場所に出るので、横いっぱいに広げて押し間違えないようにする */
+    .vc-chat-open {
+      flex: 1 1 auto;
+      padding: 9px 12px;
+    }
+
     .vc-chat-send:hover {
       filter: brightness(1.25);
       box-shadow: 0 0 14px rgba(255, 0, 255, 0.5);
@@ -185,7 +192,15 @@ function injectStyle() {
   document.head.appendChild(style);
 }
 
-export function initChat({ onSend }) {
+/**
+ * @param {object} p
+ * @param {(text:string) => void} p.onSend
+ * @param {() => void} [p.onOpenLocalChat]
+ *   運営が「会場チャットを開く」を押したとき（2026-08-04追加）。
+ *   配信が終わったあとそのまま交流したいのに、YouTube連動ONだと入力欄が無い。
+ *   設定パネルまで行かずワンタッチで戻せるようにする（loyさん要望）。
+ */
+export function initChat({ onSend, onOpenLocalChat }) {
   injectStyle();
 
   const root = document.getElementById('chat-root');
@@ -214,8 +229,24 @@ export function initChat({ onSend }) {
   inputRow.appendChild(input);
   inputRow.appendChild(sendBtn);
 
+  // 入力欄の代わりに出る「会場チャットを開く」（2026-08-04追加・運営だけに見える）。
+  // ⚠ 入力欄と同じ場所に置く。別の場所だと、配信直後に探すことになる
+  const openRow = document.createElement('div');
+  openRow.className = 'vc-chat-input-row vc-chat-openrow';
+  openRow.style.display = 'none';
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.className = 'vc-chat-send vc-chat-open';
+  openBtn.textContent = '💬 会場チャットを開く';
+  openBtn.title = '配信が終わったあと、この会場で話せるようにします（全員に反映）';
+  openBtn.addEventListener('click', () => {
+    if (onOpenLocalChat) onOpenLocalChat();
+  });
+  openRow.appendChild(openBtn);
+
   panel.appendChild(log);
   panel.appendChild(inputRow);
+  panel.appendChild(openRow);
   root.appendChild(panel);
 
   function addMessage(name, text, opts = {}) {
@@ -280,6 +311,15 @@ export function initChat({ onSend }) {
      */
     setInputVisible(on) {
       inputRow.style.display = on ? '' : 'none';
+    },
+    /**
+     * 「会場チャットを開く」を出す／隠す（2026-08-04追加）。
+     *
+     * 出すのは **YouTube連動ONで、かつ運営（管理者・VIP）のとき**だけ。
+     * お客さんに見せると、押せないボタンか、押すと断られるボタンになる。
+     */
+    setOpenLocalVisible(on) {
+      openRow.style.display = on ? '' : 'none';
     },
   };
 }

@@ -1054,8 +1054,42 @@ function handleChat(client, msg) {
     }).catch(() => {});
   }
 
+  // 会場チャットでもエモート連動を効かせる（2026-08-04追加・loyさん指示「全部効かせる」）。
+  //
+  // 配信が終わったあと会場チャットに切り替えて交流するとき、
+  // 888 や 🎉 で何も起きないと「YouTubeのときだけ動く」ちぐはぐになる。
+  // 判定は YouTube のコメントとまったく同じ（chatemote.js の1本）。
+  //
+  // ⚠ コールのワードも同じく効く。雑談で登録ワード（「リバーブ」等）が出ると
+  //   アバターが動くが、**そのイベントでリストを選んでいるときだけ**なので、
+  //   気になるならイベント設定でリストを「使わない」にすれば止まる。
+  // ⚠ ふつうの会話では何も出ない（絵文字も合図も無ければ null が返る）。
+  applyChatEmote(client, txt);
+
   // 発信者自身にも返す（クライアント側で自分のidなら無視する仕様）
   broadcastFrom(client, { t: 'chat', id: client.id, n: client.n, txt, sc: scope }, false);
+}
+
+/**
+ * 発言の中身に応じてエモートを出す（YouTubeのコメントと会場チャットで共通・2026-08-04）。
+ *
+ * ⚠ 出す条件も1か所にまとめてある。片方だけ直すと
+ *   「YouTubeでは動くのに会場チャットでは動かない」が起きる。
+ */
+function applyChatEmote(client, text) {
+  // 本人が「コメントで自分のアバターを動かさない」を選んでいる場合は出さない
+  if (client.ytEmote === false) return;
+  const em = emoteFromText(text, callWordsFor(events.get(client.eventId)));
+  if (!em || !EMOTE_IDS.has(em.id)) return;
+  const now = Date.now();
+  client.emote = { id: em.id, at: now, n: em.n };
+  broadcastToRoom(
+    client.eventId,
+    client.room,
+    { t: 'emote', id: client.id, e: em.id, n: em.n },
+    null,
+    client,
+  );
 }
 
 /** update: アバターの再カスタム（名前は変えられない） */
@@ -1787,21 +1821,9 @@ async function onYtMessages(eventId, msgs) {
     client.lastChat = { txt, ts: Date.now(), src: CHAT_SRC_YT };
 
     // コメントの中身に応じてエモートを出す（2026-08-03追加・loyさん発案）。
-    // 本人が「自分のアバターを動かさない」を選んでいる場合は出さない
-    if (client.ytEmote !== false) {
-      const em = emoteFromText(msg.text, callWordsFor(events.get(eventId)));
-      if (em && EMOTE_IDS.has(em.id)) {
-        const now = Date.now();
-        client.emote = { id: em.id, at: now, n: em.n };
-        broadcastToRoom(
-          eventId,
-          client.room,
-          { t: 'emote', id: client.id, e: em.id, n: em.n },
-          null,
-          client,
-        );
-      }
-    }
+    // ⚠ 会場チャットと同じ関数を使う（2026-08-04）。別々に書くと
+    //   「YouTubeでは動くのに会場チャットでは動かない」がまた起きる
+    applyChatEmote(client, msg.text);
 
     // 会場の発言と同じ形で流す。sc:'yt' はクライアントで出所を出し分けるため。
     // from に本人を渡すことで、ブロックしている人には見えないまま保たれる

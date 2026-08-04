@@ -366,6 +366,9 @@ function applyChatMode(mode) {
   // あとから作られた YouTube チャットが出ないままになる
   if (chat && chat.setInputVisible) chat.setInputVisible(chatMode === 'local');
   if (ytChat) ytChat.setVisible(chatMode === 'youtube');
+  // 入力欄が無いあいだ、運営にだけ「会場チャットを開く」を出す（2026-08-04追加）。
+  // 配信が終わったあとそのまま交流したい、という要望への入口
+  applyOpenLocalButton();
 
   // 案内は切り替わったときだけ（毎回出すとお知らせ欄が埋まる）
   if (changed && chat) {
@@ -377,6 +380,26 @@ function applyChatMode(mode) {
       { system: true },
     );
   }
+}
+
+/**
+ * 「会場チャットを開く」ボタンの出し分け（2026-08-04追加）。
+ *
+ * loyさんの要望:
+ *   > YouTubeの生配信視聴中はいいんだけど、配信終わった後とかにそのまま交流したいのに
+ *   > 今の仕様だとチャットが使えないよね？切り替えられるといいかも。
+ *
+ * 設定パネル（🚪→設定→連動のチェックを外す）でも同じことはできるが、
+ * 配信直後にやるには遠い。**入力欄があるはずの場所**にそのまま出す。
+ *
+ * 出すのは **YouTube連動ONで、かつ運営（管理者・VIP）のとき**だけ。
+ * お客さんに見せると、押しても断られるボタンになる。
+ */
+function applyOpenLocalButton() {
+  if (!chat || !chat.setOpenLocalVisible) return;
+  const role = staffRole();
+  const isStaff = role === 'admin' || role === 'vip';
+  chat.setOpenLocalVisible(chatMode === 'youtube' && isStaff);
 }
 
 /** 運営メッセージの固定枠を出す/消す */
@@ -482,6 +505,12 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
       if (player.userData.say) player.userData.say(text);
       // ワールド内だけに届くローカル発言（YouTubeへは流さない）
       if (net && !demoMode) net.sendChat(text, 'local');
+    },
+    // 運営が「会場チャットを開く」を押した（2026-08-04追加）。
+    // イベント設定を local に戻すだけ。全員に同時に反映される
+    onOpenLocalChat: () => {
+      if (!currentEvent) return;
+      if (net && !demoMode) net.sendEventUpdate({ id: currentEvent.id, chatMode: 'local' });
     },
   });
 
