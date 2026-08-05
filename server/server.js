@@ -2417,6 +2417,8 @@ async function handleProfileRequest(req, res) {
     ok: true,
     name: saved ? saved.name : '',
     av: saved ? saved.av : null,
+    // 保存した時刻（ミリ秒）。ブラウザ側の保存と新しい方を採る判断に使う
+    updatedAt: saved ? saved.updatedAt || 0 : 0,
     // 保存が無いときの初期値として使ってもらう（本名の可能性があるので強制はしない）
     googleName: info.name || '',
     role: roleForEmail(info.email),

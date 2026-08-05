@@ -69,6 +69,16 @@ ok('他の項目は残っている', dirty.av.sc === 2 && dirty.av.bc === 6);
 console.log('\n[4] 保存が無い人は null（新規のログイン）');
 ok('null が返る', (await loadProfile('nobody@example.com')) === null);
 
+console.log('\n[5] ★いつ保存したかが分かる（端末側の保存と新旧を比べるため）');
+// これが無いと、別の端末で前に保存した古い姿が、いま設定した姿を上書きしてしまう
+// （2026-08-04 loyさん「ログインでアバター違うのになる」）
+const before = Date.now();
+await saveProfile(EMAIL, 'ろい', { ...NORMAL_AV, hc: 7 });
+const stamped = await loadProfile(EMAIL);
+ok('updatedAt が返る', typeof stamped.updatedAt === 'number', String(stamped.updatedAt));
+ok('保存した時刻になっている', stamped.updatedAt >= before, `${stamped.updatedAt} >= ${before}`);
+ok('上書きも効いている', stamped.av.hc === 7, String(stamped.av.hc));
+
 await rm(DB, { force: true }).catch(() => {});
 await rm(`${DB}-shm`, { force: true }).catch(() => {});
 await rm(`${DB}-wal`, { force: true }).catch(() => {});

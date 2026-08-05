@@ -46,12 +46,13 @@ export function loadLocalPrefs() {
   if (!p || typeof p !== 'object') return null;
   if (!p.config || typeof p.config !== 'object') return null;
   const config = { ...p.config };
+  const savedAt = Number(p.savedAt) || 0;
   // ⚠ ゲスト専用の髪型（髪なし）が保存に混ざっていたら捨てる。
   //   これはサーバーがゲストに割り当てる姿であって、本人が選んだものではない。
   //   残っていると「一度ゲストで入ったら、ログインしても髪なしのまま」になる
   //   （2026-08-03 loyさん指摘）。選択肢に無い値なので、消せば既定の髪型に戻る
   if (config.hairStyle === GUEST_HAIR) delete config.hairStyle;
-  return { config };
+  return { config, savedAt };
 }
 
 /** アバターの見た目を保存する（名前は保存しない） */
@@ -90,6 +91,8 @@ export async function fetchServerPrefs(idToken) {
       //   同じ端末では localStorage 側が効くので、**別の端末で入ったときだけ**
       //   既定の姿に戻る、という気づきにくい壊れ方をしていた
       config: data.av ? avToConfig(data.av) : null,
+      // サーバーがその姿を保存した時刻。ブラウザ側の保存と比べて新しい方を採る
+      updatedAt: Number(data.updatedAt) || 0,
       googleName: data.googleName || '',
       // 入場画面で「イベントを作る」を出すかの判断に使う。
       // あくまで表示の出し分けで、実際の可否はサーバーが判定する

@@ -402,7 +402,7 @@ export async function loadProfile(email) {
   if (!ready || !email) return null;
   try {
     const rs = await db.execute({
-      sql: 'SELECT name, av FROM profiles WHERE email = ?',
+      sql: 'SELECT name, av, updated_at FROM profiles WHERE email = ?',
       args: [email],
     });
     if (!rs.rows.length) return null;
@@ -417,7 +417,10 @@ export async function loadProfile(email) {
     //   保存側は塞いだが、それ以前に書かれた「髪なし」がDBに残っている人がいる。
     //   読むときに落としておけば、次に入ったとき既定の髪型に戻る（2026-08-03）
     if (av && av.h === GUEST_HAIR) delete av.h;
-    return { name: String(row.name), av };
+    // いつ保存したか。ブラウザ側の保存とどちらが新しいかを比べるのに使う
+    // （2026-08-04 loyさん「ログインでアバター違うのになる」→ 古い記録が
+    //   その端末の新しい姿を上書きしていた）
+    return { name: String(row.name), av, updatedAt: Number(row.updated_at) || 0 };
   } catch (e) {
     console.warn('[store] プロフィール読み込みに失敗:', e.message);
     return null;

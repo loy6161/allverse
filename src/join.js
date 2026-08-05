@@ -824,7 +824,15 @@ function buildCustomizeScreen({
         if (!p) return;
         const server = await fetchServerPrefs(getIdToken());
         if (!server) return;
-        if (server.config) {
+        // ★ サーバーの記録で上書きするのは、**この端末の保存より新しいときだけ**。
+        //   無条件に上書きしていたら、別の機会に別端末で保存した古い姿が
+        //   いま設定したばかりの姿を消してしまった
+        //   （2026-08-04 loyさん「ログインでアバター違うのになる」）。
+        //   この端末に保存が無ければ（＝別の端末で入った）そのまま採用する
+        const local = loadLocalPrefs();
+        const localAt = local ? local.savedAt || 0 : -1;
+        const serverIsNewer = localAt < 0 || (server.updatedAt || 0) > localAt;
+        if (server.config && serverIsNewer) {
           Object.assign(config, server.config);
           rebuildPreviewAvatar();
           refreshSelections();
