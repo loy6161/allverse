@@ -16,6 +16,7 @@ import { getEmoteLayout, setEmoteLayout, resetEmoteOrder } from './emoteprefs.js
 import {
   getSelfView, setSelfView, getReflection, setReflectionPref, getBloom, setBloomPref,
 } from './selfview.js';
+import { getFpsMeter, setFpsMeter } from './fpsmeter.js';
 
 /**
  * 表示のせっていを描く。
@@ -24,9 +25,55 @@ import {
  */
 export function renderDisplaySettings(
   body,
-  { onEmotePrefsChange, onChatEmoteChange, onSelfViewChange, onReflectionChange, onBloomChange } = {},
+  {
+    onEmotePrefsChange, onChatEmoteChange, onSelfViewChange, onReflectionChange, onBloomChange,
+    onFpsMeterChange, showFpsMeter = false,
+  } = {},
 ) {
   body.innerHTML = '';
+
+  // ---- fps表示（2026-08-04追加・管理者/VIPだけ） ----
+  // loyさん「fpsって管理者用に表示できない？」
+  // 本番中に「重い」と言われたとき、何を切れば戻るかをその場で判断するためのもの
+  if (showFpsMeter) {
+    const boxF = document.createElement('div');
+    boxF.className = 'vc-help-box';
+    const hF = document.createElement('div');
+    hF.className = 'vc-help-h';
+    hF.textContent = 'fpsを表示する（運営用）';
+    boxF.appendChild(hF);
+    const noteF = document.createElement('div');
+    noteF.className = 'vc-help-note';
+    noteF.textContent =
+      '画面の左上に、1秒あたりのコマ数・いちばん遅かったコマ・人数・NPC数・'
+      + 'ブルームと反射のON/OFFを出します。重いと言われたときに、何を切れば戻るかの目安になります。'
+      + '50を下回ると黄色、30を下回ると赤で出ます。この設定はこの端末にだけ保存されます。';
+    boxF.appendChild(noteF);
+    const rowF = document.createElement('div');
+    rowF.className = 'vc-help-choices';
+    let curFps = getFpsMeter();
+    const fpsBtns = [];
+    function paintFps() {
+      for (const b of fpsBtns) b.classList.toggle('active', (b.dataset.v === 'on') === curFps);
+    }
+    for (const [v, label] of [['on', '出す'], ['off', '出さない']]) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'vc-help-choice';
+      b.dataset.v = v;
+      b.textContent = label;
+      b.addEventListener('click', () => {
+        curFps = setFpsMeter(v === 'on');
+        paintFps();
+        if (onFpsMeterChange) onFpsMeterChange(curFps);
+      });
+      fpsBtns.push(b);
+      rowF.appendChild(b);
+    }
+    paintFps();
+    boxF.appendChild(rowF);
+    body.appendChild(boxF);
+  }
 
   // ---- ブルーム（2026-08-04追加） ----
   // loyさん「VRはワールドにブルームかかってるけど、ブラウザでもそういう

@@ -32,6 +32,7 @@ import { initYouTubeChat } from './ytchat.js';
 import { initExitButton } from './exitbtn.js';
 import { initSelfView, getReflection, getBloom } from './selfview.js';
 import { createBloom } from './bloom.js';
+import { initFpsMeter, getFpsMeter } from './fpsmeter.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
@@ -81,6 +82,17 @@ if (WORLD_KIND === 'club') {
 //   代わりに描き先側でMSAAを持つ。負荷が上がるぶん、タッチ端末では諦める）
 const bloom = WORLD_KIND === 'club' ? createBloom(renderer, { samples: IS_TOUCH ? 0 : 4 }) : null;
 let bloomOn = getBloom();
+
+// fps表示（2026-08-04追加・管理者/VIP用）。既定はOFF。
+// 何を切れば軽くなるかを本番中に判断できるよう、人数と重い機能の状態も一緒に出す
+const fpsMeter = initFpsMeter({
+  getStats: () => ({
+    people: 1 + (remote ? remote.count() : 0),
+    npc: sim ? sim.count() : 0,
+    bloom: Boolean(bloom && bloomOn),
+    reflect: getReflection(),
+  }),
+});
 
 // タッチ端末は音ありの自動再生が禁止されているので、消音で始めて本人のタップで音を出す
 const liveScreen = initLiveScreen(camera, scene, world.screen || {}, { startMuted: IS_TOUCH });
@@ -1079,7 +1091,13 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     onBloomChange: (on) => {
       bloomOn = on;
     },
+    // fps表示（2026-08-04追加）。運営が重さを見るための道具
+    onFpsMeterChange: (on) => {
+      fpsMeter.setEnabled(on);
+    },
   });
+  // 前回「出す」にしていたら、権限があるあいだは出したままにする
+  if (['admin', 'vip'].includes(staffRole())) fpsMeter.setEnabled(getFpsMeter());
 
   // welcomeが先に来ている場合に備えて、権限の反映をここでもう一度実行する
   applyRoleToUi();
@@ -1191,6 +1209,7 @@ function loop() {
     camera.lookAt(0, 3, 0);
   }
 
+  fpsMeter.tick();
   if (bloom && bloomOn) bloom.render(scene, camera);
   else renderer.render(scene, camera);
   // 自分の姿の小窓（2026-08-04追加）。**本編を描いたあと**に呼ぶ。
