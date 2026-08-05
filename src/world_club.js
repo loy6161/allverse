@@ -319,6 +319,46 @@ function makeClubEnvironment() {
   return env;
 }
 
+/**
+ * 床・壁・ステージの色テクスチャを外して解放する（2026-08-04追加）。
+ *
+ * loyさん「少し明るめもテクスチャ要らない。というか全部要らないよ。ない方が負荷も軽いでしょ？」
+ *
+ * ⚠ 同じテクスチャを複数のマテリアルが共有していることがあるので、
+ *   **全部から外し終えてから** dispose する（先に捨てると他が真っ黒になる）。
+ * @returns {{外した枚数:number, 解放した枚数:number}}
+ */
+function dropFloorTextures(model) {
+  const targets = ['MI_Metal_TILE_Silver_2', 'MI_Metal1', 'MI_Metal_Silver', 'clubVERSE_black'];
+  const dropped = new Set();
+  let detached = 0;
+  model.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      if (!m || !targets.includes(m.name) || !m.map) continue;
+      dropped.add(m.map);
+      m.map = null;
+      m.needsUpdate = true;
+      detached++;
+    }
+  });
+  // まだ他のマテリアルが使っていないか確かめてから解放する
+  const stillUsed = new Set();
+  model.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      if (m && m.map) stillUsed.add(m.map);
+    }
+  });
+  let freed = 0;
+  for (const tex of dropped) {
+    if (stillUsed.has(tex)) continue;
+    tex.dispose();
+    freed++;
+  }
+  return { 外した枚数: detached, 解放した枚数: freed };
+}
+
 function tuneMaterials(model) {
   const done = new Set();
   model.traverse((o) => {
@@ -443,10 +483,9 @@ export function createClubWorld(scene, { renderer } = {}) {
    * silver … 床・壁・ステージ天面の色（名前どおりシルバーに戻す）
    * black …… 躯体・天井の色。⚠ ここを同じシルバーにすると天井まで白くなるので別枠
    * metal … 金属さの上限（下げるほど色が乗って明るく見える）
-   * tex ……… 色テクスチャを使うか。**明るくすると模様が目立ちすぎる**ので、
-   *           明るい段階では外して単色にする
-   *           （loyさん 2026-08-04「明るいとテクスチャが目立ちすぎて変だね。
-   *             床や壁はテクスチャ無い方がいいのかもなあ」）
+   * ⚠ **色テクスチャは全段階で使わない**（loyさん 2026-08-04「少し明るめもテクスチャ要らない。
+   *   というか全部要らないよ」）。段階ごとに付け外しすると、そこで見た目が段差になる
+   *   （「少し明るめから明るめの差が激しすぎる」の原因がこれだった）。
    * light … ライト（補助）
    * exposure … 画面全体の露出。⚠ **アバターと映像にも掛かる**
    *
@@ -454,15 +493,18 @@ export function createClubWorld(scene, { renderer } = {}) {
    *   ふつう 23.7 ／ 少し明るい 32.5（1.37倍） ／ 明るめ 43.9（1.85倍）
    *   ／ いちばん明るい 59.3（2.50倍）
    */
+  // ⚠ **段ごとの差を揃える**（loyさん 2026-08-04「少し明るめから明るめの差が激しすぎる」）。
+  //   実測した画面の平均が **1.30 / 1.34 / 1.36 / 1.40 倍**と等間隔になるよう色を選んである。
+  //   色を等間隔にしても見た目は等間隔にならないので、**必ず測って決めること**。
   const BRIGHTNESS = {
-    normal: { silver: null, black: null, metal: 1, tex: true, light: 1.0, exposure: 1.0 },
-    dim: { silver: 0x6e737d, black: 0x24262c, metal: 0.5, tex: true, light: 1.1, exposure: 1.0 },
-    bright: { silver: 0x9aa0aa, black: 0x33363d, metal: 0.35, tex: false, light: 1.2, exposure: 1.0 },
-    brightest: { silver: 0xc8ccd4, black: 0x474b53, metal: 0.25, tex: false, light: 1.3, exposure: 1.0 },
-    // 会場を明るくしたうえで、画面全体も少し持ち上げる。
+    normal: { silver: null, black: null, metal: 1, light: 1.0, exposure: 1.0 },
+    dim: { silver: 0x3a3d46, black: 0x1a1c22, metal: 0.7, light: 1.05, exposure: 1.0 },
+    bright: { silver: 0x50545e, black: 0x24262d, metal: 0.55, light: 1.1, exposure: 1.0 },
+    brightest: { silver: 0x6b7078, black: 0x2f323a, metal: 0.42, light: 1.16, exposure: 1.0 },
+    // いちばん明るい色に加えて、画面全体も少し持ち上げる。
     // ⚠ アバターと映像も明るくなる。上げすぎるとアバターが白飛びするので 1.25 で止める
     //   （loyさん 2026-08-04「一番明るいのはアバターが白飛びしちゃうね」）
-    'brightest+': { silver: 0xc8ccd4, black: 0x474b53, metal: 0.25, tex: false, light: 1.3, exposure: 1.25 },
+    'brightest+': { silver: 0x8d929c, black: 0x3b3e47, metal: 0.32, light: 1.2, exposure: 1.25 },
   };
 
   let level = 'normal';
@@ -470,22 +512,15 @@ export function createClubWorld(scene, { renderer } = {}) {
   /** 会場のマテリアルを明るさに合わせて塗り直す（読み込み後でないと対象が無い） */
   function applyMaterials() {
     if (!model) return;
-    const { silver, black, metal, tex } = BRIGHTNESS[level];
+    const { silver, black, metal } = BRIGHTNESS[level];
     model.traverse((o) => {
       if (!o.isMesh) return;
       for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
         if (!m || !LIT_MATERIALS.includes(m.name)) continue;
         if (!matBase.has(m.uuid)) {
-          // ⚠ テクスチャは**捨てずに覚えておく**。外したあと「ふつう」に戻せなくなる
-          matBase.set(m.uuid, { color: m.color.getHex(), metal: m.metalness ?? 0, map: m.map || null });
+          matBase.set(m.uuid, { color: m.color.getHex(), metal: m.metalness ?? 0 });
         }
         const b = matBase.get(m.uuid);
-        // テクスチャの付け外し。⚠ 差し替えたら needsUpdate を立てないと反映されない
-        const wantMap = tex ? b.map : null;
-        if (m.map !== wantMap) {
-          m.map = wantMap;
-          m.needsUpdate = true;
-        }
         if (silver === null) {
           // 「ふつう」＝ 2026-07-30 に「白すぎる」を直したときの値に戻す
           m.color.setHex(b.color);
@@ -556,6 +591,12 @@ export function createClubWorld(scene, { renderer } = {}) {
         o.receiveShadow = false;
         o.frustumCulled = true;
       });
+      // ★ 床・壁・ステージの色テクスチャを**読み込み時に捨てる**（2026-08-04）。
+      //   loyさん「全部要らないよ。ない方が負荷も軽いでしょ？」。
+      //   マテリアルから外すだけだと絵から消えるだけでGPUのメモリには残るので、
+      //   `dispose()` まで呼んで実際に解放する。
+      // ⚠ 捨てたら戻せない。段階ごとに付け外しする作りはやめた（そこが見た目の段差になっていた）。
+      dropFloorTextures(model);
       tuneMaterials(model);
       scene.add(model);
       // ⚠ レイキャストは matrixWorld を見る。会場は二度と動かないので、ここで一度だけ確定させる。
