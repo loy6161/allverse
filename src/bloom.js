@@ -16,17 +16,16 @@
 //
 // 手順（1フレームぶん）
 //   1. 会場を画面ではなく baseRT へ描く（MSAA付きなのでギザギザは出ない）
-//   2. アバターとエモートだけを白く塗った「型紙」を作る（半分の解像度）
-//   3. 明るいところだけ抜き出す（しきい値／型紙の白い所は除く）… 半分の解像度
-//   4. 横→縦の順にぼかす（2往復）… 半分と1/4の解像度
-//   5. 画面へ合成する（上の式）
+//   2. 明るいところだけ抜き出す（しきい値。アバターはアルファの目印で外す）… 1/4
+//   3. 横→縦の順にぼかす（1往復）… 1/4と1/8の解像度
+//   4. 画面へ合成する（上の式）
 //
 // 負荷は「会場を描く回数」は増えない（描き先が変わるだけ）。増えるのは型紙と
 // 小さな四角を数枚描くぶん。実測 +1.7ms（20人・568x872。2.19 → 3.87ms）。
 // ============================================================
 
 import * as THREE from 'three';
-import { NO_BLOOM_LAYER } from './layers.js';
+import { NO_BLOOM_ALPHA } from './layers.js';
 
 // ⚠ 色の空間について（ここを間違えると画面が真っ暗になる。実際になった）
 //   three r160 は「画面へ描くとき」だけ sRGB へ変換し、**描き先が
@@ -51,6 +50,20 @@ const KNEE = 0.25;
 /** にじみの強さ */
 const STRENGTH = 1.6;
 
+/**
+ * 目印のアルファかどうかを見る幅。
+ * 16bit浮動小数と拡大縮小の誤差があるので、ぴったり比較はできない。
+ * 0.99 の前後だけを拾い、ふつうの不透明(1.0)と穴(0.0)には掛からない幅にしてある。
+ */
+const NO_BLOOM_MIN = NO_BLOOM_ALPHA - 0.004;
+const NO_BLOOM_MAX = NO_BLOOM_ALPHA + 0.004;
+
+/** シェーダーの頭に定数を差し込む（GLSLには定数を共有する仕組みが無いので文字で入れる） */
+const GLSL_CONSTS = `
+const float NO_BLOOM_MIN = ${NO_BLOOM_MIN};
+const float NO_BLOOM_MAX = ${NO_BLOOM_MAX};
+`;
+
 const QUAD_VERT = `
 varying vec2 vUv;
 void main() {
@@ -62,7 +75,6 @@ void main() {
 /** 明るいところだけ残す。アルファは元のまま持ち越す（穴を光らせないため） */
 const BRIGHT_FRAG = `
 uniform sampler2D tSrc;
-uniform sampler2D tMask;
 uniform float uThreshold;
 uniform float uKnee;
 varying vec2 vUv;
@@ -71,29 +83,35 @@ void main() {
   float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
   // しきい値のまわりをなめらかにする（くっきり切ると輪郭が出る）
   float w = smoothstep(uThreshold - uKnee, uThreshold + uKnee, l);
-  // ★ アバターとエモートの上では光らせない（型紙が白い所を落とす）。
+  // ★ アバターの上では光らせない。
   //   アバターは服の色を emissive にも入れているので、外さないと
-  //   **本人だけが電球のように光る**（loyさん「ブルームはアバターがヒカルだけ？」）
-  w *= 1.0 - texture2D(tMask, vUv).r;
+  //   **本人だけが電球のように光る**（loyさん「ブルームはアバターがヒカルだけ？」）。
+  //   目印はアルファ（avatar_glb.js が 0.99 で描いている）。
+  //   もう一度描いて型紙を作る方式は人数ぶん重くなったのでやめた（layers.js 参照）
+  if (c.a > NO_BLOOM_MIN && c.a < NO_BLOOM_MAX) w = 0.0;
   gl_FragColor = vec4(c.rgb * w * c.a, c.a);
 }
 `;
 
-/** 横か縦のどちらかにぼかす（uDir で切り替える）。9点のガウス */
+/**
+ * 横か縦のどちらかにぼかす（uDir で切り替える）。
+ *
+ * ⚠ 9点で読んでいたのを**5点**にした（2026-08-04）。
+ *   画素の中間を読むと、拡大縮小の仕組みが勝手に2点を混ぜてくれるので、
+ *   5回の読み取りで9点ぶんと同じ形のぼけになる。読み取り回数は約半分。
+ *   loyさんの実測でブルームが +36ms（描画がもう1回ぶん）だったので、
+ *   ぼかしの読み取り回数を削るのが一番効いた。
+ */
 const BLUR_FRAG = `
 uniform sampler2D tSrc;
 uniform vec2 uDir;
 varying vec2 vUv;
 void main() {
-  float w[5];
-  w[0] = 0.2270270270; w[1] = 0.1945945946; w[2] = 0.1216216216;
-  w[3] = 0.0540540541; w[4] = 0.0162162162;
-  vec4 sum = texture2D(tSrc, vUv) * w[0];
-  for (int i = 1; i < 5; i++) {
-    vec2 o = uDir * float(i);
-    sum += texture2D(tSrc, vUv + o) * w[i];
-    sum += texture2D(tSrc, vUv - o) * w[i];
-  }
+  vec4 sum = texture2D(tSrc, vUv) * 0.2270270270;
+  vec2 o1 = uDir * 1.3846153846;
+  vec2 o2 = uDir * 3.2307692308;
+  sum += (texture2D(tSrc, vUv + o1) + texture2D(tSrc, vUv - o1)) * 0.3162162162;
+  sum += (texture2D(tSrc, vUv + o2) + texture2D(tSrc, vUv - o2)) * 0.0702702703;
   gl_FragColor = sum;
 }
 `;
@@ -140,6 +158,9 @@ vec3 acesFilmic(vec3 color) {
 }
 void main() {
   vec4 base = texture2D(tBase, vUv);
+  // アバターの目印（0.99）は画面に出す前に 1 へ戻す。
+  // そのまま出すと、その画素だけ 1% 透けてページの背景が混ざる
+  float outA = (base.a > NO_BLOOM_MIN && base.a < NO_BLOOM_MAX) ? 1.0 : base.a;
   vec3 glow = texture2D(tBloom1, vUv).rgb * 0.6 + texture2D(tBloom2, vUv).rgb * 0.4;
   // ★ 半透明の画素は色にアルファが掛かった状態で入っている（描くときの混ぜ方の都合）。
   //   割り戻してから sRGB にして、最後にまた掛ける。
@@ -149,7 +170,7 @@ void main() {
   vec3 straight = base.a > 0.0001 ? base.rgb / a : vec3(0.0);
   // にじみを足してから ACES → sRGB の順（本来の絵作りと同じ順番）
   vec3 lit = toSRGB(acesFilmic(straight + glow * uStrength));
-  gl_FragColor = vec4(lit * base.a, base.a);
+  gl_FragColor = vec4(lit * outA, outA);
 }
 `;
 
@@ -192,14 +213,13 @@ export function createBloom(renderer, { samples = 4 } = {}) {
   // 会場そのものを描く先。ここだけMSAA付き（キャンバスの antialias は
   // 描き先を変えると効かなくなるので、こちらで持つ）
   const baseRT = makeRT(w, h, samples, true);
-  // にじみ用。半分と1/4。ping-pong に2枚ずつ要る
-  const rtA = makeRT(Math.round(w / 2), Math.round(h / 2), 0, false);
-  const rtB = makeRT(Math.round(w / 2), Math.round(h / 2), 0, false);
-  const rtC = makeRT(Math.round(w / 4), Math.round(h / 4), 0, false);
-  const rtD = makeRT(Math.round(w / 4), Math.round(h / 4), 0, false);
-  // 「光らせない場所」の型紙。アバターとエモートだけを白く塗った絵。
-  // ⚠ 深度が要る（自分の腕で体が抜けないように）。半分の解像度で足りる
-  const maskRT = makeRT(Math.round(w / 2), Math.round(h / 2), 0, true);
+  // にじみ用。**1/4 と 1/8**（2026-08-04に 1/2・1/4 から下げた）。
+  // にじみは元々ぼやけた絵なので、解像度を半分にしても見た目はほぼ変わらないが、
+  // 塗る画素の数は 1/4 になる。ping-pong に2枚ずつ要る
+  const rtA = makeRT(Math.round(w / 4), Math.round(h / 4), 0, false);
+  const rtB = makeRT(Math.round(w / 4), Math.round(h / 4), 0, false);
+  const rtC = makeRT(Math.round(w / 8), Math.round(h / 8), 0, false);
+  const rtD = makeRT(Math.round(w / 8), Math.round(h / 8), 0, false);
 
   const quadGeo = new THREE.BufferGeometry();
   quadGeo.setAttribute(
@@ -217,12 +237,11 @@ export function createBloom(renderer, { samples = 4 } = {}) {
   const brightMat = new THREE.ShaderMaterial({
     uniforms: {
       tSrc: { value: null },
-      tMask: { value: null },
       uThreshold: { value: THRESHOLD },
       uKnee: { value: KNEE },
     },
     vertexShader: QUAD_VERT,
-    fragmentShader: BRIGHT_FRAG,
+    fragmentShader: GLSL_CONSTS + BRIGHT_FRAG,
     depthTest: false,
     depthWrite: false,
     // ⚠ 混ぜない（そのまま書く）。混ぜる設定のままだと、書いた色にもう一度
@@ -238,9 +257,6 @@ export function createBloom(renderer, { samples = 4 } = {}) {
     depthWrite: false,
     blending: THREE.NoBlending,
   });
-  // 型紙を描くときに全部これに差し替える。光の計算が要らないので軽い
-  const maskMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-
   const compMat = new THREE.ShaderMaterial({
     uniforms: {
       tBase: { value: null },
@@ -250,7 +266,7 @@ export function createBloom(renderer, { samples = 4 } = {}) {
       uExposure: { value: 1 },
     },
     vertexShader: QUAD_VERT,
-    fragmentShader: COMPOSITE_FRAG,
+    fragmentShader: GLSL_CONSTS + COMPOSITE_FRAG,
     depthTest: false,
     depthWrite: false,
     blending: THREE.NoBlending,
@@ -266,10 +282,11 @@ export function createBloom(renderer, { samples = 4 } = {}) {
   /**
    * src を横→縦の順にぼかして dst へ。tmp は同じ大きさの作業用。
    *
-   * ⚠ 1往復だと**にじみがブロック状に見える**（低い解像度の四角が透けて見える）。
-   *   実際に絵で確認して2往復に増やし、2往復目は幅を倍にしてある。
+   * ⚠ 往復の回数はそのまま値段になる（1往復＝2枚塗る）。
+   *   5点読み取りに変えてぼけの幅が広がったので、**1往復で足りる**ようになった。
+   *   絵で確かめてから減らしている（ブロック状に見えないこと）。
    */
-  function blurInto(src, tmp, dst, passes = 2) {
+  function blurInto(src, tmp, dst, passes = 1) {
     const iw = dst.width;
     const ih = dst.height;
     let from = src;
@@ -299,33 +316,17 @@ export function createBloom(renderer, { samples = 4 } = {}) {
       renderer.clear();
       renderer.render(scene, camera);
 
-      // 2. 「光らせない場所」の型紙を作る。
-      //    カメラの見るレイヤーを一時的に絞り、材質を白一色に差し替えて描く。
-      //    ⚠ カメラの設定は必ず元に戻す（戻し忘れると本編からアバターが消える）
-      const savedLayers = camera.layers.mask;
-      const savedOverride = scene.overrideMaterial;
-      camera.layers.set(NO_BLOOM_LAYER);
-      scene.overrideMaterial = maskMat;
-      renderer.setRenderTarget(maskRT);
-      renderer.setClearColor(0x000000, 1);
-      renderer.clear();
-      renderer.render(scene, camera);
-      scene.overrideMaterial = savedOverride;
-      camera.layers.mask = savedLayers;
-      renderer.setClearColor(0x000000, 0);
-
       renderer.autoClear = false;
 
-      // 3. 明るいところを抜く（半分の解像度）
+      // 2. 明るいところを抜く（1/4の解像度）。アバターはアルファの目印で外れる
       brightMat.uniforms.tSrc.value = baseRT.texture;
-      brightMat.uniforms.tMask.value = maskRT.texture;
       draw(brightMat, rtA);
 
-      // 4. ぼかす。半分と1/4の2段を混ぜると、近くの光も遠くの光も出る
+      // 3. ぼかす。1/4と1/8の2段を混ぜると、近くの光も遠くの光も出る
       blurInto(rtA, rtB, rtA);
       blurInto(rtA, rtD, rtC);
 
-      // 5. 画面へ合成（アルファは元のまま＝穴が残る）
+      // 4. 画面へ合成（アルファは元のまま＝穴が残る）
       renderer.autoClear = true;
       // 露出は明るさ5段階で変わる（world_club.js）。毎フレーム今の値を渡す
       compMat.uniforms.uExposure.value = renderer.toneMappingExposure;
@@ -352,20 +353,18 @@ export function createBloom(renderer, { samples = 4 } = {}) {
       const p = renderer.getPixelRatio();
       w = Math.round(width * p);
       h = Math.round(height * p);
-      const h2 = Math.max(1, Math.round(w / 2));
-      const v2 = Math.max(1, Math.round(h / 2));
       const h4 = Math.max(1, Math.round(w / 4));
       const v4 = Math.max(1, Math.round(h / 4));
+      const h8 = Math.max(1, Math.round(w / 8));
+      const v8 = Math.max(1, Math.round(h / 8));
       baseRT.setSize(w, h);
-      rtA.setSize(h2, v2);
-      rtB.setSize(h2, v2);
-      rtC.setSize(h4, v4);
-      rtD.setSize(h4, v4);
-      maskRT.setSize(h2, v2);
+      rtA.setSize(h4, v4);
+      rtB.setSize(h4, v4);
+      rtC.setSize(h8, v8);
+      rtD.setSize(h8, v8);
     },
     dispose() {
-      for (const rt of [baseRT, rtA, rtB, rtC, rtD, maskRT]) rt.dispose();
-      maskMat.dispose();
+      for (const rt of [baseRT, rtA, rtB, rtC, rtD]) rt.dispose();
       quadGeo.dispose();
       brightMat.dispose();
       blurMat.dispose();

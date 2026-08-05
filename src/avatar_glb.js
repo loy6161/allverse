@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { NO_BLOOM_LAYER } from './layers.js';
+import { NO_BLOOM_ALPHA } from './layers.js';
 import { GUEST_HAIR } from './guestlook.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createTextSprite } from './avatar.js';
@@ -110,13 +110,36 @@ function wrapWithPivot(mesh, pivot) {
   return g;
 }
 
+/**
+ * 「この画素はアバター」という目印をアルファに入れる（2026-08-04追加）。
+ *
+ * ブルームを掛けない場所を bloom.js に伝えるため。**描画を増やさずに**伝えたい
+ * （型紙をもう1枚描く方式は人数ぶん重くなった。layers.js の説明を参照）。
+ *
+ * ⚠ three は「不透明な材質」と判断すると**アルファを強制的に1にする**。
+ *   その判断（OPAQUE）は `transparent === false かつ blending === NormalBlending`。
+ *   なので混ぜ方を「そのまま置き換える（src×1 + dst×0）」に変える。
+ *   計算結果は混ぜないのと同じなので**見た目は変わらない**が、
+ *   OPAQUE 扱いから外れるので 0.99 が保たれる。
+ *   transparent は false のままなので、描く順番も深度の書き込みも今までどおり。
+ */
+function tagNoBloom(mat) {
+  mat.opacity = NO_BLOOM_ALPHA;
+  mat.blending = THREE.CustomBlending;
+  mat.blendSrc = THREE.OneFactor;
+  mat.blendDst = THREE.ZeroFactor;
+  mat.blendSrcAlpha = THREE.OneFactor;
+  mat.blendDstAlpha = THREE.ZeroFactor;
+  return mat;
+}
+
 // フラット寄りの質感（ユーザー指定 2026-07-29: 影なしのフラットな方がかわいい）。
 // エミッシブを高めにして、会場の照明で暗く沈まないようにする
 function toon(color, emissiveScale = 0.42) {
   const mat = new THREE.MeshToonMaterial({ color });
   mat.emissive = new THREE.Color(color).multiplyScalar(emissiveScale);
   mat.side = THREE.DoubleSide; // 髪は開いたシェルなので両面必須
-  return mat;
+  return tagNoBloom(mat);
 }
 
 export function createGlbAvatar(config) {
@@ -161,7 +184,7 @@ export function createGlbAvatar(config) {
     MatDark: () => toon(bottomColor, 0.35),
     MatEye: () => toon('#191219', 0.3),
     MatEyeC: () => toon(eyeIrisColor, 0.45),
-    MatEyeGlint: () => new THREE.MeshBasicMaterial({ color: '#ffffff' }),
+    MatEyeGlint: () => tagNoBloom(new THREE.MeshBasicMaterial({ color: '#ffffff' })),
     MatCheek: () => toon('#ff96a0', 0.5),
     // 2026-08-03追加のアクセサリー用。
     // MatAcc … メガネ・サングラスのフレーム（服の色に引っ張られない固定の黒）
@@ -236,9 +259,6 @@ export function createGlbAvatar(config) {
       body.add(eyeGroup);
     }
     loaded = true;
-    // ★ パーツは**あとから届く**（GLBの読み込みは非同期）。
-    //   関数の最後で1回印を付けるだけでは本体に届かないので、ここでも付ける
-    markAsAvatar(root);
   });
 
   // ---- ネームプレート ----
@@ -291,7 +311,6 @@ export function createGlbAvatar(config) {
     // 名前と同じく、自分の姿の小窓には映さない（selfview.js が見る目印）
     speechSprite.userData.uiSprite = true;
     speechSprite.visible = namesVisible;
-    speechSprite.layers.enable(NO_BLOOM_LAYER); // ブルームの対象外
     body.add(speechSprite);
     // 表示時間は本人の設定に従う（既定8秒）。4秒固定では読み切れなかった
     // （loyさん 2026-08-03「もっと長くしないと読めない」）
@@ -525,8 +544,6 @@ export function createGlbAvatar(config) {
     const py = opt.y !== undefined ? opt.y : 0.5 + Math.random() * 0.2;
     sp.position.set(px, py, opt.z !== undefined ? opt.z : 0.34);
     sp.renderOrder = 900;
-    // ブルームの対象外（アバター本体と同じ扱い。あとから足すのでここで印を付ける）
-    sp.layers.enable(NO_BLOOM_LAYER);
     body.add(sp);
     hearts.push({
       sprite: sp,
@@ -556,7 +573,6 @@ export function createGlbAvatar(config) {
     const side = Math.random() < 0.5 ? -1 : 1;
     sp.position.set(side * (0.12 + Math.random() * 0.3), 0.46 + Math.random() * 0.16, 0.36);
     sp.renderOrder = 900;
-    sp.layers.enable(NO_BLOOM_LAYER); // ブルームの対象外
     body.add(sp);
     hearts.push({
       sprite: sp,
@@ -1085,23 +1101,5 @@ export function createGlbAvatar(config) {
   root.userData.playEmote = playEmote;
   root.userData.setNameVisible = setNameVisible;
 
-  // ---- ブルームの対象外にする印（2026-08-04追加）----
-  //
-  // loyさん「ブルームはアバターがヒカルだけ？」。
-  // アバターは MeshToonMaterial に emissive を強めに入れている（上の toon 参照）ので、
-  // 白い服が会場のネオンより明るくなり、**本人だけが電球のように光っていた**。
-  // 反射のときと同じ扱い（アバターとエモートは対象外）に揃える。
-  // bloom.js がこのレイヤーだけを描いて「光らせない場所」の型紙を作る。
-  markAsAvatar(root);
-
   return root;
-}
-
-/**
- * ブルームを掛けない印を付ける（アバター本体と持ち物）。
- * 後から足したもの（ネームプレート・吹き出し等）にも同じ印を付ける必要がある。
- * @param {THREE.Object3D} obj
- */
-export function markAsAvatar(obj) {
-  obj.traverse((o) => o.layers.enable(NO_BLOOM_LAYER));
 }
