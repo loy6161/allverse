@@ -92,6 +92,7 @@ export function initSettingsUI({
   onEmotePrefsChange,
   onChatEmoteChange,
   onSelfViewChange,
+  onReflectionChange,
 }) {
   injectStyle();
 
@@ -185,7 +186,12 @@ export function initSettingsUI({
     } else if (activeTab === 'npc') {
       if (rooms && rooms.renderNpcInto) rooms.renderNpcInto(body);
     } else {
-      renderDisplaySettings(body, { onEmotePrefsChange, onChatEmoteChange, onSelfViewChange });
+      renderDisplaySettings(body, {
+        onEmotePrefsChange,
+        onChatEmoteChange,
+        onSelfViewChange,
+        onReflectionChange,
+      });
     }
   }
 

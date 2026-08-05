@@ -13,15 +13,59 @@
 
 import { getBubbleSec, setBubbleSec, BUBBLE_CHOICES, bubbleLabel, getChatEmote, setChatEmote } from './bubbletime.js';
 import { getEmoteLayout, setEmoteLayout, resetEmoteOrder } from './emoteprefs.js';
-import { getSelfView, setSelfView } from './selfview.js';
+import { getSelfView, setSelfView, getReflection, setReflectionPref } from './selfview.js';
 
 /**
  * 表示のせっていを描く。
  * @param {HTMLElement} body 描き先
  * @param {{onEmotePrefsChange?:()=>void}} [p] 設定を変えたときに知らせる相手
  */
-export function renderDisplaySettings(body, { onEmotePrefsChange, onChatEmoteChange, onSelfViewChange } = {}) {
+export function renderDisplaySettings(
+  body,
+  { onEmotePrefsChange, onChatEmoteChange, onSelfViewChange, onReflectionChange } = {},
+) {
   body.innerHTML = '';
+
+  // ---- 床の反射（2026-08-04追加） ----
+  // loyさん「あと、反射ってできるの？アバターやエモートは対象外で」
+  // ⚠ 会場をもう1回描くので負荷が上がる。端末で選べるようにしてある
+  const boxR = document.createElement('div');
+  boxR.className = 'vc-help-box';
+  const hR = document.createElement('div');
+  hR.className = 'vc-help-h';
+  hR.textContent = '床に会場を映す（反射）';
+  boxR.appendChild(hR);
+  const noteR = document.createElement('div');
+  noteR.className = 'vc-help-note';
+  noteR.textContent =
+    '床に柱やステージが映り込むようになります。アバターとエモートは映りません。'
+    + '会場をもう一度描くぶん動きが重くなることがあるので、カクつくときは切ってください。'
+    + 'この設定はこの端末にだけ保存されます。';
+  boxR.appendChild(noteR);
+  const rowR = document.createElement('div');
+  rowR.className = 'vc-help-choices';
+  let curRef = getReflection();
+  const refBtns = [];
+  function paintRef() {
+    for (const b of refBtns) b.classList.toggle('active', (b.dataset.v === 'on') === curRef);
+  }
+  for (const [v, label] of [['on', '映す'], ['off', '映さない']]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'vc-help-choice';
+    b.dataset.v = v;
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      curRef = setReflectionPref(v === 'on');
+      paintRef();
+      if (onReflectionChange) onReflectionChange(curRef);
+    });
+    refBtns.push(b);
+    rowR.appendChild(b);
+  }
+  paintRef();
+  boxR.appendChild(rowR);
+  body.appendChild(boxR);
 
   // ---- 自分の姿を出す（2026-08-04追加） ----
   // loyさん「1人称やスクリーン全画面にしてても自分の動きがわかるから応援しやすくて良いかなって」

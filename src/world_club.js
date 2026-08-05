@@ -443,6 +443,10 @@ export function createClubWorld(scene, { renderer } = {}) {
    * silver … 床・壁・ステージ天面の色（名前どおりシルバーに戻す）
    * black …… 躯体・天井の色。⚠ ここを同じシルバーにすると天井まで白くなるので別枠
    * metal … 金属さの上限（下げるほど色が乗って明るく見える）
+   * tex ……… 色テクスチャを使うか。**明るくすると模様が目立ちすぎる**ので、
+   *           明るい段階では外して単色にする
+   *           （loyさん 2026-08-04「明るいとテクスチャが目立ちすぎて変だね。
+   *             床や壁はテクスチャ無い方がいいのかもなあ」）
    * light … ライト（補助）
    * exposure … 画面全体の露出。⚠ **アバターと映像にも掛かる**
    *
@@ -451,14 +455,14 @@ export function createClubWorld(scene, { renderer } = {}) {
    *   ／ いちばん明るい 59.3（2.50倍）
    */
   const BRIGHTNESS = {
-    normal: { silver: null, black: null, metal: 1, light: 1.0, exposure: 1.0 },
-    dim: { silver: 0x6e737d, black: 0x24262c, metal: 0.5, light: 1.1, exposure: 1.0 },
-    bright: { silver: 0x9aa0aa, black: 0x33363d, metal: 0.35, light: 1.2, exposure: 1.0 },
-    brightest: { silver: 0xc8ccd4, black: 0x474b53, metal: 0.25, light: 1.3, exposure: 1.0 },
+    normal: { silver: null, black: null, metal: 1, tex: true, light: 1.0, exposure: 1.0 },
+    dim: { silver: 0x6e737d, black: 0x24262c, metal: 0.5, tex: true, light: 1.1, exposure: 1.0 },
+    bright: { silver: 0x9aa0aa, black: 0x33363d, metal: 0.35, tex: false, light: 1.2, exposure: 1.0 },
+    brightest: { silver: 0xc8ccd4, black: 0x474b53, metal: 0.25, tex: false, light: 1.3, exposure: 1.0 },
     // 会場を明るくしたうえで、画面全体も少し持ち上げる。
     // ⚠ アバターと映像も明るくなる。上げすぎるとアバターが白飛びするので 1.25 で止める
     //   （loyさん 2026-08-04「一番明るいのはアバターが白飛びしちゃうね」）
-    'brightest+': { silver: 0xc8ccd4, black: 0x474b53, metal: 0.25, light: 1.3, exposure: 1.25 },
+    'brightest+': { silver: 0xc8ccd4, black: 0x474b53, metal: 0.25, tex: false, light: 1.3, exposure: 1.25 },
   };
 
   let level = 'normal';
@@ -466,15 +470,22 @@ export function createClubWorld(scene, { renderer } = {}) {
   /** 会場のマテリアルを明るさに合わせて塗り直す（読み込み後でないと対象が無い） */
   function applyMaterials() {
     if (!model) return;
-    const { silver, black, metal } = BRIGHTNESS[level];
+    const { silver, black, metal, tex } = BRIGHTNESS[level];
     model.traverse((o) => {
       if (!o.isMesh) return;
       for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
         if (!m || !LIT_MATERIALS.includes(m.name)) continue;
         if (!matBase.has(m.uuid)) {
-          matBase.set(m.uuid, { color: m.color.getHex(), metal: m.metalness ?? 0 });
+          // ⚠ テクスチャは**捨てずに覚えておく**。外したあと「ふつう」に戻せなくなる
+          matBase.set(m.uuid, { color: m.color.getHex(), metal: m.metalness ?? 0, map: m.map || null });
         }
         const b = matBase.get(m.uuid);
+        // テクスチャの付け外し。⚠ 差し替えたら needsUpdate を立てないと反映されない
+        const wantMap = tex ? b.map : null;
+        if (m.map !== wantMap) {
+          m.map = wantMap;
+          m.needsUpdate = true;
+        }
         if (silver === null) {
           // 「ふつう」＝ 2026-07-30 に「白すぎる」を直したときの値に戻す
           m.color.setHex(b.color);
@@ -504,6 +515,9 @@ export function createClubWorld(scene, { renderer } = {}) {
     stageGlow.intensity = BASE.stageGlow * g;
     floorGlow.intensity = BASE.floorGlow * g;
     applyMaterials();
+    // ⚠ 明るさを変えると会場の色が変わるので、映り込みも撮り直す。
+    //   ここを忘れると、暗いままの会場が床に映り続ける
+    captureEnvironment();
     return level;
   }
 
@@ -552,12 +566,94 @@ export function createClubWorld(scene, { renderer } = {}) {
       // ⚠ 明るさの設定は**読み込みより先に届く**（welcome の方が速い）。
       //   ここで塗り直さないと、選ばれている段階が効かないまま始まる
       applyMaterials();
+      // 反射をONにしたあとに読み込みが終わることもある。そのときも会場を映せるように
+      captureEnvironment();
       return model;
     })
     .catch((e) => {
       failed = String(e && e.message ? e.message : e);
       console.error('[world_club] 会場の読み込みに失敗:', failed);
     });
+
+  // ---- 床の反射（2026-08-04追加）----
+  //
+  // loyさん「あと、反射ってできるの？アバターやエモートは対象外で」。
+  //
+  // ⚠ **いまも「映り込み」はあるが、映っているのは作り物の箱**（環境マップ）で、
+  //   実際の柱やステージは映っていない。VRC側の床に柱が映っているのは本物の反射。
+  //   ここでは床に鏡の面を敷いて、**会場をもう一度描いて**映す。
+  //
+  // ⚠ **アバターとエモートは映さない**（loyさんの指定）。
+  //   映すものをレイヤーで選べるので、会場だけを描く。
+  //   結果として**負荷も下がる**（アバターや粒を描き直さなくて済む）。
+  // ⚠ 客席の床は完全に平ら（実測で高さの差 0.01m）なので、鏡の面を敷ける。
+  // ⚠ 既定はOFF。会場をもう1回描くので負荷が上がる。端末ごとに選べるようにしてある。
+  // ★ 2つの方式を試して、**環境マップ方式**を採った。実測の理由:
+  //
+  //   鏡（Reflector）方式 … 床に鏡の面を敷く。**床を覆ってしまい真っ黒になった**
+  //     （いちばん明るい設定で床の明るさ 99.1 → 3.8）。半透明にしても効かなかった。
+  //     毎フレーム会場をもう1枚描くので負荷も +40%（1.5ms → 2.1ms）。
+  //
+  //   環境マップ方式（採用）… 会場を6方向から**1回だけ**撮って、床や壁の
+  //     「映り込み」の中身を作り物の箱から**本物の会場**に差し替える。
+  //     ⚠ **会場は動かないので撮り直しが要らない**＝毎フレームの負荷はゼロ。
+  //     撮影は1回 5.2ms（明るさを変えたときだけ撮り直す）。
+  //
+  // ⚠ 床を磨く（金属を上げ粗さを下げる）と**逆に真っ黒になる**（35.2 → 3.9）。
+  //   金属は拡散反射しないので、暗い会場では映るものも暗いため。
+  //   **床の質感は変えず、映り込みの中身だけ差し替える**のが安全。
+  // ⚠ アバターとエモートは映さない（loyさん指定）。撮影用カメラを専用レイヤーに絞る。
+  const REFLECT_LAYER = 2; // 映すもの＝会場だけ。アバター(0)や小窓(1)は入れない
+  let cubeRT = null;
+  let cubeCam = null;
+  let reflectOn = false;
+
+  /** 会場を6方向から撮り直す（明るさを変えたときと、初回だけ） */
+  function captureEnvironment() {
+    if (!reflectOn || !model || !renderer) return;
+    if (!cubeRT) {
+      cubeRT = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType });
+      cubeCam = new THREE.CubeCamera(0.5, 120, cubeRT);
+      cubeCam.layers.set(REFLECT_LAYER);
+      // 会場の中心・目の高さあたりから撮る
+      cubeCam.position.set(CLUB_SCREEN.x, 3.0, -6);
+      scene.add(cubeCam);
+    }
+    // 会場のメッシュだけを「映る」対象にする
+    model.traverse((o) => {
+      if (o.isMesh) o.layers.enable(REFLECT_LAYER);
+    });
+    cubeCam.update(renderer, scene);
+    applyEnvMap();
+  }
+
+  /** 対象マテリアルの映り込みを、本物（撮った会場）か作り物の箱かに切り替える */
+  function applyEnvMap() {
+    if (!model) return;
+    const want = reflectOn && cubeRT ? cubeRT.texture : null;
+    model.traverse((o) => {
+      if (!o.isMesh) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (!m || !LIT_MATERIALS.includes(m.name)) continue;
+        if (m.envMap !== want) {
+          // null に戻すと scene.environment（作り物の箱）が使われる＝元の見た目
+          m.envMap = want;
+          m.needsUpdate = true;
+        }
+      }
+    });
+  }
+
+  /**
+   * 床や壁に会場が映るようにする／やめる。
+   * @param {boolean} on
+   */
+  function setReflection(on) {
+    reflectOn = Boolean(on);
+    if (reflectOn) captureEnvironment();
+    else applyEnvMap();
+    return reflectOn;
+  }
 
   // ---- ステージの上の高さ（2026-08-04追加）----
   //
@@ -616,8 +712,10 @@ export function createClubWorld(scene, { renderer } = {}) {
     stage: STAGE,
     /** その位置の足元の高さ。ステージの実形状をレイで拾う（矩形の近似ではない） */
     groundYAt,
-    /** 会場の明るさを変える（'normal' / 'bright' / 'brightest'）。運営が決めて全員に効く */
+    /** 会場の明るさを変える（'normal' / 'dim' / 'bright' / 'brightest' / 'brightest+'）。運営が決めて全員に効く */
     setBrightness,
+    /** 床の反射（アバターとエモートは映さない）。負荷が上がるので端末ごとに選ぶ */
+    setReflection,
     ready: loading,
     isLoaded: () => loaded,
     error: () => failed,

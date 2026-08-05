@@ -30,7 +30,7 @@ import { initAdminUI } from './adminui.js';
 import { initConnBanner } from './connbanner.js';
 import { initYouTubeChat } from './ytchat.js';
 import { initExitButton } from './exitbtn.js';
-import { initSelfView } from './selfview.js';
+import { initSelfView, getReflection } from './selfview.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
@@ -875,6 +875,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   // ⚠ 着替えると player が差し替わるので、そのつど取り直す（変数を掴まない）
   selfView = initSelfView({ getPlayer: () => player });
 
+  // 床の反射（2026-08-04追加）。前回この端末で選んだ設定をここで効かせる。
+  // ⚠ 入場のたびに通す。ここを忘れると「設定は残っているのに映らない」になる
+  if (world && world.setReflection) world.setReflection(getReflection());
+
   // エモートバー（自分の分はローカルで即再生し、サーバーへも通知）
   emoteBar = initEmoteBar({
     onEmote: (id) => {
@@ -1059,6 +1063,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     // 自分の姿の小窓（2026-08-04追加）。自分の画面だけの設定なのでサーバーへは送らない
     onSelfViewChange: (on) => {
       if (selfView) selfView.setEnabled(on);
+    },
+    // 床の反射（2026-08-04追加）。端末の性能に左右されるので自分の画面だけの設定
+    onReflectionChange: (on) => {
+      if (world && world.setReflection) world.setReflection(on);
     },
   });
 

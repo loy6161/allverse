@@ -101,6 +101,31 @@ export function setSelfView(on) {
   return Boolean(on);
 }
 
+// ---- 床の反射（2026-08-04追加）----
+//
+// ⚠ 会場をもう1回描くので**負荷が上がる**。端末の性能に左右されるので、
+//   会場全体の設定ではなく**自分の画面だけの設定**にしてある。
+//   ⚙設定→表示設定は「自分の画面だけに効く設定」を置く場所（displaysettings.js の方針）。
+const REFLECT_KEY = 'vc-reflection';
+
+/** 床の反射を出す設定か。既定はOFF（負荷が読めない端末があるため） */
+export function getReflection() {
+  try {
+    return localStorage.getItem(REFLECT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function setReflectionPref(on) {
+  try {
+    localStorage.setItem(REFLECT_KEY, on ? '1' : '0');
+  } catch {
+    /* 保存できなくてもその場では効く */
+  }
+  return Boolean(on);
+}
+
 /**
  * 自分のアバターの小窓を作る。
  *
