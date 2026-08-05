@@ -431,29 +431,34 @@ export function createClubWorld(scene, { renderer } = {}) {
   /**
    * 明るさの段階。
    *
-   * mat ……… 会場のマテリアルの色にかける倍率
-   * metal …… 金属さの上限（下げるほど色が乗って明るく見える）
-   * env ……… 金属の映り込みの強さにかける倍率（**いちばんよく効く**）
-   * light …… ライト（補助。床や壁のわずかな反射ぶん）
+   * ★ **元の色に倍率を掛けるのをやめ、シルバーに置き換える**（2026-08-04 loyさん提案
+   *   「マテリアルの色をもっとシルバー寄りにしたら？」）。これが正解だった。
+   *
+   *   倍率方式が弱かった理由: 元が `#24262e`（ほぼ黒）なので、4倍しても暗い灰にしかならない。
+   *   しかも金属(metalness 0.85)は色を拡散反射に使わないので、なおさら効かなかった。
+   *   実測の差は歴然:
+   *     倍率4倍＋映り込み3倍＋金属0.2 → **1.68倍**
+   *     シルバー#c8ccd4＋金属0.25     → **2.50倍**（暗部 80% → 29%）
+   *
+   * silver … 床・壁・ステージ天面の色（名前どおりシルバーに戻す）
+   * black …… 躯体・天井の色。⚠ ここを同じシルバーにすると天井まで白くなるので別枠
+   * metal … 金属さの上限（下げるほど色が乗って明るく見える）
+   * light … ライト（補助）
    * exposure … 画面全体の露出。⚠ **アバターと映像にも掛かる**
    *
-   * ⚠ 金属は色を上げてもあまり明るくならない（拡散反射しないため）。
-   *   実測: 色だけ2.7倍 → 1.25倍 ／ 映り込み8倍 → 1.54倍 ／ 組み合わせ → 1.68倍。
-   *
-   * 実測（会場の中からカメラを向け、画面全体の平均。白飛びはどれも0%）:
-   *   normal 16.5 ／ bright 22.6（1.37倍） ／ brightest 27.7（1.68倍）
-   *   ＋露出ぶんを足した「明るめ（会場＋全体）」系はさらに伸びる
+   * 実測（会場の中にアバターを置いて画面全体の平均。白飛びはどれも0%）:
+   *   ふつう 23.7 ／ 少し明るい 32.5（1.37倍） ／ 明るめ 43.9（1.85倍）
+   *   ／ いちばん明るい 59.3（2.50倍）
    */
   const BRIGHTNESS = {
-    normal: { mat: 1.0, metal: 1, env: 1.0, light: 1.0, exposure: 1.0 },
-    // 会場だけを明るくする（アバターと映像はそのまま）
-    bright: { mat: 2.7, metal: 0.3, env: 2.0, light: 1.15, exposure: 1.0 },
-    brightest: { mat: 4.0, metal: 0.2, env: 3.0, light: 1.3, exposure: 1.0 },
+    normal: { silver: null, black: null, metal: 1, light: 1.0, exposure: 1.0 },
+    dim: { silver: 0x6e737d, black: 0x24262c, metal: 0.5, light: 1.1, exposure: 1.0 },
+    bright: { silver: 0x9aa0aa, black: 0x33363d, metal: 0.35, light: 1.2, exposure: 1.0 },
+    brightest: { silver: 0xc8ccd4, black: 0x474b53, metal: 0.25, light: 1.3, exposure: 1.0 },
     // 会場を明るくしたうえで、画面全体も少し持ち上げる。
     // ⚠ アバターと映像も明るくなる。上げすぎるとアバターが白飛びするので 1.25 で止める
     //   （loyさん 2026-08-04「一番明るいのはアバターが白飛びしちゃうね」）
-    'bright+': { mat: 2.7, metal: 0.3, env: 2.0, light: 1.15, exposure: 1.15 },
-    'brightest+': { mat: 4.0, metal: 0.2, env: 3.0, light: 1.3, exposure: 1.25 },
+    'brightest+': { silver: 0xc8ccd4, black: 0x474b53, metal: 0.25, light: 1.3, exposure: 1.25 },
   };
 
   let level = 'normal';
@@ -461,27 +466,24 @@ export function createClubWorld(scene, { renderer } = {}) {
   /** 会場のマテリアルを明るさに合わせて塗り直す（読み込み後でないと対象が無い） */
   function applyMaterials() {
     if (!model) return;
-    const { mat, env, metal } = BRIGHTNESS[level];
+    const { silver, black, metal } = BRIGHTNESS[level];
     model.traverse((o) => {
       if (!o.isMesh) return;
       for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
         if (!m || !LIT_MATERIALS.includes(m.name)) continue;
         if (!matBase.has(m.uuid)) {
-          matBase.set(m.uuid, {
-            color: m.color.getHex(),
-            env: m.envMapIntensity ?? 1,
-            metal: m.metalness ?? 0,
-          });
+          matBase.set(m.uuid, { color: m.color.getHex(), metal: m.metalness ?? 0 });
         }
         const b = matBase.get(m.uuid);
-        // ⚠ 元の色に倍率を掛ける（足し算にすると色味が転ぶ）。1.0 を超えないよう頭打ちにする
-        m.color.setHex(b.color);
-        m.color.multiplyScalar(mat);
-        m.color.r = Math.min(1, m.color.r);
-        m.color.g = Math.min(1, m.color.g);
-        m.color.b = Math.min(1, m.color.b);
-        m.envMapIntensity = b.env * env;
-        // 金属さを**下げる**方向にだけ効かせる（元から低いものを上げない）
+        if (silver === null) {
+          // 「ふつう」＝ 2026-07-30 に「白すぎる」を直したときの値に戻す
+          m.color.setHex(b.color);
+          m.metalness = b.metal;
+          continue;
+        }
+        // ⚠ 躯体・天井は別の色。同じシルバーにすると天井まで白くなる
+        m.color.setHex(m.name === 'clubVERSE_black' ? black : silver);
+        // 金属さは**下げる**方向にだけ効かせる（元から低いものを上げない）
         m.metalness = Math.min(b.metal, metal);
       }
     });

@@ -109,7 +109,7 @@ ok('知らない値は無視され、直前の値が保たれる', info2 && info
 console.log('\n[4] 段階を受け付ける');
 // ⚠ `+` 付きは画面全体（アバター・映像も）を持ち上げる段階。
 //   見比べて決めるために両方式を並べてある（2026-08-04）
-for (const level of ['normal', 'bright', 'brightest', 'bright+', 'brightest+']) {
+for (const level of ['normal', 'dim', 'bright', 'brightest', 'brightest+']) {
   staff.send(JSON.stringify({ t: 'event-update', id: evId, brightness: level }));
   await sleep(350);
   const i = await eventInfo(evId);

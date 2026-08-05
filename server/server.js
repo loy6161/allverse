@@ -223,13 +223,13 @@ const CHAT_SRC_LOCAL = 'local';
  * ⚠ 個人ごとの設定ではなく**イベントの設定**。同じ会場にいる全員に同じ明るさで効く。
  *   実際の見た目の調整は src/world_club.js の setBrightness が持つ。
  */
-// ⚠ `+` 付きは「会場に加えて画面全体（アバター・映像も）を持ち上げる」段階。
-//   見比べて決めるために両方式を並べてある（2026-08-04 loyさん「まず見たいので両方試す」）
+// ⚠ `brightest+` だけは画面全体（アバター・映像も）を持ち上げる段階。
+//   それ以外は会場のマテリアルだけを明るくする（2026-08-04）
 const BRIGHTNESS_LEVELS = new Set([
   'normal',
+  'dim',
   'bright',
   'brightest',
-  'bright+',
   'brightest+',
 ]);
 
