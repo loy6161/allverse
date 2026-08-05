@@ -108,12 +108,19 @@ export function setSelfView(on) {
 //   ⚙設定→表示設定は「自分の画面だけに効く設定」を置く場所（displaysettings.js の方針）。
 const REFLECT_KEY = 'vc-reflection';
 
-/** 床の反射を出す設定か。既定はOFF（負荷が読めない端末があるため） */
+/**
+ * 床の反射を出す設定か。**既定はON**（2026-08-04 loyさん指示「既定ONにして」）。
+ *
+ * ⚠ 「一度も選んでいない」と「OFFを選んだ」を区別すること。
+ *   `=== '1'` だけで見ると、OFFにしたのに次回また出てくる（小窓で踏んだのと同じ穴）。
+ */
 export function getReflection() {
   try {
-    return localStorage.getItem(REFLECT_KEY) === '1';
+    const v = localStorage.getItem(REFLECT_KEY);
+    if (v === null) return true; // 一度も触っていない → 既定ON
+    return v === '1';
   } catch {
-    return false;
+    return true;
   }
 }
 

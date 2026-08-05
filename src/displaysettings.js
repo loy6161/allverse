@@ -39,8 +39,7 @@ export function renderDisplaySettings(
   noteR.className = 'vc-help-note';
   noteR.textContent =
     '床に柱やステージが映り込むようになります。アバターとエモートは映りません。'
-    + '会場をもう一度描くぶん動きが重くなることがあるので、カクつくときは切ってください。'
-    + 'この設定はこの端末にだけ保存されます。';
+    + 'カクつくときは切ってください。この設定はこの端末にだけ保存されます。';
   boxR.appendChild(noteR);
   const rowR = document.createElement('div');
   rowR.className = 'vc-help-choices';
