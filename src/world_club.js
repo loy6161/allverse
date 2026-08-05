@@ -653,7 +653,9 @@ export function createClubWorld(scene, { renderer } = {}) {
   function captureEnvironment() {
     if (!reflectOn || !model || !renderer) return;
     if (!cubeRT) {
-      cubeRT = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType });
+      // ⚠ 解像度が低いとぼやけて「柱が映っている」と分からない。
+      //   撮影は1回きりなので毎フレームの負荷には効かない。512で像が読める
+      cubeRT = new THREE.WebGLCubeRenderTarget(512, { type: THREE.HalfFloatType });
       cubeCam = new THREE.CubeCamera(0.5, 120, cubeRT);
       cubeCam.layers.set(REFLECT_LAYER);
       // 会場の中心・目の高さあたりから撮る
@@ -664,6 +666,12 @@ export function createClubWorld(scene, { renderer } = {}) {
     model.traverse((o) => {
       if (o.isMesh) o.layers.enable(REFLECT_LAYER);
     });
+    // ★ **ライトも同じレイヤーに入れる**（2026-08-04）。
+    //   three.js はライトもレイヤーで絞られる。ここを忘れると
+    //   **撮影中だけ会場が照らされず、真っ黒な絵が床に映る**。
+    //   実際にそうなっていて、loyさん「柱・壁が反射してる感じは全くないね」の原因だった
+    //   （撮った会場の明るさ 平均7.1＝ほぼ黒。光っていたのはLEDの自発光だけ）。
+    for (const l of [hemi, key, back, stageGlow, floorGlow]) l.layers.enable(REFLECT_LAYER);
     cubeCam.update(renderer, scene);
     applyEnvMap();
   }
