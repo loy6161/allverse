@@ -39,6 +39,12 @@ const HEIGHT_LABELS = {
   big: 'BIG',
 };
 
+// 利き手（2026-08-04追加）。片手のエモートと持ち物がどちらの手になるか
+const HAND_LABELS = {
+  right: '右利き',
+  left: '左利き',
+};
+
 const ACCESSORY_LABELS = {
   none: 'なし',
   kemo: 'けもみみ',
@@ -488,6 +494,10 @@ function buildCustomizeScreen({
               <div class="hairstyle-buttons" id="height-buttons"></div>
             </div>
             <div class="customize-row">
+              <div class="customize-label">利き手</div>
+              <div class="hairstyle-buttons" id="hand-buttons"></div>
+            </div>
+            <div class="customize-row">
               <div class="customize-label">肌色</div>
               <div class="swatch-row" id="bodycolor-swatches"></div>
             </div>
@@ -571,6 +581,8 @@ function buildCustomizeScreen({
   config.accessory = formatAccessories(config.accessory);
   // 身長は 2026-08-03 追加。それ以前の保存データには入っていないので既定へ倒す
   if (!AVATAR_PARTS.heights.includes(config.height)) config.height = 'mid';
+  // 利き手は 2026-08-04 追加。既定は右（VRChat側のプロキシに合わせている）
+  if (!AVATAR_PARTS.handedness.includes(config.handedness)) config.handedness = 'right';
   if (!AVATAR_PARTS.hairColors.includes(config.hairColor)) config.hairColor = AVATAR_PARTS.hairColors[1];
   if (!AVATAR_PARTS.shirtColors.includes(config.shirtColor)) config.shirtColor = AVATAR_PARTS.shirtColors[13];
   if (!AVATAR_PARTS.eyeColors.includes(config.eyeColor)) config.eyeColor = AVATAR_PARTS.eyeColors[1];
@@ -707,6 +719,7 @@ function buildCustomizeScreen({
   buildButtonRow('outfit-buttons', AVATAR_PARTS.outfits, OUTFIT_LABELS, 'outfit');
   buildAccessoryRow();
   buildButtonRow('height-buttons', AVATAR_PARTS.heights, HEIGHT_LABELS, 'height');
+  buildButtonRow('hand-buttons', AVATAR_PARTS.handedness, HAND_LABELS, 'handedness');
 
   // ---- 色スウォッチ ----
   function buildSwatchRow(containerId, colors, configKey) {
@@ -763,7 +776,13 @@ function buildCustomizeScreen({
       guestPreviewBackup = null;
       rebuildPreviewAvatar();
     }
-    const rows = ['hairstyle-buttons', 'outfit-buttons', 'accessory-buttons', 'height-buttons'];
+    const rows = [
+      'hairstyle-buttons',
+      'outfit-buttons',
+      'accessory-buttons',
+      'height-buttons',
+      'hand-buttons',
+    ];
     for (const id of rows) {
       const el = document.getElementById(id);
       if (!el) continue;

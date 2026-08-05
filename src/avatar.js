@@ -33,6 +33,10 @@ export const AVATAR_PARTS = {
     'none', 'kemo', 'ahoge',
     'tail', 'wing', 'halo', 'ribbon', 'sunglasses', 'glasses',
   ],
+  // 利き手（2026-08-04追加）。片手のエモート（手をふる／ペンライト／コブシ／乾杯）と
+  // 持ち物（ペンライト・ジョッキ）がどちらの手になるか。
+  // ⚠ 既定は right。VRChat側のプロキシが右手なので、そちらに合わせている
+  handedness: ['right', 'left'],
   // 身長（2026-08-03追加）。3Dパーツは増やさず、アバター全体の拡大率で表す。
   // 実寸: small=1.06m / mid=1.21m / big=1.36m 相当
   heights: ['small', 'mid', 'big'],
@@ -58,6 +62,8 @@ export function randomConfig() {
     eyeColor: pick(AVATAR_PARTS.eyeColors),
     penlightColor: pick(AVATAR_PARTS.penlightColors),
     height: 'mid',
+    // ランダムにしない。VRChat側に合わせた既定（右）から始める
+    handedness: 'right',
   };
 }
 

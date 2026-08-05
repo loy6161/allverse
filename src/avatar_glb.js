@@ -334,7 +334,7 @@ export function createGlbAvatar(config) {
   // そこに棒を置き、腕の軸をそのまま延長する向きに合わせると「握っている」ように見える。
   let penlight = null;
   function ensurePenlight() {
-    if (penlight || !armR) return;
+    if (penlight || !mainHand().arm) return;
     const stick = new THREE.Group();
 
     const bodyMat = new THREE.MeshBasicMaterial({ color: 0x2a2a34 });
@@ -363,13 +363,15 @@ export function createGlbAvatar(config) {
       stick.add(aura);
     }
 
-    // 手の位置と腕の向き（GLB由来の実寸から求める）
-    const hand = new THREE.Vector3(0.075, -0.235, 0.015);
-    const dir = new THREE.Vector3(0.15, -0.2, 0.03).normalize();
+    // 手の位置と腕の向き（GLB由来の実寸から求める）。
+    // ⚠ 利き手に持たせる。xの符号は腕に合わせて反転する（2026-08-04）
+    const h = mainHand();
+    const hand = new THREE.Vector3(0.075 * h.sx, -0.235, 0.015);
+    const dir = new THREE.Vector3(0.15 * h.sx, -0.2, 0.03).normalize();
     stick.position.copy(hand);
     stick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
     stick.visible = false;
-    armR.add(stick);
+    h.arm.add(stick);
     penlight = stick;
   }
 
@@ -378,7 +380,7 @@ export function createGlbAvatar(config) {
   // 3Dアセットは増やさず、円柱と板だけで作る（遠目ではシルエットで読めれば十分）
   let mug = null;
   function ensureMug() {
-    if (mug || !armR) return;
+    if (mug || !mainHand().arm) return;
     const g = new THREE.Group();
     const glassMat = new THREE.MeshBasicMaterial({ color: 0xf0c24a });
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.05, 0.13, 8), glassMat);
@@ -401,12 +403,14 @@ export function createGlbAvatar(config) {
     handle.rotation.y = Math.PI / 2;
     g.add(handle);
 
-    const hand = new THREE.Vector3(0.075, -0.235, 0.015);
-    const dir = new THREE.Vector3(0.15, -0.2, 0.03).normalize();
+    // ⚠ ペンライトと同じく利き手に持たせる（2026-08-04）
+    const h = mainHand();
+    const hand = new THREE.Vector3(0.075 * h.sx, -0.235, 0.015);
+    const dir = new THREE.Vector3(0.15 * h.sx, -0.2, 0.03).normalize();
     g.position.copy(hand);
     g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
     g.visible = false;
-    armR.add(g);
+    h.arm.add(g);
     mug = g;
   }
 
@@ -695,6 +699,38 @@ export function createGlbAvatar(config) {
     _aimQuat.setFromUnitVectors(rest, _aimTmp);
     arm.quaternion.identity().slerp(_aimQuat, Math.max(0, Math.min(1, env)));
   }
+
+  // ---- 利き手（2026-08-04追加）----
+  //
+  // ★ **GLB内の名前と実体が逆**。`armR` は実際には**アバターの左腕**。
+  //   実測（rotation.y=0 のとき armR の中心が x=+0.18、armL が x=-0.18）。
+  //   アバターの前方は +z なので、右手は -x 側＝`armL` の方。
+  //   そのため片手のエモートが全部**左手**になっていた（loyさん指摘・VRChat側は右手）。
+  //
+  // ⚠ ここで名前を付け替えず、**「実際の右手／左手」を返す入口**を作って
+  //   エモート側はそれだけを使う。GLBの名前を書き換えるとモデル側の
+  //   パイプライン（tools/gen_avatar_obj.mjs → Blender）まで直すことになる。
+  //
+  // side / x成分の符号:
+  //   実際の右手(armL) … side=-1、方向のxは反転して渡す
+  //   実際の左手(armR) … side=+1、方向のxはそのまま
+  const HANDED = config.handedness === 'left' ? 'left' : 'right';
+  /** 片手のエモートで使う腕。既定は右利き */
+  function mainHand() {
+    return HANDED === 'left'
+      ? { arm: armR, side: 1, sx: 1 }
+      : { arm: armL, side: -1, sx: -1 };
+  }
+  /** 利き手を、向けたい方向つきで動かす（xの符号は利き手に合わせて反転する） */
+  function aimMainHand(dir, env = 1) {
+    const h = mainHand();
+    aimArm(h.arm, h.side, [dir[0] * h.sx, dir[1], dir[2]], env);
+  }
+  /** 利き手を体の外側へ開く */
+  function pushMainHandOut(env) {
+    const h = mainHand();
+    pushArmOut(h.arm, h.side, env);
+  }
   /**
    * エモートを再生する。
    *
@@ -747,8 +783,8 @@ export function createGlbAvatar(config) {
         const env = ease(t, dur, 0.3);
         const swing = Math.sin(t * 7.0);
         // 髪の外側まで手を出す。真上に上げると髪に隠れるので斜め45度くらいに開く
-        aimArm(armR, 1, [0.82 + swing * 0.3, 0.6, 0.38], env);
-        pushArmOut(armR, 1, env);
+        aimMainHand([0.82 + swing * 0.3, 0.6, 0.38], env);
+        pushMainHandOut(env);
         // 反対の手は自然に下ろしたまま
         body.rotation.z = -swing * 0.045 * env;
         body.position.y = Math.abs(swing) * 0.008 * env;
@@ -862,7 +898,7 @@ export function createGlbAvatar(config) {
         //   PENLIGHT_SWINGS が整数である限りこれは保たれる
         const cycle = (t / dur) * Math.PI * 2 * PENLIGHT_SWINGS;
         const swing = Math.sin(cycle);
-        aimArm(armR, 1, [0.66 + swing * 0.4, 0.88, 0.3], 1);
+        aimMainHand([0.66 + swing * 0.4, 0.88, 0.3], 1);
         // 体を軽く沈めて拍を取る（振りの折り返しでいちばん沈む）
         body.position.y = -Math.abs(Math.cos(cycle)) * 0.02;
         body.rotation.z = -swing * 0.055;
@@ -874,8 +910,8 @@ export function createGlbAvatar(config) {
         // 腕を体の外側へ開いてから上げないと、頭の裏に回って正面から見えない
         const env = ease(t, dur, 0.18);
         const pump = Math.max(0, Math.sin(t * 7.5)); // 突き上げは「上げて戻す」の片側だけ
-        aimArm(armR, 1, [0.34, 1.0 + pump * 0.22, 0.16], env);
-        pushArmOut(armR, 1, env);
+        aimMainHand([0.34, 1.0 + pump * 0.22, 0.16], env);
+        pushMainHandOut(env);
         body.position.y = pump * 0.045 * env;
         body.rotation.z = -0.03 * env;
         break;
@@ -971,8 +1007,8 @@ export function createGlbAvatar(config) {
         // 上げっぱなしにせず「合わせて戻す」を繰り返すことで乾杯に見せる
         const env = ease(t, dur, 0.2);
         const toast = Math.max(0, Math.sin(t * 4.2));
-        aimArm(armR, 1, [0.3 + toast * 0.16, 0.42 + toast * 0.3, 0.62], env);
-        pushArmOut(armR, 1, env * 0.6);
+        aimMainHand([0.3 + toast * 0.16, 0.42 + toast * 0.3, 0.62], env);
+        pushMainHandOut(env * 0.6);
         body.position.y = toast * 0.02 * env;
         body.rotation.z = -toast * 0.04 * env;
         break;

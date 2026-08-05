@@ -23,6 +23,9 @@ export function configToAv(config) {
   // 身長（2026-08-03追加）。未指定は 'mid'（従来と同じ背丈）なので、
   // 古いクライアント・古い保存データでも見た目は変わらない
   const ht = AVATAR_PARTS.heights.includes(cfg.height) ? cfg.height : 'mid';
+  // 利き手（2026-08-04追加）。'r' / 'l' の1文字で送る。
+  // 未指定は 'r'（VRChat側のプロキシに合わせた既定）なので、古い保存データでも右手になる
+  const hd = cfg.handedness === 'left' ? 'l' : 'r';
   const o = AVATAR_PARTS.outfits.includes(cfg.outfit) ? cfg.outfit : AVATAR_PARTS.outfits[0];
   // アクセサリーは複数（"wing+halo"）を許す（2026-08-04）。
   // 形は文字列のままなので presence の契約（v=1）は変わらない
@@ -37,6 +40,7 @@ export function configToAv(config) {
     ec: ec >= 0 ? ec : 0,
     pl: pl >= 0 ? pl : 0,
     ht,
+    hd,
   };
 }
 
@@ -55,8 +59,11 @@ export function avToConfig(av) {
   const accessory = formatAccessories(a.ac);
   // 知らない値・未指定はすべて 'mid' に倒す（受け取り側の後方互換）
   const height = AVATAR_PARTS.heights.includes(a.ht) ? a.ht : 'mid';
+  // 未指定・知らない値は右利き（VRChat側の既定に合わせる）
+  const handedness = a.hd === 'l' ? 'left' : 'right';
   return {
     height,
+    handedness,
     bodyColor: AVATAR_PARTS.bodyColors[bcIdx],
     hairStyle,
     outfit,
