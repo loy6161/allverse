@@ -52,8 +52,10 @@ function injectStyle() {
   background: transparent;
   pointer-events: none;
 }
-/* 掴む帯だけは触れるようにする（枠の中身はクリックを通してワールドを操作できる） */
-.vc-selfview .vc-float-head { pointer-events: auto; }
+/* 掴む帯と右下のつまみは触れるようにする（枠の中身はクリックを通してワールドを操作できる）。
+   ⚠ つまみを入れ忘れると**大きさを変えられない**（2026-08-04 loyさん指摘） */
+.vc-selfview .vc-float-head,
+.vc-selfview .vc-float-resize { pointer-events: auto; }
 .vc-selfview.vc-hidden { display: none; }
 /* UI非表示（Hキー）に追従する */
 body.vc-ui-hidden .vc-selfview { display: none; }
@@ -166,10 +168,19 @@ export function initSelfView({ getPlayer }) {
     if (!enabled) return;
     const player = getPlayer ? getPlayer() : null;
     if (!player) return;
-    // UI非表示（Hキー）や畳んだ状態では、枠が画面に出ていない
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 8 || rect.height < 8) return;
     if (el.classList.contains('vc-hidden')) return;
+    // ⚠ **畳んだら描かない**。畳むと枠は帯だけの高さになるが、
+    //   その帯の下にアバターが小さく描き残る（2026-08-04 loyさん「たたんでも小さく残ってる」）
+    if (el.classList.contains('vc-float-folded')) return;
+
+    // ⚠ 描くのは**帯の下だけ**。枠全体に描くと、不透明な帯の裏に頭が隠れ、
+    //   そのぶん下がはみ出す（loyさん「ちょっと枠からはみ出してるね」）
+    const rect = el.getBoundingClientRect();
+    const head = el.querySelector('.vc-float-head');
+    const headH = head ? head.getBoundingClientRect().height : 0;
+    const top = rect.top + headH;
+    const height = rect.height - headH;
+    if (rect.width < 8 || height < 8) return;
 
     syncLayers(player);
 
@@ -193,19 +204,20 @@ export function initSelfView({ getPlayer }) {
     //
     // ⚠ **全身が入る距離**にすること。エモートは腕や脚の動きなので、
     //   顔に寄せると何をしているか分からない（loyさん「エモートがわかればいい」）。
-    //   画角30度・この距離だと縦に約1.6m写る。いちばん背の高い設定(BIG≒1.36m)でも
-    //   足元から頭上まで収まり、ジャンプで少し浮いても切れない。
+    //   画角30度・この距離だと縦に約2.0m写る。いちばん背の高い設定(BIG≒1.36m)でも
+    //   足元から頭上まで収まり、**エモートで腕を上げても・ジャンプで浮いても切れない**。
+    //   ⚠ 3.0mだと余白が足りずはみ出した（2026-08-04 loyさん指摘）。詰めすぎない。
     const yaw = player.rotation.y;
-    const dist = 3.0;
+    const dist = 3.7;
     const eyeY = 0.95;
-    const lookY = 0.62; // 体の中心。ここを頭に寄せると足元が切れる
+    const lookY = 0.68; // 体の中心よりわずかに上。腕を上げるエモートのぶんを見込む
     camera.position.set(
       player.position.x + Math.sin(yaw) * dist,
       player.position.y + eyeY,
       player.position.z + Math.cos(yaw) * dist,
     );
     camera.lookAt(player.position.x, player.position.y + lookY, player.position.z);
-    camera.aspect = rect.width / rect.height;
+    camera.aspect = rect.width / height;
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld(true);
 
@@ -213,9 +225,9 @@ export function initSelfView({ getPlayer }) {
     const dpr = renderer.getPixelRatio();
     const h = renderer.domElement.clientHeight;
     const x = Math.round(rect.left);
-    const y = Math.round(h - rect.bottom);
+    const y = Math.round(h - (top + height));
     const w = Math.round(rect.width);
-    const hh = Math.round(rect.height);
+    const hh = Math.round(height);
 
     const prevAutoClear = renderer.autoClear;
     const prevScissorTest = renderer.getScissorTest();
