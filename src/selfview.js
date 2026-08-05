@@ -37,7 +37,10 @@ function injectStyle() {
 .vc-selfview {
   position: fixed;
   left: 16px;
-  bottom: 210px;
+  /* ⚠ チャットの上に置く。210px だとチャットの帯と重なっていた
+     （loyさん 2026-08-04「初期位置がチャットとかぶってるからもう少し上だね」）。
+     チャットは高さ約320px＋下16pxなので、その上に余白を取ってここに置く */
+  bottom: 372px;
   width: 200px;
   height: 200px;
   z-index: 12;
@@ -62,11 +65,18 @@ body.vc-ui-hidden .vc-selfview { display: none; }
   document.head.appendChild(style);
 }
 
+/**
+ * 小窓を出すか。**既定はON**（loyさん 2026-08-04「デフォルトで出してていいよ」）。
+ * ⚠ 「まだ一度も選んでいない」と「OFFを選んだ」を区別する必要がある。
+ *   `=== '1'` だけで見ると、OFFにしたのに次回また出てくる。
+ */
 function loadOn() {
   try {
-    return localStorage.getItem(STORE_KEY) === '1';
+    const v = localStorage.getItem(STORE_KEY);
+    if (v === null) return true; // 一度も触っていない → 既定ON
+    return v === '1';
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -163,6 +173,12 @@ export function initSelfView({ getPlayer }) {
 
     syncLayers(player);
 
+    // ★ 一人称のときは本体が丸ごと隠れている（controls.js が `avatar.visible = false` にする）。
+    //   そのままだと小窓にも映らないが、**一人称こそ自分の姿を見たい場面**なので、
+    //   小窓を描くあいだだけ出す（loyさん 2026-08-04「1人称視点にすると消えちゃう」）。
+    const wasHidden = player.visible === false;
+    if (wasHidden) player.visible = true;
+
     // 名前と吹き出しは `uiSprite` で除外しているが、
     // 吹き出しは発言のたびに作り直されるため、取りこぼし対策で描画中だけ隠す
     hidden.length = 0;
@@ -226,6 +242,8 @@ export function initSelfView({ getPlayer }) {
 
     for (const o of hidden) o.visible = true;
     hidden.length = 0;
+    // 一人称のために隠されていたなら、隠したまま戻す（本編に自分が映り込まないように）
+    if (wasHidden) player.visible = false;
   }
 
   return {

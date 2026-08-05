@@ -4,6 +4,11 @@ node_modules/
 
 _shots/
 
+# 動作確認でサーバーを立てたときの出力（*.log は上で無視済み。標準エラー側も同じ扱いにする）
+*.err
+server/_*.log
+server/_*.err
+
 # ローカル検証用のSQLiteファイル（Turso接続を file: で試すときに出る）
 *.db
 *.db-shm

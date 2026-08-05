@@ -686,6 +686,26 @@ function assignRoom(eventId) {
 }
 
 /**
+ * 合言葉つきのイベントに入れるか（2026-08-04追加）。
+ *
+ * loyさんの指示:
+ *   > パスワード必要なイベントでも管理人は入力無しではいれるようにして。管理できないので。
+ *
+ * **管理者は合言葉なしで入れる。** 会場を管理する人が締め出されると、
+ * 荒らしが出ても止められないし、合言葉を自分で控え忘れただけで入れなくなる。
+ *
+ * ⚠ VIPは免除しない。VIPは「自分が立てたイベントを操作できる」権限であって、
+ *   他人が合言葉で閉じたイベントに入る権限ではない。
+ * ⚠ 入場(join)と移動(move)の両方から呼ぶこと。片方だけだと穴が開く
+ *   （実際に2026-08-02、move 側で合言葉を見ておらず素通りできる穴があった）。
+ */
+function canEnterWithCode(ev, role, code) {
+  if (!ev.entryCode) return true; // パブリック
+  if (role === 'admin') return true; // 管理者は免除
+  return clampString(code, MAX_EVENT_CODE_LEN) === ev.entryCode;
+}
+
+/**
  * 入れるルームがあるか。
  * ルーム番号は無限に増やせる作りなので実際には必ず空きがあるが、
  * 「キャパ0のイベント」など将来の設定ミスで無限ループしないよう上限で打ち切る
@@ -889,7 +909,7 @@ async function handleJoin(client, msg) {
   }
 
   // 合言葉。照合はサーバーだけで行う（クライアントには正解を渡していない）
-  if (ev.entryCode && clampString(msg.code, MAX_EVENT_CODE_LEN) !== ev.entryCode) {
+  if (!canEnterWithCode(ev, role, msg.code)) {
     send(client.ws, { t: 'denied', reason: 'bad-code', ev: ev.id });
     return;
   }
@@ -1382,7 +1402,7 @@ function handleMove(client, msg) {
   //   という2つが起きていた。同じイベント内のルーム移動には掛けない
   //   （既に入場を許された人が部屋を移るだけなので、また合言葉を聞くのはおかしい）。
   if (targetEventId !== client.eventId) {
-    if (ev.entryCode && clampString(msg.code, MAX_EVENT_CODE_LEN) !== ev.entryCode) {
+    if (!canEnterWithCode(ev, client.role, msg.code)) {
       send(client.ws, { t: 'denied', reason: 'bad-code', ev: ev.id });
       return;
     }
