@@ -223,7 +223,15 @@ const CHAT_SRC_LOCAL = 'local';
  * ⚠ 個人ごとの設定ではなく**イベントの設定**。同じ会場にいる全員に同じ明るさで効く。
  *   実際の見た目の調整は src/world_club.js の setBrightness が持つ。
  */
-const BRIGHTNESS_LEVELS = new Set(['normal', 'bright', 'brightest']);
+// ⚠ `+` 付きは「会場に加えて画面全体（アバター・映像も）を持ち上げる」段階。
+//   見比べて決めるために両方式を並べてある（2026-08-04 loyさん「まず見たいので両方試す」）
+const BRIGHTNESS_LEVELS = new Set([
+  'normal',
+  'bright',
+  'brightest',
+  'bright+',
+  'brightest+',
+]);
 
 // 運営メッセージの固定枠（2026-08-02追加）。チャットに流すと見逃されるので別枠にする
 const NOTICE_LEVELS = new Set(['info', 'important', 'emergency']);

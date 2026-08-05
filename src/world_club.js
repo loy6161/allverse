@@ -385,19 +385,30 @@ export function createClubWorld(scene, { renderer } = {}) {
   // loyさん「もうちょっとブラウザ会場明るくていいかも」＋
   // 「3段階を管理者+VIPは設定から調整できるといいかもね」「運営やVIPが変えて全体へ反映」。
   //
-  // ★ **ライトだけでは変わらない**（2026-08-04 loyさん「切り替えても変わらないね」）。
-  //   会場のマテリアルを数えたところ、**373個のうち325個が自発光、141個がほぼ黒**だった。
-  //   自発光も環境マップの映り込みも**ライトの影響を受けない**ので、
-  //   ライトを1.5倍しても画面の明るさは**1.19倍**にしかならず、目では分からない。
+  // ★ ここは2回作り直している。経緯を残す（同じ回り道をしないため）。
   //
-  //   そこで**トーンマッピングの露出**を主役にした。露出は最終的な色に掛かるので、
-  //   自発光にも効く。実測（会場の中から画面全体の平均を測定）:
-  //     露出 1.0 → 平均23.0 ／ 1.6 → 30.3（1.32倍） ／ 2.2 → 36.3（1.58倍）
-  //     **白飛びは 2.2 でも 0%**（ACESFilmic なので粘る）。
+  //   1回目: **ライトの強さ**を倍率で上げた → **見た目がほとんど変わらなかった**
+  //     （loyさん「切り替えても変わらないね」）。会場のマテリアルは373個中325個が自発光・
+  //     141個がほぼ黒で、**自発光も映り込みもライトの影響を受けない**。実測1.19倍。
   //
-  // ⚠ ライトの色は変えない。色まで変えると「白すぎる」を直したとき(2026-07-30)の
-  //   調整が壊れる。環境マップ（金属の映り込み）も触らない。
-  // ⚠ 露出は**画面全体**に掛かる。スクリーンの映像も明るくなる点に注意。
+  //   2回目: **トーンマッピングの露出**を上げた → よく効いたが、
+  //     **アバターまで白飛びした**（loyさん「一番明るいのはアバターが白飛びしちゃうね」）。
+  //     露出は画面全体に掛かるので、明るいアバターやスクリーンの映像まで飛ぶ。
+  //
+  //   3回目（いま）: **会場のマテリアルの色**を明るくする。
+  //     これなら**会場だけ**が明るくなり、アバターは元のまま。
+  //     loyさんの狙い「右のVRC側と会場のイメージが違いすぎる。もっと明るいんだよね。
+  //     でもそれはライティングの問題じゃなかったみたいだね。床などのマテリアルの設定だね」
+  //     に沿う直し方でもある。
+  //
+  // ⚠ **露出（toneMappingExposure）は触らない。** アバターが白飛びする。
+  // ⚠ 明るくする対象は**レイを撃って実際に当たったもの**だけに絞ってある（推測で選ばない）:
+  //     客席の床   … MI_Metal_TILE_Silver_2
+  //     左右の壁・柱 … MI_Metal1
+  //     ステージ天面 … MI_Metal_Silver
+  //     躯体・天井   … clubVERSE_black
+  // ⚠ 元は 2026-07-30 に「白すぎる」を直して暗く落とした値。**既定(normal)はその値のまま**なので、
+  //   何も選ばなければ見た目は変わらない。
   const BASE = {
     hemi: hemi.intensity,
     key: key.intensity,
@@ -406,19 +417,81 @@ export function createClubWorld(scene, { renderer } = {}) {
     floorGlow: floorGlow.intensity,
     exposure: renderer ? renderer.toneMappingExposure : 1,
   };
+
+  /** 明るくする対象。名前はレイキャストで特定したもの */
+  const LIT_MATERIALS = [
+    'MI_Metal_TILE_Silver_2',
+    'MI_Metal1',
+    'MI_Metal_Silver',
+    'clubVERSE_black',
+  ];
+  /** uuid → 元の色と映り込みの強さ（初回に覚える） */
+  const matBase = new Map();
+
   /**
-   * 明るさの段階。'normal' がこれまでの見た目（既定）。
-   * exposure が主役、light は補助（床や壁のわずかな反射ぶん）。
+   * 明るさの段階。
+   *
+   * mat ……… 会場のマテリアルの色にかける倍率
+   * metal …… 金属さの上限（下げるほど色が乗って明るく見える）
+   * env ……… 金属の映り込みの強さにかける倍率（**いちばんよく効く**）
+   * light …… ライト（補助。床や壁のわずかな反射ぶん）
+   * exposure … 画面全体の露出。⚠ **アバターと映像にも掛かる**
+   *
+   * ⚠ 金属は色を上げてもあまり明るくならない（拡散反射しないため）。
+   *   実測: 色だけ2.7倍 → 1.25倍 ／ 映り込み8倍 → 1.54倍 ／ 組み合わせ → 1.68倍。
+   *
+   * 実測（会場の中からカメラを向け、画面全体の平均。白飛びはどれも0%）:
+   *   normal 16.5 ／ bright 22.6（1.37倍） ／ brightest 27.7（1.68倍）
+   *   ＋露出ぶんを足した「明るめ（会場＋全体）」系はさらに伸びる
    */
   const BRIGHTNESS = {
-    normal: { exposure: 1.0, light: 1.0 },
-    bright: { exposure: 1.55, light: 1.2 },
-    brightest: { exposure: 2.2, light: 1.45 },
+    normal: { mat: 1.0, metal: 1, env: 1.0, light: 1.0, exposure: 1.0 },
+    // 会場だけを明るくする（アバターと映像はそのまま）
+    bright: { mat: 2.7, metal: 0.3, env: 2.0, light: 1.15, exposure: 1.0 },
+    brightest: { mat: 4.0, metal: 0.2, env: 3.0, light: 1.3, exposure: 1.0 },
+    // 会場を明るくしたうえで、画面全体も少し持ち上げる。
+    // ⚠ アバターと映像も明るくなる。上げすぎるとアバターが白飛びするので 1.25 で止める
+    //   （loyさん 2026-08-04「一番明るいのはアバターが白飛びしちゃうね」）
+    'bright+': { mat: 2.7, metal: 0.3, env: 2.0, light: 1.15, exposure: 1.15 },
+    'brightest+': { mat: 4.0, metal: 0.2, env: 3.0, light: 1.3, exposure: 1.25 },
   };
 
-  function setBrightness(level) {
-    const k = BRIGHTNESS[level] ? level : 'normal';
-    const { exposure, light } = BRIGHTNESS[k];
+  let level = 'normal';
+
+  /** 会場のマテリアルを明るさに合わせて塗り直す（読み込み後でないと対象が無い） */
+  function applyMaterials() {
+    if (!model) return;
+    const { mat, env, metal } = BRIGHTNESS[level];
+    model.traverse((o) => {
+      if (!o.isMesh) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (!m || !LIT_MATERIALS.includes(m.name)) continue;
+        if (!matBase.has(m.uuid)) {
+          matBase.set(m.uuid, {
+            color: m.color.getHex(),
+            env: m.envMapIntensity ?? 1,
+            metal: m.metalness ?? 0,
+          });
+        }
+        const b = matBase.get(m.uuid);
+        // ⚠ 元の色に倍率を掛ける（足し算にすると色味が転ぶ）。1.0 を超えないよう頭打ちにする
+        m.color.setHex(b.color);
+        m.color.multiplyScalar(mat);
+        m.color.r = Math.min(1, m.color.r);
+        m.color.g = Math.min(1, m.color.g);
+        m.color.b = Math.min(1, m.color.b);
+        m.envMapIntensity = b.env * env;
+        // 金属さを**下げる**方向にだけ効かせる（元から低いものを上げない）
+        m.metalness = Math.min(b.metal, metal);
+      }
+    });
+  }
+
+  function setBrightness(next) {
+    level = BRIGHTNESS[next] ? next : 'normal';
+    const { light, exposure } = BRIGHTNESS[level];
+    // ⚠ 露出は画面全体（アバター・スクリーンの映像も）に掛かる。
+    //   「+」の付いた段階でだけ 1.0 より上げている
     if (renderer) renderer.toneMappingExposure = BASE.exposure * exposure;
     hemi.intensity = BASE.hemi * light;
     key.intensity = BASE.key * light;
@@ -428,7 +501,8 @@ export function createClubWorld(scene, { renderer } = {}) {
     const g = 1 + (light - 1) * 0.6;
     stageGlow.intensity = BASE.stageGlow * g;
     floorGlow.intensity = BASE.floorGlow * g;
-    return k;
+    applyMaterials();
+    return level;
   }
 
   // 金属とガラスの映り込み用の環境マップ
@@ -473,6 +547,9 @@ export function createClubWorld(scene, { renderer } = {}) {
       //   高さが 1.4m ズレる（2026-08-04 実際に踏んだ）
       model.updateMatrixWorld(true);
       loaded = true;
+      // ⚠ 明るさの設定は**読み込みより先に届く**（welcome の方が速い）。
+      //   ここで塗り直さないと、選ばれている段階が効かないまま始まる
+      applyMaterials();
       return model;
     })
     .catch((e) => {

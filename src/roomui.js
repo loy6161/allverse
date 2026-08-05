@@ -268,10 +268,15 @@ export function initRoomUI({
 
     const briSel = document.createElement('select');
     briSel.className = 'vc-room-input';
+    // ⚠ 上2つは**会場だけ**を明るくする（アバターと映像はそのまま）。
+    //   下2つは画面全体も持ち上げるので、アバターと映像も明るくなる。
+    //   見比べて決めるために両方式を出している（2026-08-04）
     for (const [value, label] of [
       ['normal', 'ふつう（これまでと同じ）'],
-      ['bright', '明るめ'],
-      ['brightest', 'いちばん明るい'],
+      ['bright', '明るめ（会場だけ）'],
+      ['brightest', 'いちばん明るい（会場だけ）'],
+      ['bright+', '明るめ（画面全体）'],
+      ['brightest+', 'いちばん明るい（画面全体）'],
     ]) {
       const o = document.createElement('option');
       o.value = value;
@@ -282,7 +287,10 @@ export function initRoomUI({
     box.appendChild(briSel);
     const briHint = document.createElement('div');
     briHint.className = 'vc-room-hint';
-    briHint.textContent = 'このイベントにいる全員の画面が明るくなります（保存を押すとすぐ反映）。';
+    briHint.textContent =
+      'このイベントにいる全員の画面が明るくなります（保存を押すとすぐ反映）。'
+      + '「会場だけ」は床や壁だけを明るくします。'
+      + '「画面全体」はアバターやスクリーンの映像も明るくなります（上げすぎるとアバターが白っぽくなります）。';
     box.appendChild(briHint);
 
     // ---- コールのワード表（2026-08-03追加）----
