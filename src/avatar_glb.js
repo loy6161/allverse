@@ -252,6 +252,9 @@ export function createGlbAvatar(config) {
       maxLines: 1,
     });
     nameSprite.position.set(0, NAME_Y, 0);
+    // 自分の姿の小窓には映さない目印（2026-08-04追加・selfview.js が見る）。
+    // loyさん「エモートがわかればいいと思うから名前と吹き出しはいらないかな」
+    nameSprite.userData.uiSprite = true;
     body.add(nameSprite);
   }
 
@@ -281,6 +284,8 @@ export function createGlbAvatar(config) {
       maxLines: 3,
     });
     speechSprite.position.set(0, name ? NAME_Y + 0.4 : NAME_Y, 0);
+    // 名前と同じく、自分の姿の小窓には映さない（selfview.js が見る目印）
+    speechSprite.userData.uiSprite = true;
     speechSprite.visible = namesVisible;
     body.add(speechSprite);
     // 表示時間は本人の設定に従う（既定8秒）。4秒固定では読み切れなかった

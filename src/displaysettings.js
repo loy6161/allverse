@@ -13,14 +13,54 @@
 
 import { getBubbleSec, setBubbleSec, BUBBLE_CHOICES, bubbleLabel, getChatEmote, setChatEmote } from './bubbletime.js';
 import { getEmoteLayout, setEmoteLayout, resetEmoteOrder } from './emoteprefs.js';
+import { getSelfView, setSelfView } from './selfview.js';
 
 /**
  * 表示のせっていを描く。
  * @param {HTMLElement} body 描き先
  * @param {{onEmotePrefsChange?:()=>void}} [p] 設定を変えたときに知らせる相手
  */
-export function renderDisplaySettings(body, { onEmotePrefsChange, onChatEmoteChange } = {}) {
+export function renderDisplaySettings(body, { onEmotePrefsChange, onChatEmoteChange, onSelfViewChange } = {}) {
   body.innerHTML = '';
+
+  // ---- 自分の姿を出す（2026-08-04追加） ----
+  // loyさん「1人称やスクリーン全画面にしてても自分の動きがわかるから応援しやすくて良いかなって」
+  const boxS = document.createElement('div');
+  boxS.className = 'vc-help-box';
+  const hS = document.createElement('div');
+  hS.className = 'vc-help-h';
+  hS.textContent = '自分の姿を小窓に出す';
+  boxS.appendChild(hS);
+  const noteS = document.createElement('div');
+  noteS.className = 'vc-help-note';
+  noteS.textContent =
+    '自分のアバターを正面から映す小窓を出します。一人称のときやスクリーンを画面いっぱいにしているときでも、自分がどう動いているかが分かります。名前と吹き出しは映りません。窓は上の帯をつかんで動かせます（パソコンのみ）。この設定はこの端末にだけ保存されます。';
+  boxS.appendChild(noteS);
+
+  const rowS = document.createElement('div');
+  rowS.className = 'vc-help-choices';
+  let curSelf = getSelfView();
+  const selfBtns = [];
+  function paintSelf() {
+    for (const b of selfBtns) b.classList.toggle('active', (b.dataset.v === 'on') === curSelf);
+  }
+  for (const [v, label] of [['on', '出す'], ['off', '出さない']]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'vc-help-choice';
+    b.dataset.v = v;
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      curSelf = setSelfView(v === 'on');
+      paintSelf();
+      if (onSelfViewChange) onSelfViewChange(curSelf);
+    });
+    selfBtns.push(b);
+    rowS.appendChild(b);
+  }
+  paintSelf();
+  boxS.appendChild(rowS);
+  body.appendChild(boxS);
 
   // ---- エモートの並べ方（2026-08-03追加） ----
   // loyさん「ページ切り替えじゃなくて2段にもできるようにしたいね。選べる方がいい」

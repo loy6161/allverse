@@ -1,0 +1,237 @@
+// ============================================================
+// 自分のアバターの小窓（2026-08-04追加）
+//
+// loyさんの要望:
+//   > VRCのデスクトップモードで、正面から見たアバターが常時画面済に表示できるやつあるじゃん？
+//   > あんなやつつけれる？各自でON/OFF。
+//   > 1人称やスクリーン全画面にしてても自分の動きがわかるから応援しやすくて良いかなって。
+//   > エモートがわかればいいと思うから名前と吹き出しはいらないかな。
+//   > 位置むずかしいね。結構レイアウトびっちりだよね。ドラッグで位置を移動できるようにするのは必要だね。
+//
+// ★ 作りの要点: **自分のアバターだけ**を、同じcanvasの一角にもう1回描く。
+//
+//   会場ごと描き直すと、clubVERSE は6万三角形あるので**描画が丸ごと2倍**になる。
+//   アバターだけなら数千ポリゴンで、実質ただ同然。
+//   three.js の layers を使い、専用カメラには**レイヤー1だけ**を見せている。
+//
+// ⚠ 名前と吹き出しは映さない（loyさん指示）。小窓が文字で埋まると、
+//   肝心の「自分がどう動いているか」が見えなくなる。
+// ⚠ 一人称・シアター表示のときも出したままにする。**そこが本来の使いどころ**
+//   （自分のアバターが画面に居ないときこそ、動きを確認したい）。
+// ============================================================
+
+import * as THREE from 'three';
+import { makeFloating, isFloatEnabled } from './floatwin.js';
+
+const STYLE_ID = 'vc-selfview-style';
+const STORE_KEY = 'vc-selfview-on';
+
+/** 専用カメラが見るレイヤー。会場（レイヤー0）は映らない */
+const LAYER = 1;
+
+function injectStyle() {
+  if (document.getElementById(STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = STYLE_ID;
+  style.textContent = `
+.vc-selfview {
+  position: fixed;
+  left: 16px;
+  bottom: 210px;
+  width: 200px;
+  height: 200px;
+  z-index: 12;
+  border: 1px solid rgba(0,255,234,0.35);
+  border-radius: 10px;
+  box-shadow: 0 0 18px rgba(0,0,0,0.45);
+  /* 中身は3Dのcanvasが背後で描くので、ここは透明のままにする。
+     背景を付けるとアバターを覆い隠してしまう（canvasはこの要素より奥にある） */
+  background: transparent;
+  pointer-events: none;
+}
+/* 掴む帯だけは触れるようにする（枠の中身はクリックを通してワールドを操作できる） */
+.vc-selfview .vc-float-head { pointer-events: auto; }
+.vc-selfview.vc-hidden { display: none; }
+/* UI非表示（Hキー）に追従する */
+body.vc-ui-hidden .vc-selfview { display: none; }
+@media (max-width: 640px) {
+  /* スマホは画面が狭く、動かせない（floatwinが無効）ので小さめに置く */
+  .vc-selfview { width: 120px; height: 120px; left: 10px; bottom: 150px; }
+}
+`;
+  document.head.appendChild(style);
+}
+
+function loadOn() {
+  try {
+    return localStorage.getItem(STORE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveOn(on) {
+  try {
+    localStorage.setItem(STORE_KEY, on ? '1' : '0');
+  } catch {
+    /* 保存できなくてもその場では効く */
+  }
+}
+
+/** いま小窓を出す設定か（設定画面から読む） */
+export function getSelfView() {
+  return loadOn();
+}
+
+/** 小窓の出し入れを保存する（設定画面から書く） */
+export function setSelfView(on) {
+  saveOn(Boolean(on));
+  return Boolean(on);
+}
+
+/**
+ * 自分のアバターの小窓を作る。
+ *
+ * @param {object} p
+ * @param {() => THREE.Object3D|null} p.getPlayer いまの自分のアバター（着替えで差し替わる）
+ * @returns {{setEnabled:(on:boolean)=>void, isEnabled:()=>boolean, render:(renderer:THREE.WebGLRenderer, scene:THREE.Scene)=>void, reset:()=>void}}
+ */
+export function initSelfView({ getPlayer }) {
+  injectStyle();
+
+  const el = document.createElement('div');
+  el.className = 'vc-selfview vc-hidden';
+  document.body.appendChild(el);
+
+  // 掴んで動かす・大きさを変える（チャットと同じ仕組み）。
+  // loyさん「位置むずかしいね。結構レイアウトびっちりだよね。ドラッグで位置を移動できるようにするのは必要」
+  if (isFloatEnabled()) {
+    makeFloating(el, { key: 'selfview', title: '自分の姿', minW: 120, minH: 120 });
+  }
+
+  const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 20);
+  camera.layers.set(LAYER); // 会場は映さない。アバターだけ
+
+  // 小窓専用の明かり。会場の明るさに左右されず、いつでも顔が見えるようにする。
+  // ⚠ カメラの子にすることで、アバターを回り込んでも常に正面から当たる
+  const key = new THREE.DirectionalLight(0xffffff, 2.2);
+  key.position.set(0.6, 1.2, 1.4);
+  key.layers.set(LAYER);
+  camera.add(key);
+  const fill = new THREE.AmbientLight(0x9fb4d8, 1.6);
+  fill.layers.set(LAYER);
+  camera.add(fill);
+
+  let enabled = loadOn();
+  el.classList.toggle('vc-hidden', !enabled);
+
+  /** 名前・吹き出しを一時的に外すために覚えておく入れ物 */
+  const hidden = [];
+
+  /**
+   * アバターの部品を小窓にも映るようにする。
+   *
+   * ⚠ **毎フレームやる**。エモートで出る粒（星・花火・ハート）は後から足されるので、
+   *   一度きりの設定だと小窓に映らない。ノード数は数十なので負荷は無視できる。
+   * ⚠ 名前と吹き出しは `userData.uiSprite` が立っているので外す（loyさん指示）。
+   */
+  function syncLayers(player) {
+    player.traverse((o) => {
+      if (o.userData && o.userData.uiSprite) o.layers.disable(LAYER);
+      else o.layers.enable(LAYER);
+    });
+  }
+
+  function setEnabled(on) {
+    enabled = Boolean(on);
+    saveOn(enabled);
+    el.classList.toggle('vc-hidden', !enabled);
+  }
+
+  /**
+   * 小窓を描く。**メインの描画のあとに呼ぶこと**。
+   * 呼び出し側の renderer の状態（autoClear・scissor・viewport）は元に戻す。
+   */
+  function render(renderer, scene) {
+    if (!enabled) return;
+    const player = getPlayer ? getPlayer() : null;
+    if (!player) return;
+    // UI非表示（Hキー）や畳んだ状態では、枠が画面に出ていない
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 8 || rect.height < 8) return;
+    if (el.classList.contains('vc-hidden')) return;
+
+    syncLayers(player);
+
+    // 名前と吹き出しは `uiSprite` で除外しているが、
+    // 吹き出しは発言のたびに作り直されるため、取りこぼし対策で描画中だけ隠す
+    hidden.length = 0;
+    player.traverse((o) => {
+      if (o.userData && o.userData.uiSprite && o.visible) {
+        o.visible = false;
+        hidden.push(o);
+      }
+    });
+
+    // アバターの正面へカメラを置く。アバターの向き（rotation.y）の**前方**に立つ。
+    //
+    // ⚠ **全身が入る距離**にすること。エモートは腕や脚の動きなので、
+    //   顔に寄せると何をしているか分からない（loyさん「エモートがわかればいい」）。
+    //   画角30度・この距離だと縦に約1.6m写る。いちばん背の高い設定(BIG≒1.36m)でも
+    //   足元から頭上まで収まり、ジャンプで少し浮いても切れない。
+    const yaw = player.rotation.y;
+    const dist = 3.0;
+    const eyeY = 0.95;
+    const lookY = 0.62; // 体の中心。ここを頭に寄せると足元が切れる
+    camera.position.set(
+      player.position.x + Math.sin(yaw) * dist,
+      player.position.y + eyeY,
+      player.position.z + Math.cos(yaw) * dist,
+    );
+    camera.lookAt(player.position.x, player.position.y + lookY, player.position.z);
+    camera.aspect = rect.width / rect.height;
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld(true);
+
+    // 画面座標 → WebGLの座標（下が0）へ
+    const dpr = renderer.getPixelRatio();
+    const h = renderer.domElement.clientHeight;
+    const x = Math.round(rect.left);
+    const y = Math.round(h - rect.bottom);
+    const w = Math.round(rect.width);
+    const hh = Math.round(rect.height);
+
+    const prevAutoClear = renderer.autoClear;
+    const prevScissorTest = renderer.getScissorTest();
+    const prevClear = new THREE.Color();
+    renderer.getClearColor(prevClear);
+    const prevClearAlpha = renderer.getClearAlpha();
+
+    renderer.autoClear = false;
+    renderer.setScissorTest(true);
+    renderer.setScissor(x, y, w, hh);
+    renderer.setViewport(x, y, w, hh);
+    // 小窓の中だけを暗く塗る。ここを飛ばすと会場の絵の上にアバターが重なって見づらい
+    renderer.setClearColor(0x0a0d18, 0.82);
+    renderer.clear(true, true, false);
+    renderer.render(scene, camera);
+
+    // 元に戻す（戻し忘れると次のフレームの本編が小窓の大きさで描かれる）
+    renderer.setScissorTest(prevScissorTest);
+    renderer.setViewport(0, 0, renderer.domElement.clientWidth, h);
+    renderer.setScissor(0, 0, renderer.domElement.clientWidth, h);
+    renderer.setClearColor(prevClear, prevClearAlpha);
+    renderer.autoClear = prevAutoClear;
+    void dpr; // setViewport はCSSピクセルで受けるので画素比の換算は要らない
+
+    for (const o of hidden) o.visible = true;
+    hidden.length = 0;
+  }
+
+  return {
+    setEnabled,
+    isEnabled: () => enabled,
+    render,
+    element: el,
+  };
+}

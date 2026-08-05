@@ -30,6 +30,7 @@ import { initAdminUI } from './adminui.js';
 import { initConnBanner } from './connbanner.js';
 import { initYouTubeChat } from './ytchat.js';
 import { initExitButton } from './exitbtn.js';
+import { initSelfView } from './selfview.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
@@ -120,6 +121,8 @@ let ytChat = null; // YouTubeのライブチャット（連動イベントのと
 // welcome はUIの組み立てより先に来ることがあるので、ここで受けておいて後から流し込む
 let ytLinkState = { on: false, linked: false };
 let helpUI = null;
+// 自分のアバターの小窓（2026-08-04追加）。一人称やシアター表示でも自分の動きが見える
+let selfView = null;
 let chatMode = 'local'; // 'local' … 独自チャット / 'youtube' … YouTubeへ一本化
 // キック/BAN/入場拒否の説明。設定されているときは、切断を「通信不良」として扱わない
 let removedReason = '';
@@ -868,6 +871,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   // タブを閉じるしか出る方法が無かったので、入場画面へ戻れるようにする
   initExitButton({ slot: topBar.slot });
 
+  // 自分のアバターの小窓（2026-08-04追加）。
+  // ⚠ 着替えると player が差し替わるので、そのつど取り直す（変数を掴まない）
+  selfView = initSelfView({ getPlayer: () => player });
+
   // エモートバー（自分の分はローカルで即再生し、サーバーへも通知）
   emoteBar = initEmoteBar({
     onEmote: (id) => {
@@ -1049,6 +1056,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     onChatEmoteChange: (on) => {
       if (net && !demoMode) net.sendYtEmote(on);
     },
+    // 自分の姿の小窓（2026-08-04追加）。自分の画面だけの設定なのでサーバーへは送らない
+    onSelfViewChange: (on) => {
+      if (selfView) selfView.setEnabled(on);
+    },
   });
 
   // welcomeが先に来ている場合に備えて、権限の反映をここでもう一度実行する
@@ -1162,6 +1173,9 @@ function loop() {
   }
 
   renderer.render(scene, camera);
+  // 自分の姿の小窓（2026-08-04追加）。**本編を描いたあと**に呼ぶ。
+  // 一人称やシアター表示でも出したままにする（そこが本来の使いどころ）
+  if (selfView) selfView.render(renderer, scene);
   liveScreen.update();
 }
 loop();
@@ -1176,4 +1190,15 @@ window.addEventListener('resize', () => {
 // 参照を渡すだけで挙動は変えない。
 // 動作確認用の入口。描画が止まる環境（ブラウザのタブが裏など）でも
 // controls.update(dt) を手で回して挙動を確かめられるようにしてある
-window.__vc = { scene, camera, renderer, world, get controls() { return controls; }, get player() { return player; } };
+window.__vc = {
+  scene,
+  camera,
+  renderer,
+  world,
+  get controls() { return controls; },
+  get player() { return player; },
+  // 自分の姿の小窓（2026-08-04追加）。描画が止まる環境でも
+  // selfView.render(renderer, scene) を手で呼んで確かめられるようにしてある
+  get selfView() { return selfView; },
+  get currentEvent() { return currentEvent; },
+};

@@ -83,7 +83,16 @@ function injectStyle() {
  * @param {{renderInto:(el:HTMLElement)=>void, detach:()=>void}} p.people 参加者の描画を持つモジュール
  * @param {{renderNpcInto:(el:HTMLElement)=>void}} p.rooms NPC調整の描画を持つモジュール
  */
-export function initSettingsUI({ slot, people, rooms, admin, getRole, onEmotePrefsChange, onChatEmoteChange }) {
+export function initSettingsUI({
+  slot,
+  people,
+  rooms,
+  admin,
+  getRole,
+  onEmotePrefsChange,
+  onChatEmoteChange,
+  onSelfViewChange,
+}) {
   injectStyle();
 
   const btn = document.createElement('button');
@@ -176,7 +185,7 @@ export function initSettingsUI({ slot, people, rooms, admin, getRole, onEmotePre
     } else if (activeTab === 'npc') {
       if (rooms && rooms.renderNpcInto) rooms.renderNpcInto(body);
     } else {
-      renderDisplaySettings(body, { onEmotePrefsChange, onChatEmoteChange });
+      renderDisplaySettings(body, { onEmotePrefsChange, onChatEmoteChange, onSelfViewChange });
     }
   }
 
