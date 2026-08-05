@@ -16,15 +16,17 @@
 //
 // 手順（1フレームぶん）
 //   1. 会場を画面ではなく baseRT へ描く（MSAA付きなのでギザギザは出ない）
-//   2. 明るいところだけ抜き出す（しきい値）… 半分の解像度
-//   3. 横→縦の順にぼかす（2往復）… 半分と1/4の解像度
-//   4. 画面へ合成する（上の式）
+//   2. アバターとエモートだけを白く塗った「型紙」を作る（半分の解像度）
+//   3. 明るいところだけ抜き出す（しきい値／型紙の白い所は除く）… 半分の解像度
+//   4. 横→縦の順にぼかす（2往復）… 半分と1/4の解像度
+//   5. 画面へ合成する（上の式）
 //
-// 負荷は「会場を描く回数」は増えない（描き先が変わるだけ）。増えるのは小さな
-// 四角を数枚描くぶんだけ。反射（会場をもう1回描く）より軽い。
+// 負荷は「会場を描く回数」は増えない（描き先が変わるだけ）。増えるのは型紙と
+// 小さな四角を数枚描くぶん。実測 +1.7ms（20人・568x872。2.19 → 3.87ms）。
 // ============================================================
 
 import * as THREE from 'three';
+import { NO_BLOOM_LAYER } from './layers.js';
 
 // ⚠ 色の空間について（ここを間違えると画面が真っ暗になる。実際になった）
 //   three r160 は「画面へ描くとき」だけ sRGB へ変換し、**描き先が
@@ -52,6 +54,7 @@ void main() {
 /** 明るいところだけ残す。アルファは元のまま持ち越す（穴を光らせないため） */
 const BRIGHT_FRAG = `
 uniform sampler2D tSrc;
+uniform sampler2D tMask;
 uniform float uThreshold;
 uniform float uKnee;
 varying vec2 vUv;
@@ -60,6 +63,10 @@ void main() {
   float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
   // しきい値のまわりをなめらかにする（くっきり切ると輪郭が出る）
   float w = smoothstep(uThreshold - uKnee, uThreshold + uKnee, l);
+  // ★ アバターとエモートの上では光らせない（型紙が白い所を落とす）。
+  //   アバターは服の色を emissive にも入れているので、外さないと
+  //   **本人だけが電球のように光る**（loyさん「ブルームはアバターがヒカルだけ？」）
+  w *= 1.0 - texture2D(tMask, vUv).r;
   gl_FragColor = vec4(c.rgb * w * c.a, c.a);
 }
 `;
@@ -182,6 +189,9 @@ export function createBloom(renderer, { samples = 4 } = {}) {
   const rtB = makeRT(Math.round(w / 2), Math.round(h / 2), 0, false);
   const rtC = makeRT(Math.round(w / 4), Math.round(h / 4), 0, false);
   const rtD = makeRT(Math.round(w / 4), Math.round(h / 4), 0, false);
+  // 「光らせない場所」の型紙。アバターとエモートだけを白く塗った絵。
+  // ⚠ 深度が要る（自分の腕で体が抜けないように）。半分の解像度で足りる
+  const maskRT = makeRT(Math.round(w / 2), Math.round(h / 2), 0, true);
 
   const quadGeo = new THREE.BufferGeometry();
   quadGeo.setAttribute(
@@ -199,6 +209,7 @@ export function createBloom(renderer, { samples = 4 } = {}) {
   const brightMat = new THREE.ShaderMaterial({
     uniforms: {
       tSrc: { value: null },
+      tMask: { value: null },
       uThreshold: { value: THRESHOLD },
       uKnee: { value: KNEE },
     },
@@ -219,6 +230,9 @@ export function createBloom(renderer, { samples = 4 } = {}) {
     depthWrite: false,
     blending: THREE.NoBlending,
   });
+  // 型紙を描くときに全部これに差し替える。光の計算が要らないので軽い
+  const maskMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+
   const compMat = new THREE.ShaderMaterial({
     uniforms: {
       tBase: { value: null },
@@ -277,17 +291,33 @@ export function createBloom(renderer, { samples = 4 } = {}) {
       renderer.clear();
       renderer.render(scene, camera);
 
+      // 2. 「光らせない場所」の型紙を作る。
+      //    カメラの見るレイヤーを一時的に絞り、材質を白一色に差し替えて描く。
+      //    ⚠ カメラの設定は必ず元に戻す（戻し忘れると本編からアバターが消える）
+      const savedLayers = camera.layers.mask;
+      const savedOverride = scene.overrideMaterial;
+      camera.layers.set(NO_BLOOM_LAYER);
+      scene.overrideMaterial = maskMat;
+      renderer.setRenderTarget(maskRT);
+      renderer.setClearColor(0x000000, 1);
+      renderer.clear();
+      renderer.render(scene, camera);
+      scene.overrideMaterial = savedOverride;
+      camera.layers.mask = savedLayers;
+      renderer.setClearColor(0x000000, 0);
+
       renderer.autoClear = false;
 
-      // 2. 明るいところを抜く（半分の解像度）
+      // 3. 明るいところを抜く（半分の解像度）
       brightMat.uniforms.tSrc.value = baseRT.texture;
+      brightMat.uniforms.tMask.value = maskRT.texture;
       draw(brightMat, rtA);
 
-      // 3. ぼかす。半分と1/4の2段を混ぜると、近くの光も遠くの光も出る
+      // 4. ぼかす。半分と1/4の2段を混ぜると、近くの光も遠くの光も出る
       blurInto(rtA, rtB, rtA);
       blurInto(rtA, rtD, rtC);
 
-      // 4. 画面へ合成（アルファは元のまま＝穴が残る）
+      // 5. 画面へ合成（アルファは元のまま＝穴が残る）
       renderer.autoClear = true;
       // 露出は明るさ5段階で変わる（world_club.js）。毎フレーム今の値を渡す
       compMat.uniforms.uExposure.value = renderer.toneMappingExposure;
@@ -323,9 +353,11 @@ export function createBloom(renderer, { samples = 4 } = {}) {
       rtB.setSize(h2, v2);
       rtC.setSize(h4, v4);
       rtD.setSize(h4, v4);
+      maskRT.setSize(h2, v2);
     },
     dispose() {
-      for (const rt of [baseRT, rtA, rtB, rtC, rtD]) rt.dispose();
+      for (const rt of [baseRT, rtA, rtB, rtC, rtD, maskRT]) rt.dispose();
+      maskMat.dispose();
       quadGeo.dispose();
       brightMat.dispose();
       blurMat.dispose();

@@ -14,6 +14,7 @@
 // ============================================================
 
 import { GUEST_HAIR } from './guestlook.js';
+import { avToConfig } from './net.js';
 
 const KEY = 'allverse.prefs.v1';
 
@@ -81,7 +82,14 @@ export async function fetchServerPrefs(idToken) {
     if (!data || !data.ok) return null;
     return {
       name: data.name || '',
-      config: data.av || null,
+      // ★ サーバーが持っているのは**通信用の圧縮した形**（{h, o, ac, hc, sc...}）で、
+      //   入場画面が使う形（{hairStyle, outfit, accessory, hairColor...}）とは別物。
+      //   ここで変換せずに返していたため、呼び出し側の Object.assign が
+      //   **一致するキーが1つも無いまま素通り**し、ログインしても前回の姿が戻らなかった
+      //   （2026-08-04 loyさん「またログインでアバター引き継がれてないよ」）。
+      //   同じ端末では localStorage 側が効くので、**別の端末で入ったときだけ**
+      //   既定の姿に戻る、という気づきにくい壊れ方をしていた
+      config: data.av ? avToConfig(data.av) : null,
       googleName: data.googleName || '',
       // 入場画面で「イベントを作る」を出すかの判断に使う。
       // あくまで表示の出し分けで、実際の可否はサーバーが判定する
