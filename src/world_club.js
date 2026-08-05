@@ -385,31 +385,47 @@ export function createClubWorld(scene, { renderer } = {}) {
   // loyさん「もうちょっとブラウザ会場明るくていいかも」＋
   // 「3段階を管理者+VIPは設定から調整できるといいかもね」「運営やVIPが変えて全体へ反映」。
   //
-  // ⚠ ライトの強さだけを倍率で動かす。色は変えない。
-  //   色まで変えると「白すぎる」を直したとき(2026-07-30)の調整が壊れる。
-  //   環境マップ（金属の映り込み）も触らない。あれを明るくすると壁が白く浮く。
+  // ★ **ライトだけでは変わらない**（2026-08-04 loyさん「切り替えても変わらないね」）。
+  //   会場のマテリアルを数えたところ、**373個のうち325個が自発光、141個がほぼ黒**だった。
+  //   自発光も環境マップの映り込みも**ライトの影響を受けない**ので、
+  //   ライトを1.5倍しても画面の明るさは**1.19倍**にしかならず、目では分からない。
   //
-  // ⚠ 上げすぎると床のゴールドのロゴと金属が白飛びする。
-  //   実際に見ながら決められるよう3段階に留め、いちばん上でも1.5倍までにしてある。
+  //   そこで**トーンマッピングの露出**を主役にした。露出は最終的な色に掛かるので、
+  //   自発光にも効く。実測（会場の中から画面全体の平均を測定）:
+  //     露出 1.0 → 平均23.0 ／ 1.6 → 30.3（1.32倍） ／ 2.2 → 36.3（1.58倍）
+  //     **白飛びは 2.2 でも 0%**（ACESFilmic なので粘る）。
+  //
+  // ⚠ ライトの色は変えない。色まで変えると「白すぎる」を直したとき(2026-07-30)の
+  //   調整が壊れる。環境マップ（金属の映り込み）も触らない。
+  // ⚠ 露出は**画面全体**に掛かる。スクリーンの映像も明るくなる点に注意。
   const BASE = {
     hemi: hemi.intensity,
     key: key.intensity,
     back: back.intensity,
     stageGlow: stageGlow.intensity,
     floorGlow: floorGlow.intensity,
+    exposure: renderer ? renderer.toneMappingExposure : 1,
   };
-  /** 明るさの段階 → 倍率。'normal' がこれまでの見た目（既定） */
-  const BRIGHTNESS = { normal: 1.0, bright: 1.22, brightest: 1.5 };
+  /**
+   * 明るさの段階。'normal' がこれまでの見た目（既定）。
+   * exposure が主役、light は補助（床や壁のわずかな反射ぶん）。
+   */
+  const BRIGHTNESS = {
+    normal: { exposure: 1.0, light: 1.0 },
+    bright: { exposure: 1.55, light: 1.2 },
+    brightest: { exposure: 2.2, light: 1.45 },
+  };
 
   function setBrightness(level) {
     const k = BRIGHTNESS[level] ? level : 'normal';
-    const f = BRIGHTNESS[k];
-    hemi.intensity = BASE.hemi * f;
-    key.intensity = BASE.key * f;
-    back.intensity = BASE.back * f;
+    const { exposure, light } = BRIGHTNESS[k];
+    if (renderer) renderer.toneMappingExposure = BASE.exposure * exposure;
+    hemi.intensity = BASE.hemi * light;
+    key.intensity = BASE.key * light;
+    back.intensity = BASE.back * light;
     // 演出の光（ステージのピンク・床の照り返し）は伸びを抑える。
     // 同じ倍率で上げると、明るくというより「色が濃くなる」方向に転ぶため
-    const g = 1 + (f - 1) * 0.6;
+    const g = 1 + (light - 1) * 0.6;
     stageGlow.intensity = BASE.stageGlow * g;
     floorGlow.intensity = BASE.floorGlow * g;
     return k;
