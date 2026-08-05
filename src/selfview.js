@@ -133,6 +133,33 @@ export function setReflectionPref(on) {
   return Boolean(on);
 }
 
+// ---- ブルーム（2026-08-04追加）----
+//
+// loyさん「VRはワールドにブルームかかってるけど、ブラウザでもそういう
+//          ポストプロセスのようなことはできるの？」
+// VR側の見た目に寄せるものなので**既定はON**。反射と同じく端末ごとの設定。
+const BLOOM_KEY = 'vc-bloom';
+
+/** 明るいところをにじませるか。既定ON。「一度も選んでいない」とOFFを区別する */
+export function getBloom() {
+  try {
+    const v = localStorage.getItem(BLOOM_KEY);
+    if (v === null) return true;
+    return v === '1';
+  } catch {
+    return true;
+  }
+}
+
+export function setBloomPref(on) {
+  try {
+    localStorage.setItem(BLOOM_KEY, on ? '1' : '0');
+  } catch {
+    /* 保存できなくてもその場では効く */
+  }
+  return Boolean(on);
+}
+
 /**
  * 自分のアバターの小窓を作る。
  *

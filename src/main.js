@@ -30,7 +30,8 @@ import { initAdminUI } from './adminui.js';
 import { initConnBanner } from './connbanner.js';
 import { initYouTubeChat } from './ytchat.js';
 import { initExitButton } from './exitbtn.js';
-import { initSelfView, getReflection } from './selfview.js';
+import { initSelfView, getReflection, getBloom } from './selfview.js';
+import { createBloom } from './bloom.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
@@ -74,6 +75,12 @@ if (WORLD_KIND === 'club') {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
 }
+
+// ブルーム（2026-08-04追加）。clubVERSEのときだけ。
+// ⚠ スマホはMSAAを切る（描き先を変えるとキャンバスの antialias が効かないので
+//   代わりに描き先側でMSAAを持つ。負荷が上がるぶん、タッチ端末では諦める）
+const bloom = WORLD_KIND === 'club' ? createBloom(renderer, { samples: IS_TOUCH ? 0 : 4 }) : null;
+let bloomOn = getBloom();
 
 // タッチ端末は音ありの自動再生が禁止されているので、消音で始めて本人のタップで音を出す
 const liveScreen = initLiveScreen(camera, scene, world.screen || {}, { startMuted: IS_TOUCH });
@@ -1068,6 +1075,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     onReflectionChange: (on) => {
       if (world && world.setReflection) world.setReflection(on);
     },
+    // ブルーム（2026-08-04追加）。同じく端末ごとの設定
+    onBloomChange: (on) => {
+      bloomOn = on;
+    },
   });
 
   // welcomeが先に来ている場合に備えて、権限の反映をここでもう一度実行する
@@ -1180,7 +1191,8 @@ function loop() {
     camera.lookAt(0, 3, 0);
   }
 
-  renderer.render(scene, camera);
+  if (bloom && bloomOn) bloom.render(scene, camera);
+  else renderer.render(scene, camera);
   // 自分の姿の小窓（2026-08-04追加）。**本編を描いたあと**に呼ぶ。
   // 一人称やシアター表示でも出したままにする（そこが本来の使いどころ）
   if (selfView) selfView.render(renderer, scene);
@@ -1192,6 +1204,7 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  if (bloom) bloom.setSize(window.innerWidth, window.innerHeight);
 });
 
 // 開発用の覗き口。見た目の不具合を「パーツを消して切り分ける」ために使う。
@@ -1209,4 +1222,8 @@ window.__vc = {
   // selfView.render(renderer, scene) を手で呼んで確かめられるようにしてある
   get selfView() { return selfView; },
   get currentEvent() { return currentEvent; },
+  // ブルーム（2026-08-04追加）。効き目を絵と数値で確かめるための入口
+  bloom,
+  get bloomOn() { return bloomOn; },
+  set bloomOn(v) { bloomOn = Boolean(v); },
 };

@@ -93,6 +93,7 @@ export function initSettingsUI({
   onChatEmoteChange,
   onSelfViewChange,
   onReflectionChange,
+  onBloomChange,
 }) {
   injectStyle();
 
@@ -191,6 +192,7 @@ export function initSettingsUI({
         onChatEmoteChange,
         onSelfViewChange,
         onReflectionChange,
+        onBloomChange,
       });
     }
   }

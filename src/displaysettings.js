@@ -13,7 +13,9 @@
 
 import { getBubbleSec, setBubbleSec, BUBBLE_CHOICES, bubbleLabel, getChatEmote, setChatEmote } from './bubbletime.js';
 import { getEmoteLayout, setEmoteLayout, resetEmoteOrder } from './emoteprefs.js';
-import { getSelfView, setSelfView, getReflection, setReflectionPref } from './selfview.js';
+import {
+  getSelfView, setSelfView, getReflection, setReflectionPref, getBloom, setBloomPref,
+} from './selfview.js';
 
 /**
  * 表示のせっていを描く。
@@ -22,9 +24,49 @@ import { getSelfView, setSelfView, getReflection, setReflectionPref } from './se
  */
 export function renderDisplaySettings(
   body,
-  { onEmotePrefsChange, onChatEmoteChange, onSelfViewChange, onReflectionChange } = {},
+  { onEmotePrefsChange, onChatEmoteChange, onSelfViewChange, onReflectionChange, onBloomChange } = {},
 ) {
   body.innerHTML = '';
+
+  // ---- ブルーム（2026-08-04追加） ----
+  // loyさん「VRはワールドにブルームかかってるけど、ブラウザでもそういう
+  //          ポストプロセスのようなことはできるの？」
+  const boxB = document.createElement('div');
+  boxB.className = 'vc-help-box';
+  const hB = document.createElement('div');
+  hB.className = 'vc-help-h';
+  hB.textContent = '明るいところをにじませる（ブルーム）';
+  boxB.appendChild(hB);
+  const noteB = document.createElement('div');
+  noteB.className = 'vc-help-note';
+  noteB.textContent =
+    'ライトや照り返しがふわっと光って、VRの会場に近い見え方になります。'
+    + 'カクつくときは切ってください。この設定はこの端末にだけ保存されます。';
+  boxB.appendChild(noteB);
+  const rowB = document.createElement('div');
+  rowB.className = 'vc-help-choices';
+  let curBloom = getBloom();
+  const bloomBtns = [];
+  function paintBloom() {
+    for (const b of bloomBtns) b.classList.toggle('active', (b.dataset.v === 'on') === curBloom);
+  }
+  for (const [v, label] of [['on', 'にじませる'], ['off', 'にじませない']]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'vc-help-choice';
+    b.dataset.v = v;
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      curBloom = setBloomPref(v === 'on');
+      paintBloom();
+      if (onBloomChange) onBloomChange(curBloom);
+    });
+    bloomBtns.push(b);
+    rowB.appendChild(b);
+  }
+  paintBloom();
+  boxB.appendChild(rowB);
+  body.appendChild(boxB);
 
   // ---- 床の反射（2026-08-04追加） ----
   // loyさん「あと、反射ってできるの？アバターやエモートは対象外で」
