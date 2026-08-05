@@ -668,7 +668,24 @@ export function createClubWorld(scene, { renderer } = {}) {
     applyEnvMap();
   }
 
-  /** 対象マテリアルの映り込みを、本物（撮った会場）か作り物の箱かに切り替える */
+  /**
+   * 対象マテリアルの映り込みを、本物（撮った会場）か作り物の箱かに切り替える。
+   *
+   * ★ **床は反射ONのときだけ磨く**（2026-08-04）。
+   *   映り込みの中身を差し替えるだけでは**何も見えなかった**（床のばらつき 1.00倍）。
+   *   床の粗さ0.45ではぼやけて像にならないため。実測して決めた値:
+   *     粗さ0.45（そのまま） → 1.00倍（見えない）
+   *     粗さ0.25／強さ1.5    → 1.32倍
+   *     **粗さ0.18／強さ2.5／金属0.6 → 1.46倍**（採用）
+   *     粗さ0.06／強さ3／金属0.9 → 1.51倍だが床が暗くなりすぎる（平均 64→15）
+   *   ⚠ 磨くほど**床は暗くなる**（金属は拡散反射しないため）。1.46倍で止めている。
+   */
+  const FLOOR_MATERIAL = 'MI_Metal_TILE_Silver_2';
+  /** 反射ONのときの床の質感。OFFに戻すときは matBase / applyMaterials 側の値へ戻す */
+  const POLISHED = { roughness: 0.18, envMapIntensity: 2.5, metalness: 0.6 };
+  /** 反射をやめたときに戻すための、床の元の質感 */
+  const floorBase = new Map();
+
   function applyEnvMap() {
     if (!model) return;
     const want = reflectOn && cubeRT ? cubeRT.texture : null;
@@ -681,8 +698,30 @@ export function createClubWorld(scene, { renderer } = {}) {
           m.envMap = want;
           m.needsUpdate = true;
         }
+        if (m.name !== FLOOR_MATERIAL) continue;
+        if (!floorBase.has(m.uuid)) {
+          floorBase.set(m.uuid, {
+            roughness: m.roughness,
+            envMapIntensity: m.envMapIntensity ?? 1,
+          });
+        }
+        const fb = floorBase.get(m.uuid);
+        if (reflectOn) {
+          m.roughness = POLISHED.roughness;
+          m.envMapIntensity = POLISHED.envMapIntensity;
+          // ⚠ 金属さは applyMaterials（明るさ）も触る。反射中はこちらを優先する
+          m.metalness = POLISHED.metalness;
+        } else {
+          m.roughness = fb.roughness;
+          m.envMapIntensity = fb.envMapIntensity;
+          // 金属さは明るさ側が持っているので、そちらに任せる
+        }
       }
     });
+    // ⚠ 反射をやめたら、明るさ側の値（色・金属さ）を貼り直す。
+    //   ここを呼ばないと、磨いた金属さのまま残る。
+    //   applyMaterials は captureEnvironment を呼ばないので、行き来にはならない
+    if (!reflectOn) applyMaterials();
   }
 
   /**
