@@ -80,7 +80,7 @@ if (WORLD_KIND === 'club') {
 // ブルーム（2026-08-04追加）。clubVERSEのときだけ。
 // ⚠ スマホはMSAAを切る（描き先を変えるとキャンバスの antialias が効かないので
 //   代わりに描き先側でMSAAを持つ。負荷が上がるぶん、タッチ端末では諦める）
-const bloom = WORLD_KIND === 'club' ? createBloom(renderer, { samples: IS_TOUCH ? 0 : 4 }) : null;
+const bloom = WORLD_KIND === 'club' ? createBloom(renderer, { samples: IS_TOUCH ? 0 : 2 }) : null;
 let bloomOn = getBloom();
 
 // fps表示（2026-08-04追加・管理者/VIP用）。既定はOFF。
@@ -91,6 +91,8 @@ const fpsMeter = initFpsMeter({
     npc: sim ? sim.count() : 0,
     bloom: Boolean(bloom && bloomOn),
     reflect: getReflection(),
+    width: renderer.domElement.width,
+    height: renderer.domElement.height,
   }),
 });
 

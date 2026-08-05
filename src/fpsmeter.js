@@ -97,7 +97,10 @@ export function initFpsMeter({ getStats }) {
       `<b class="${cls}">${fps.toFixed(0)} fps</b>  ${avgMs.toFixed(1)}ms`
       + ` (最遅 ${worst.toFixed(1)}ms)\n`
       + `人 ${s.people ?? '-'}  NPC ${s.npc ?? '-'}\n`
-      + `ブルーム ${s.bloom ? 'ON' : 'OFF'}  反射 ${s.reflect ? 'ON' : 'OFF'}`;
+      + `ブルーム ${s.bloom ? 'ON' : 'OFF'}  反射 ${s.reflect ? 'ON' : 'OFF'}\n`
+      // 実際に描いている画素数。画面の大きさ×画面の細かさ（Retina等）で決まり、
+      // 重さに直結する。「同じ設定なのに人によって重い」の切り分けに要る
+      + `解像度 ${s.width ?? '-'}x${s.height ?? '-'}`;
   }
 
   return {

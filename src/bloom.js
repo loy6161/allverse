@@ -181,14 +181,12 @@ void main() {
  *   ⚠ 会場を描く先には**必ず要る**。samples の有無で決めていたら、
  *     MSAAを切るスマホで深度が無くなり、奥のものが手前に出る絵になっていた
  */
-function makeRT(w, h, samples, depth) {
+function makeRT(w, h, samples, depth, hdr = true) {
   const rt = new THREE.WebGLRenderTarget(Math.max(1, w), Math.max(1, h), {
     minFilter: THREE.LinearFilter,
     magFilter: THREE.LinearFilter,
     format: THREE.RGBAFormat,
-    // ⚠ 8bitだと、トーンマッピング前の**明るすぎる部分が1.0で頭打ち**になり、
-    //   ライトのにじみが出ない。半精度浮動小数で受ける
-    type: THREE.HalfFloatType,
+    type: hdr ? THREE.HalfFloatType : THREE.UnsignedByteType,
     depthBuffer: depth,
     stencilBuffer: false,
     samples,
@@ -201,10 +199,26 @@ function makeRT(w, h, samples, depth) {
 
 /**
  * ブルームを作る。
+ *
+ * ⚠ 会場を描く先の**形式は「速さ」で決めている**（2026-08-04・loyさんの実測を受けて）。
+ *   loyさんの環境ではブルームONで 22fps → 16fps（+16ms）。こちらの機械では
+ *   誤差に埋もれて再現しなかったので、**帯域が効く条件（2560x1440）で個別に測った**:
+ *     画面へ直接                     2.36ms
+ *     16bit浮動小数・MSAA4（旧）     3.97ms  ← 1画素32バイト
+ *     8bit・MSAA4                    3.26ms  ← 16バイト
+ *     8bit・MSAA2（採用）            ほぼ同じ ← 8バイト
+ *     8bit・MSAA0                    3.23ms  ← 4バイト
+ *   16bit浮動小数にしていたのは「明るすぎる部分が頭打ちにならないように」だが、
+ *   **4種類の絵を比べても平均の明るさは 0.1364〜0.1369 で差が出なかった**
+ *   （この会場には1.0を大きく超える明るさが無い）。見た目が同じなら軽い方を採る。
+ *   MSAAを0にせず2にしているのは、会場に細い柱が多く、動くとちらつくため。
+ *
  * @param {THREE.WebGLRenderer} renderer
- * @param {{samples?:number}} [opt] MSAAの枚数。0でオフ（スマホ想定）
+ * @param {{samples?:number, hdr?:boolean}} [opt]
+ *   samples … MSAAの枚数。0でオフ（スマホ想定）
+ *   hdr … 明るさを1.0より上まで保つか。既定は false（上の実測のとおり見た目が同じで軽い）
  */
-export function createBloom(renderer, { samples = 4 } = {}) {
+export function createBloom(renderer, { samples = 2, hdr = false } = {}) {
   const size = renderer.getSize(new THREE.Vector2());
   const dpr = renderer.getPixelRatio();
   let w = Math.round(size.x * dpr);
@@ -212,7 +226,7 @@ export function createBloom(renderer, { samples = 4 } = {}) {
 
   // 会場そのものを描く先。ここだけMSAA付き（キャンバスの antialias は
   // 描き先を変えると効かなくなるので、こちらで持つ）
-  const baseRT = makeRT(w, h, samples, true);
+  const baseRT = makeRT(w, h, samples, true, hdr);
   // にじみ用。**1/4 と 1/8**（2026-08-04に 1/2・1/4 から下げた）。
   // にじみは元々ぼやけた絵なので、解像度を半分にしても見た目はほぼ変わらないが、
   // 塗る画素の数は 1/4 になる。ping-pong に2枚ずつ要る
