@@ -92,6 +92,34 @@ function injectStyle() {
 .vc-npc-row input[type="range"] { flex: 1 1 auto; accent-color: #00ffea; }
 .vc-npc-num { font-size: 12px; min-width: 46px; text-align: right; color: rgba(220,235,255,0.85); }
 
+/* ---- イベント設定の中身（2026-08-04 レイアウト整理） ----
+   loyさん「どこまでが設定わかりにくい」「設定内のレイアウトも調整して。見づらい」。
+   ・枠で囲って「ここからここまでが設定」を見せる
+   ・項目は［見出し＋入力＋説明］の3段で必ず同じ形にする（前は入力だけ／説明が上／説明が下がバラバラだった） */
+.vc-room-settings {
+  border: 1px solid rgba(0,255,234,0.35);
+  border-radius: 10px;
+  background: rgba(0,255,234,0.04);
+  padding: 12px;
+  margin-top: 10px;
+}
+.vc-room-field { margin-bottom: 12px; }
+.vc-room-flabel {
+  font-size: 11px; font-weight: bold; letter-spacing: 1px;
+  color: rgba(220,235,255,0.8); margin-bottom: 4px;
+}
+.vc-room-settings .vc-room-input,
+.vc-room-settings input[type="text"],
+.vc-room-settings input[type="number"] {
+  width: 100%; box-sizing: border-box; margin: 0;
+  padding: 7px 9px; border-radius: 7px; font-size: 13px;
+  border: 1px solid rgba(0,255,234,0.3); background: rgba(255,255,255,0.06); color: #fff; outline: none;
+}
+.vc-room-fhint { font-size: 11px; color: rgba(220,235,255,0.5); margin-top: 4px; line-height: 1.5; }
+.vc-room-check { margin-bottom: 12px; }
+.vc-room-settings .vc-room-check label { margin-bottom: 0; }
+.vc-room-check .vc-room-fhint { margin-left: 20px; }
+
 .vc-room-del {
   border: none; background: none; color: rgba(255,140,160,0.85);
   cursor: pointer; font-size: 11px; padding: 2px 4px;
@@ -181,184 +209,206 @@ export function initRoomUI({
    */
   function buildSettings(ev) {
     const box = document.createElement('div');
-    box.className = 'vc-room-admin';
+    box.className = 'vc-room-admin vc-room-settings';
 
     const t = document.createElement('div');
     t.className = 'vc-room-title';
     t.textContent = `⚙ ${ev.name} の設定`;
     box.appendChild(t);
 
-    const nameI = document.createElement('input');
-    nameI.type = 'text';
-    nameI.maxLength = 24;
-    nameI.value = ev.name;
-    nameI.placeholder = 'イベント名';
-    box.appendChild(nameI);
+    /**
+     * 設定を1項目ぶん置く（2026-08-04追加）。
+     *
+     * loyさん「設定内のレイアウトも調整して。見づらい」。
+     * それまでは入力と説明がベタ置きで、**どの説明がどの入力のものか分からなかった**
+     * （説明が入力の前に来ているものと後に来ているものが混在していた）。
+     * **見出し → 入力 → 説明** の順に必ず揃えて、1項目を枠で囲む。
+     *
+     * @param {HTMLElement} parent 置き先
+     * @param {string} label 見出し
+     * @param {() => HTMLElement} make 入力を作る関数
+     * @param {string} [hint] 入力の下に出す説明
+     * @returns {HTMLElement} 作った入力（値を読むのに使う）
+     */
+    function field(parent, label, make, hint) {
+      const row = document.createElement('div');
+      row.className = 'vc-room-field';
+      const h = document.createElement('div');
+      h.className = 'vc-room-flabel';
+      h.textContent = label;
+      row.appendChild(h);
+      const el = make();
+      row.appendChild(el);
+      if (hint) {
+        const n = document.createElement('div');
+        n.className = 'vc-room-fhint';
+        n.textContent = hint;
+        row.appendChild(n);
+      }
+      parent.appendChild(row);
+      return el;
+    }
 
-    const codeI = document.createElement('input');
-    codeI.type = 'text';
-    codeI.maxLength = 24;
-    // 合言葉の中身はサーバーが管理者にだけ返す
-    codeI.value = ev.code || '';
-    codeI.placeholder = ev.hasCode ? '合言葉（空にするとパブリック）' : '合言葉（空ならパブリック）';
+    /** チェックボックス1つぶん（見出しは要らないのでラベルだけ） */
+    function check(parent, label, checked, hint) {
+      const row = document.createElement('div');
+      row.className = 'vc-room-check';
+      const lb = document.createElement('label');
+      const c = document.createElement('input');
+      c.type = 'checkbox';
+      c.checked = Boolean(checked);
+      lb.append(c, document.createTextNode(label));
+      row.appendChild(lb);
+      if (hint) {
+        const n = document.createElement('div');
+        n.className = 'vc-room-fhint';
+        n.textContent = hint;
+        row.appendChild(n);
+      }
+      parent.appendChild(row);
+      return c;
+    }
+
+    const nameI = field(box, 'イベント名', () => {
+      const i = document.createElement('input');
+      i.type = 'text';
+      i.maxLength = 24;
+      i.value = ev.name;
+      i.className = 'vc-room-input';
+      return i;
+    });
+
     // 触っていない合言葉は送らない。
     // 何かの理由で中身が届かず空欄のまま保存すると、合言葉が消えてしまうため
     // （2026-07-31 実際に本番で消えた）。パブリックに戻したいときは
     // 空欄にする＝「触った」ことになるので、意図した変更だけが通る
     let codeTouched = false;
-    codeI.addEventListener('input', () => {
-      codeTouched = true;
-    });
-    box.appendChild(codeI);
+    const codeI = field(box, '合言葉', () => {
+      const i = document.createElement('input');
+      i.type = 'text';
+      i.maxLength = 24;
+      i.className = 'vc-room-input';
+      // 合言葉の中身はサーバーが管理者にだけ返す
+      i.value = ev.code || '';
+      i.placeholder = '空ならパブリック（誰でも入れる）';
+      i.addEventListener('input', () => { codeTouched = true; });
+      return i;
+    }, '管理者は合言葉なしでも入れます。');
 
-    const capI = document.createElement('input');
-    capI.type = 'number';
-    capI.min = '1';
-    capI.max = '60';
-    capI.value = String(ev.cap ?? 30);
-    box.appendChild(capI);
+    const capI = field(box, '定員（1〜60）', () => {
+      const i = document.createElement('input');
+      i.type = 'number';
+      i.min = '1';
+      i.max = '60';
+      i.className = 'vc-room-input';
+      i.value = String(ev.cap ?? 30);
+      return i;
+    }, `いま ${ev.count}人 入っているので、それより少なくはできません。`);
 
-    const capNote = document.createElement('div');
-    capNote.className = 'vc-room-hint';
-    capNote.textContent = `定員（1〜60）。いま ${ev.count}人 入っているので、それより少なくはできません。`;
-    box.appendChild(capNote);
-
-    const loginLb = document.createElement('label');
-    const loginC = document.createElement('input');
-    loginC.type = 'checkbox';
-    loginC.checked = Boolean(ev.requireLogin);
-    loginLb.append(loginC, document.createTextNode('ログインした人だけ入れるようにする'));
-    box.appendChild(loginLb);
-
-    const vrcLb = document.createElement('label');
-    const vrcC = document.createElement('input');
-    vrcC.type = 'checkbox';
-    vrcC.checked = Boolean(ev.vrc);
-    vrcLb.append(vrcC, document.createTextNode('VRChatの客席に出す（ONにできるのは1つ）'));
-    box.appendChild(vrcLb);
+    const loginC = check(box, 'ログインした人だけ入れるようにする', ev.requireLogin);
+    const vrcC = check(box, 'VRChatの客席に出す', ev.vrc, 'ONにできるのは同時に1つのイベントだけです。');
 
     // ---- チャットの形（2026-08-02追加）----
     // 配信中はYouTubeへ一本化し、配信のないイベントでは会場チャットを使う。
     // 自動判定にしないのは、誤爆したとき運営が制御を取り戻せなくなるため
-    const ytLb = document.createElement('label');
-    const ytC = document.createElement('input');
-    ytC.type = 'checkbox';
-    ytC.checked = ev.chatMode === 'youtube';
-    ytLb.append(ytC, document.createTextNode('YouTubeチャット連動（会場のチャットは使わない）'));
-    box.appendChild(ytLb);
+    const ytC = check(box, 'YouTubeチャット連動', ev.chatMode === 'youtube',
+      'ONの間は会場のチャット入力欄が消え、コメントはYouTube側に集まります。配信が終わったらチャット欄の「💬 会場チャットを開く」で戻せます。');
 
     // ---- ステージ登壇（2026-08-04追加・テストユーザー要望）----
     // 「管理人+VIPはステージにのれるようにしたい。（イベント設定でON/OFFあり）」
     // ONにしても上がれるのは管理者とVIPだけ。お客さんは今までどおり客席から出られない
-    const stgLb = document.createElement('label');
-    const stgC = document.createElement('input');
-    stgC.type = 'checkbox';
-    stgC.checked = Boolean(ev.stageAccess);
-    stgLb.append(stgC, document.createTextNode('ステージに上がれるようにする（管理者・VIPのみ）'));
-    box.appendChild(stgLb);
+    const stgC = check(box, 'ステージに上がれるようにする', ev.stageAccess,
+      '上がれるのは管理者とVIPだけです。お客さんは客席のままです。');
 
     // ---- 会場の明るさ（2026-08-04追加）----
-    // loyさん「3段階を管理者+VIPは設定から調整できるといいかもね」
-    //        「運営やVIPが変えて全体へ反映でいいよ」
-    // 個人設定ではなくイベントの設定。同じ会場にいる全員の画面が同時に変わる
-    const briTitle = document.createElement('div');
-    briTitle.className = 'vc-room-sub';
-    briTitle.textContent = '会場の明るさ';
-    box.appendChild(briTitle);
-
-    const briSel = document.createElement('select');
-    briSel.className = 'vc-room-input';
-    // ⚠ 上2つは**会場だけ**を明るくする（アバターと映像はそのまま）。
-    //   下2つは画面全体も持ち上げるので、アバターと映像も明るくなる。
-    //   見比べて決めるために両方式を出している（2026-08-04）
-    for (const [value, label] of [
-      ['normal', 'ふつう（これまでと同じ）'],
-      ['dim', '少し明るい'],
-      ['bright', '明るめ'],
-      ['brightest', 'いちばん明るい'],
-      ['brightest+', 'いちばん明るい＋画面全体'],
-    ]) {
-      const o = document.createElement('option');
-      o.value = value;
-      o.textContent = label;
-      briSel.appendChild(o);
-    }
-    briSel.value = ev.brightness || 'normal';
-    box.appendChild(briSel);
-    const briHint = document.createElement('div');
-    briHint.className = 'vc-room-hint';
-    briHint.textContent =
-      'このイベントにいる全員の画面が明るくなります（保存を押すとすぐ反映）。'
-      + '床・壁・ステージの色をシルバー寄りにして明るくします（アバターと映像はそのまま）。'
-      + '最後の「＋画面全体」だけは、アバターとスクリーンの映像も一緒に明るくなります。';
-    box.appendChild(briHint);
+    // 個人設定ではなくイベントの設定。同じ会場にいる全員の画面が同時に変わる。
+    //
+    // ⚠ **段階の名前は「1〜5」だけにする**（loyさん 2026-08-04
+    //   「今の言葉だとよくわからんから、普通に5段階表示でいいよ」）。
+    //   「いちばん明るい＋画面全体」のような説明は、選ぶ場では読まれない。
+    // ⚠ **選んだ瞬間に反映する**（同 loyさん「プダウンセレクトしら即反映してほしい」）。
+    //   保存を押すまで分からないと、見比べながら決められない。
+    const briSel = field(box, '会場の明るさ', () => {
+      const s = document.createElement('select');
+      s.className = 'vc-room-input';
+      for (const [value, label] of [
+        ['normal', '1（ふつう）'],
+        ['dim', '2'],
+        ['bright', '3'],
+        ['brightest', '4'],
+        ['brightest+', '5'],
+      ]) {
+        const o = document.createElement('option');
+        o.value = value;
+        o.textContent = label;
+        s.appendChild(o);
+      }
+      s.value = ev.brightness || 'normal';
+      // 選んだ瞬間に送る。保存ボタンでも同じ値が送られるので二重でも害はない
+      s.addEventListener('change', () => {
+        onUpdateEvent({ id: ev.id, brightness: s.value });
+      });
+      return s;
+    }, '数字が大きいほど明るくなります。選ぶとすぐ全員の画面に反映されます。5だけはアバターと映像も明るくなります。');
 
     // ---- コールのワード表（2026-08-03追加）----
     // loyさん「リスト使う使わないも選べるとライブイベント以外の観覧イベントとかでも大丈夫」。
     // 既定は「使わない」。ライブでないイベントで勝手に反応させないため
-    const callLb = document.createElement('div');
-    callLb.className = 'vc-room-title';
-    callLb.textContent = 'コールのワード';
-    box.appendChild(callLb);
-    const callSel = document.createElement('select');
-    callSel.className = 'vc-room-input';
-    {
+    const callSel = field(box, 'コールのワード', () => {
+      const s = document.createElement('select');
+      s.className = 'vc-room-input';
       const none = document.createElement('option');
       none.value = '';
       none.textContent = '使わない';
-      callSel.appendChild(none);
+      s.appendChild(none);
       for (const l of callLists) {
         const op = document.createElement('option');
         op.value = l.id;
         op.textContent = `${l.name}（${l.words.length}語）`;
         if (l.id === ev.callList) op.selected = true;
-        callSel.appendChild(op);
+        s.appendChild(op);
       }
-    }
-    box.appendChild(callSel);
-    const callHint = document.createElement('div');
-    callHint.className = 'vc-room-hint';
-    callHint.textContent =
-      'YouTubeのコメントにこのリストの言葉が入っていたら、連携している人のアバターが動きます。リストは ⚙設定 →「管理」で作れます。';
-    box.appendChild(callHint);
+      return s;
+    }, 'このリストの言葉がコメントに入っていたら、その人のアバターが動きます。リストは ⚙設定 →「管理」で作れます。');
 
     // ---- NPCの全体上限（管理者が決める。各自はこの範囲でしか出せない）----
-    const npcTitle = document.createElement('div');
-    npcTitle.className = 'vc-room-hint';
-    npcTitle.textContent = 'NPC（賑やかし）の上限。空欄なら自動（定員の空きぶん）。0にすると全員の画面から消えます。';
-    box.appendChild(npcTitle);
-    const npcI = document.createElement('input');
-    npcI.type = 'number';
-    npcI.min = '0';
-    npcI.max = '100';
-    npcI.placeholder = '自動';
-    npcI.value = Number.isFinite(ev.npcMax) && ev.npcMax >= 0 ? String(ev.npcMax) : '';
-    box.appendChild(npcI);
+    const npcI = field(box, 'NPC（賑やかし）の上限', () => {
+      const i = document.createElement('input');
+      i.type = 'number';
+      i.min = '0';
+      i.max = '100';
+      i.className = 'vc-room-input';
+      i.placeholder = '自動';
+      i.value = Number.isFinite(ev.npcMax) && ev.npcMax >= 0 ? String(ev.npcMax) : '';
+      return i;
+    }, '空欄なら自動（定員の空きぶん）。0にすると全員の画面から消えます。');
 
     // ---- 運営メッセージの固定枠 ----
-    const noticeTitle = document.createElement('div');
-    noticeTitle.className = 'vc-room-hint';
-    noticeTitle.textContent = '運営メッセージ（会場の上部に出したままになります。空にすると消えます）';
-    box.appendChild(noticeTitle);
-    const noticeI = document.createElement('input');
-    noticeI.type = 'text';
-    noticeI.maxLength = 120;
-    noticeI.placeholder = '例: 転換中です。次の出演は○○さんです';
-    noticeI.value = ev.notice ? ev.notice.text : '';
-    box.appendChild(noticeI);
-    const lvSel = document.createElement('select');
-    for (const [val, label] of [
-      ['info', 'お知らせ（青）'],
-      ['important', '重要（黄）'],
-      ['emergency', '緊急（赤・画面上部に固定）'],
-    ]) {
-      const o = document.createElement('option');
-      o.value = val;
-      o.textContent = label;
-      lvSel.appendChild(o);
-    }
-    lvSel.value = ev.notice && ev.notice.level ? ev.notice.level : 'info';
-    box.appendChild(lvSel);
+    const noticeI = field(box, '運営メッセージ', () => {
+      const i = document.createElement('input');
+      i.type = 'text';
+      i.maxLength = 120;
+      i.className = 'vc-room-input';
+      i.placeholder = '例: 転換中です。次の出演は○○さんです';
+      i.value = ev.notice ? ev.notice.text : '';
+      return i;
+    }, '会場の上部に出したままになります。空にすると消えます。');
+    const lvSel = field(box, '運営メッセージの種類', () => {
+      const s = document.createElement('select');
+      s.className = 'vc-room-input';
+      for (const [val, label] of [
+        ['info', 'お知らせ（青）'],
+        ['important', '重要（黄）'],
+        ['emergency', '緊急（赤・画面上部に固定）'],
+      ]) {
+        const o = document.createElement('option');
+        o.value = val;
+        o.textContent = label;
+        s.appendChild(o);
+      }
+      s.value = ev.notice && ev.notice.level ? ev.notice.level : 'info';
+      return s;
+    });
 
     const save = document.createElement('button');
     save.type = 'button';
@@ -408,6 +458,10 @@ export function initRoomUI({
       panel.appendChild(empty);
       return;
     }
+
+    // 開いていたイベントが消えた（他の管理者が消した等）ら開きっぱなし扱いを解く。
+    // これを忘れると、下の作成フォームが二度と出てこなくなる
+    if (openSettings && !events.some((e) => e.id === openSettings && e.mine)) openSettings = '';
 
     for (const ev of events) {
       const box = document.createElement('div');
@@ -481,7 +535,12 @@ export function initRoomUI({
     }
 
     // イベント作成はVIPにも開放（管理者不在でも会場を開けるように・2026-08-02）
-    if (role === 'admin' || role === 'vip') {
+    //
+    // ⚠ 設定を開いている間はここから下（作成フォーム・イベントの記録）を出さない。
+    //    loyさん「イベント設定を開いてる時は、「イベントを作る」や「イベントの記録」は
+    //    非表示にして。どこまでが設定わかりにくい」。
+    //    同じ形の入力欄が上下に並ぶと、どれが編集中のイベントのものか分からなくなるため
+    if ((role === 'admin' || role === 'vip') && !openSettings) {
       const admin = document.createElement('div');
       admin.className = 'vc-room-admin';
 
