@@ -41,10 +41,9 @@ export function configToAv(config) {
   // 目の色（2026-08-07に4つへ分割）。ec=左下（従来）／et=左上／ec2・et2=右目。
   // es=左右を分けているか（VIP・管理者だけ）。分けていなければ右は左と同じ
   // 髪の飾り（2026-08-07追加・運営専用）。
-  //   sn=本数 / sp=位置id / sw=太さid / hg=グラデ色 / hi=インナー色。
+  //   sn=本数 / sp=位置id / sw=太さid / hg=グラデ色。
   //   色は「0＝なし」にしたいので **番号+1** で送る（0のままだと黒と区別できない）
   const hg = AVATAR_PARTS.hairColors.indexOf(cfg.hairGradColor);
-  const hi = AVATAR_PARTS.hairColors.indexOf(cfg.hairInnerColor);
   const et = AVATAR_PARTS.eyeColors.indexOf(cfg.eyeTopColor);
   const es = cfg.eyeSplit ? 1 : 0;
   const ec2 = AVATAR_PARTS.eyeColors.indexOf(cfg.eyeColorR);
@@ -68,7 +67,6 @@ export function configToAv(config) {
     sp: STREAK_POSITIONS.some((p) => p.id === cfg.streakPosition) ? cfg.streakPosition : STREAK_DEFAULT.position,
     sw: STREAK_WIDTHS.some((w) => w.id === cfg.streakWidth) ? cfg.streakWidth : STREAK_DEFAULT.width,
     hg: hg >= 0 ? hg + 1 : 0,
-    hi: hi >= 0 ? hi + 1 : 0,
     et: et >= 0 ? et : 0,
     es,
     ec2: es && ec2 >= 0 ? ec2 : (ec >= 0 ? ec : 0),
@@ -125,7 +123,6 @@ export function avToConfig(av) {
     streakPosition: STREAK_POSITIONS.some((p) => p.id === a.sp) ? a.sp : STREAK_DEFAULT.position,
     streakWidth: STREAK_WIDTHS.some((w) => w.id === a.sw) ? a.sw : STREAK_DEFAULT.width,
     hairGradColor: paletteOrNone(a.hg),
-    hairInnerColor: paletteOrNone(a.hi),
     eyeTopColor: AVATAR_PARTS.eyeColors[etIdx],
     eyeSplit,
     eyeColorR: AVATAR_PARTS.eyeColors[ec2Idx],

@@ -18,9 +18,9 @@ const FULL = {
   h: 'bob', hl: 'bob', hs: 'none', hb: 'std', o: 'middle',
   ac: 'wing+mesh', hc: 3, sc: 2, bc: 1, ec: 8, pl: 0, mc: 0,
   // 運営専用
-  es: 1, ec2: 5, et2: 6, sn: 3, sp: 'c', sw: 'wide', hg: 7, hi: 8,
+  es: 1, ec2: 5, et2: 6, sn: 3, sp: 'c', sw: 'wide', hg: 7,
 };
-const STAFF_KEYS = ['es', 'ec2', 'et2', 'sn', 'sp', 'sw', 'hg', 'hi'];
+const STAFF_KEYS = ['es', 'ec2', 'et2', 'sn', 'sp', 'sw', 'hg'];
 
 for (const role of ['admin', 'vip']) {
   const out = sanitizeStaffAv(FULL, role);

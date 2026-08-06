@@ -100,7 +100,6 @@ export function randomConfig() {
     streakPosition: STREAK_DEFAULT.position,
     streakWidth: STREAK_DEFAULT.width,
     hairGradColor: '',
-    hairInnerColor: '',
     height: 'mid',
     // ランダムにしない。VRChat側に合わせた既定（右）から始める
     handedness: 'right',

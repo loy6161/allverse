@@ -198,6 +198,9 @@ const DEFAULT_CAPACITY = 30;                  // 1ルームの既定キャパ
  *   city … clubVERSE ＋ まわりの街（CITY）。地続きで歩いて出入りできる
  */
 const WORLD_KINDS = new Set(['club', 'city']);
+// 入場する場所（2026-08-07・loyさん「入場する場所はイベント側で設定」）。
+// 'club'=会場の中／'city'=街（会場の外）。world が 'city' のときだけ意味を持つ
+const SPAWN_KINDS = new Set(['club', 'city']);
 
 const MIN_CAPACITY = 1;
 // 1ルームの定員の上限。
@@ -508,6 +511,7 @@ function makeEvent({
   callList = '',
   brightness = 'normal',
   world = 'club',
+  spawn = 'club',
   stageAccess = false,
 }) {
   return {
@@ -537,6 +541,8 @@ function makeEvent({
     // 使うワールド（2026-08-06追加）。'club' … clubVERSEだけ／'city' … 街つき。
     // 街は clubVERSE のまわりに足す層なので、'city' でも会場はそのまま入っている
     world: WORLD_KINDS.has(world) ? world : 'club',
+    // 入場する場所。既定は会場の中（今までと同じ）
+    spawn: SPAWN_KINDS.has(spawn) ? spawn : 'club',
     // ステージに上がれるか（2026-08-04追加・テストユーザー要望）。
     // ONにしても上がれるのは管理者とVIPだけ。既定はOFF（普段は誰も上がらない）
     stageAccess: Boolean(stageAccess),
@@ -619,6 +625,8 @@ function toEventInfo(ev) {
     brightness: ev.brightness,
     // 使うワールド（'club' / 'city'）。全員の画面に効く
     world: ev.world,
+    // 入場する場所（'club'=会場の中 / 'city'=街）。world が 'city' のときだけ効く
+    spawn: ev.spawn || 'club',
     // ステージに上がれるか。ONでも上がれるのは管理者・VIPだけ（2026-08-04追加）
     stageAccess: ev.stageAccess,
   };
@@ -1367,6 +1375,9 @@ async function handleEventUpdate(client, msg) {
   //   （メモリ上の値だけ書き換わるので、状態APIでは変わって見えるのが厄介だった）。
   if (typeof msg.world === 'string' && WORLD_KINDS.has(msg.world)) {
     ev.world = msg.world;
+  }
+  if (typeof msg.spawn === 'string' && SPAWN_KINDS.has(msg.spawn)) {
+    ev.spawn = msg.spawn;
   }
   if (typeof msg.brightness === 'string' && BRIGHTNESS_LEVELS.has(msg.brightness)) {
     ev.brightness = msg.brightness;

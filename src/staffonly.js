@@ -31,13 +31,12 @@ export function sanitizeStaffAv(av, role) {
   delete out.es;
   delete out.ec2;
   delete out.et2;
-  // 髪の飾り（前髪メッシュの形・グラデ・インナーカラー）。
+  // 髪の飾り（前髪メッシュの形・グラデ）。
   // 形（sn/sp/sw）は、メッシュ自体が運営専用なので ac 側で既に落ちているが、
   // 念のためここでも落としておく（片方だけ直したときに漏れないように）
   delete out.sn;
   delete out.sp;
   delete out.sw;
   delete out.hg;
-  delete out.hi;
   return out;
 }

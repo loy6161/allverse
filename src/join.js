@@ -196,6 +196,9 @@ function injectStyle() {
   flex: 1 1 auto;
   min-height: 120px;
   overflow-y: auto;
+  /* ⚠ 横スクロールは出さない（2026-08-07・loyさん指摘）。
+     色の丸が右端でわずかにはみ出すと、下に横スクロールバーが出てしまう */
+  overflow-x: hidden;
   padding-right: 6px;
   display: flex;
   flex-direction: column;
@@ -646,10 +649,6 @@ function buildCustomizeScreen({
             <div class="customize-row staff-only" data-tab="hair" id="hairgrad-row" style="display:none">
               <div class="customize-label">毛先の色（グラデ）<span class="staff-tag">運営</span></div>
               <div class="swatch-row" id="hairgrad-swatches"></div>
-            </div>
-            <div class="customize-row staff-only" data-tab="hair" id="hairinner-row" style="display:none">
-              <div class="customize-label">インナーカラー<span class="staff-tag">運営</span></div>
-              <div class="swatch-row" id="hairinner-swatches"></div>
             </div>
             <div class="customize-row" data-tab="hair" id="meshcolor-row" style="display:none">
               <div class="customize-label">前髪メッシュの色</div>
@@ -1146,7 +1145,6 @@ function buildCustomizeScreen({
   buildSwatchRow('eyetopcolorr-swatches', AVATAR_PARTS.eyeColors, 'eyeTopColorR');
   // 髪の飾り（運営専用）。「なし」を選べるようにするため allowNone を立てる
   buildSwatchRow('hairgrad-swatches', AVATAR_PARTS.hairColors, 'hairGradColor', true);
-  buildSwatchRow('hairinner-swatches', AVATAR_PARTS.hairColors, 'hairInnerColor', true);
   buildSwatchRow('shirtcolor-swatches', AVATAR_PARTS.shirtColors, 'shirtColor');
   buildSwatchRow('penlightcolor-swatches', AVATAR_PARTS.penlightColors, 'penlightColor');
 

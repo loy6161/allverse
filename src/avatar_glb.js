@@ -180,12 +180,15 @@ const MESH_STREAK = {
  * 入るのは3つ。どれも**ジオメトリを足さない**ので、何人が使っても描画は増えない。
  *   ・前髪メッシュ … 本数・位置・太さを選べる（運営専用。hairfx.js が一覧の原本）
  *   ・グラデ       … 毛先へ向かって別の色へ移る
- *   ・インナーカラー … 髪の**裏面**だけ別の色（内側が見えたときに覗く）
+ *
+ * ⚠ インナーカラーも作ったが**やめた**（2026-08-07）。この髪は閉じた1枚のシェルで、
+ *   「内側」に当たる面は外から見えない。見える形にすると裾の外側まで塗ることになり、
+ *   結局グラデと同じに見えてしまう（loyさん「そうならグラデーションでいいから要らない」）。
  *
  * ⚠ 範囲はジオメトリの**局所座標**で指定する。GLBのノードがX+90°回っているので、
  *   局所x=左右（+が本人の左）／局所y=前後（+が前）／局所z=上下（負が上）。
  */
-function applyHairFx(mat, { streak, shape, grad, inner }) {
+function applyHairFx(mat, { streak, shape, grad }) {
   const uniforms = {
     uStreak: { value: new THREE.Color(streak || '#141414') },
     uOn: { value: streak ? 1 : 0 },
@@ -197,8 +200,6 @@ function applyHairFx(mat, { streak, shape, grad, inner }) {
     uZ: { value: new THREE.Vector2(MESH_STREAK.z[0], MESH_STREAK.z[1]) },
     uGrad: { value: new THREE.Color(grad || '#ffffff') },
     uGradOn: { value: grad ? 1 : 0 },
-    uInner: { value: new THREE.Color(inner || '#ffffff') },
-    uInnerOn: { value: inner ? 1 : 0 },
   };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
@@ -217,8 +218,6 @@ uniform float uFrontY;
 uniform vec2 uZ;
 uniform vec3 uGrad;
 uniform float uGradOn;
-uniform vec3 uInner;
-uniform float uInnerOn;
 // 1本ぶんの帯
 float band(float x, float c) {
   return step(c - uHW, x) * step(x, c + uHW);
@@ -238,22 +237,11 @@ float streakMask(vec3 p) {
 float tipAmount(vec3 p) {
   return uGradOn * clamp((p.z + 0.95) / 0.35, 0.0, 1.0);
 }
-// インナーカラー: **内側だけ**を塗る（2026-08-07・loyさん「インナーだけってできない？」）。
-// 最初は裾の帯をぐるっと塗っていたが、それでは前から見て「毛先の色」に見えてしまい、
-// グラデと区別がつかなかった。内側と呼べるのは次の2つ:
-//   ・後ろ側の下half（うなじ側。後ろや横から覗くと見える）
-//   ・実際に裏面が見えているところ（前髪の房の裏など。材質は両面描画なので出る）
-float innerAmount(vec3 p) {
-  float underneath = step(-0.75, p.z) * step(p.y, 0.0);
-  float backface = gl_FrontFacing ? 0.0 : 1.0;
-  return uInnerOn * max(underneath, backface);
-}
 `;
     // 色を差し替える行。diffuse と emissive の**両方**に同じ形を掛ける。
     // 片方だけだと、その部分が元の髪色で浮いて見える
     const mixLines = (target, scale) => `
   DST = mix(DST, uGradSCALE, tipAmount(vLocalPos));
-  DST = mix(DST, uInnerSCALE, innerAmount(vLocalPos));
   DST = mix(DST, uStreakSCALE, streakMask(vLocalPos));
 `.replace(/DST/g, target).replace(/SCALE/g, scale);
     sh.fragmentShader = decl + sh.fragmentShader
@@ -282,7 +270,6 @@ export function createGlbAvatar(config) {
     eyeTopColorR = '',
     // 髪の飾り（2026-08-07追加・管理者とVIPだけ）。空なら付けない
     hairGradColor = '',   // 毛先へ向かって移る色（グラデ）
-    hairInnerColor = '',  // 髪の裏面の色（インナーカラー）
     penlightColor = '',
     // 前髪メッシュの色（2026-08-06追加）。髪のカラーパレットから選ぶ
     meshColor = '',
@@ -325,7 +312,7 @@ export function createGlbAvatar(config) {
   const streakColor = hasStreak ? (meshColor || '#141414') : '';
   // 髪の飾り（2026-08-07追加・運営専用）。形の数値化は hairfx.js が受け持つ
   const streakShapeParams = streakShape(config || {});
-  const hasFx = Boolean(streakColor || hairGradColor || hairInnerColor);
+  const hasFx = Boolean(streakColor || hairGradColor);
 
   const MAT_BUILDERS = {
     MatHair: () => {
@@ -336,7 +323,6 @@ export function createGlbAvatar(config) {
         streak: streakColor,
         shape: streakShapeParams,
         grad: hairGradColor,
-        inner: hairInnerColor,
       });
     },
     MatSkin: () => toon(bodyColor),

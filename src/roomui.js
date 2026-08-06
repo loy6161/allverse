@@ -355,6 +355,29 @@ export function initRoomUI({
        + '（読み込み画面もテレポートもありません）。選ぶとすぐ全員の画面に反映されます。'
        + '街の建物はいまは仮のものです。');
 
+    // ---- 入場する場所（2026-08-07追加）----
+    // loyさん「入場する場所はここ（入場画面）で選ぶんじゃなくて、イベント側で設定」
+    if ((ev.world || 'club') === 'city') {
+      field(box, '入場する場所', () => {
+        const sel = document.createElement('select');
+        sel.className = 'vc-room-input';
+        for (const [value, label] of [
+          ['club', 'clubVERSE の中'],
+          ['city', '街（会場の外）'],
+        ]) {
+          const o = document.createElement('option');
+          o.value = value;
+          o.textContent = label;
+          sel.appendChild(o);
+        }
+        sel.value = ev.spawn || 'club';
+        sel.addEventListener('change', () => {
+          onUpdateEvent({ id: ev.id, spawn: sel.value });
+        });
+        return sel;
+      }, 'お客さんがどこから始まるか。ワールドが CITY のときだけ選べます（会場の中が既定）');
+    }
+
     const briSel = field(box, '会場の明るさ', () => {
       const s = document.createElement('select');
       s.className = 'vc-room-input';
