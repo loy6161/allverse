@@ -20,7 +20,7 @@ import { parseAccessories, STAFF_ONLY_ACCESSORIES } from './accessory.js';
 // ------------------------------------------------------------------
 
 // パーツ合成方式: body_<服装> + hair_<髪型> + acc_<アクセ> を実行時に組む
-export const GLB_STYLES = ['long', 'bob', 'short', 'twin', 'bun', 'pony', 'patsun'];
+export const GLB_STYLES = ['long', 'bob', 'short', 'twin', 'bun', 'pony', 'patsun', 'partr', 'partl'];
 // ※ ゲスト専用の「髪なし」は選択肢に入れない（選べてしまうと見分けにならない）
 export const GLB_OUTFITS = ['middle', 'long', 'short'];
 export const GLB_ACCESSORIES = [

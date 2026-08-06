@@ -11,6 +11,7 @@
 // 座標系: OBJ標準 (Y=上, キャラは +Z を向く)。単位 m。身長 ≈ 1.21m
 // 使い方: node tools/gen_avatar_obj.mjs <part>
 //   part: hair_long | hair_short | hair_twin | hair_bun | hair_pony | hair_patsun
+//       | hair_partr | hair_partl
 //       | body_long | body_middle | body_short
 //       | acc_kemo | acc_ahoge | acc_tail | acc_wing | acc_halo | acc_ribbon
 //       | acc_glasses | acc_sunglasses
@@ -130,7 +131,13 @@ const RINGS_ALL = [
 const WINDOW_COLS = new Set([18, 19, 0, 1]);
 const HAIRLINE_RING = 1;
 
-function hairDome({ rings = RINGS_ALL, hemDrop = 0.075, lockTipY = -0.24, bangs = 'v', bangY = -0.115 }) {
+function hairDome({
+  rings = RINGS_ALL, hemDrop = 0.075, lockTipY = -0.24, bangs = 'v', bangY = -0.115,
+  // 前髪を1列ずつ違う高さで切るときの一覧（分け目つきの前髪で使う）。
+  // 並びは前面の列 [17,18,19,0,1,2,3]＝**向かって左から右**。
+  // 指定すると bangY より優先される（bangs:'blunt' のときだけ効く）
+  bangYs = null,
+}) {
   const pole = V(0, HEAD_C + 0.3, 0);
   const ringIdx = rings.map(([y, r]) =>
     Array.from({ length: N }, (_, i) => {
@@ -167,7 +174,8 @@ function hairDome({ rings = RINGS_ALL, hemDrop = 0.075, lockTipY = -0.24, bangs 
     // 尖った房を作らず、**同じ高さで横一直線に切り揃える**。
     // 窓の列（18,19,0,1）をまたいで前面をぐるっと1枚で塞ぐ
     const cols = [17, 18, 19, 0, 1, 2, 3];
-    const tips = cols.map((j) => bangTip(j <= 10 ? j * (360 / N) : (j - N) * (360 / N), bangY, 0.02));
+    const tips = cols.map((j, k) =>
+      bangTip(j <= 10 ? j * (360 / N) : (j - N) * (360 / N), bangYs ? bangYs[k] : bangY, 0.02));
     for (let k = 0; k < cols.length - 1; k++) {
       const a = hl[cols[k]];
       const b = hl[cols[k + 1]];
@@ -348,6 +356,22 @@ const PARTS = {
       // ⚠ 目にかからない高さで切る。-0.115 だと**目まで隠れた**（2026-08-06 実測）。
       //   -0.075 は目にかかる長め、-0.055 が眉上。loyさんが -0.055 を選んだ
       bangY: -0.055,
+    });
+  },
+  // 右分け・左分け（2026-08-06 追加）。ぱっつんと同じ「横に切る」作りだが、
+  // 高さを列ごとに変えて**斜めに流す**。分け目側は生え際すれすれで浅く、
+  // 反対側へ向かって下がっていく。最後の列だけ少し上げて、耳にかける形にする。
+  // ⚠ 並びは向かって左(列17)→右(列3)。「右分け」は**本人から見て右**＝向かって左に分け目。
+  hair_partr() {
+    hairDome({
+      rings: BOB_RINGS, hemDrop: 0.06, lockTipY: -0.2, bangs: 'blunt',
+      bangYs: [-0.015, -0.02, -0.045, -0.07, -0.09, -0.105, -0.085],
+    });
+  },
+  hair_partl() {
+    hairDome({
+      rings: BOB_RINGS, hemDrop: 0.06, lockTipY: -0.2, bangs: 'blunt',
+      bangYs: [-0.085, -0.105, -0.09, -0.07, -0.045, -0.02, -0.015],
     });
   },
   hair_pony() {

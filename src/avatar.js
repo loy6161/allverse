@@ -27,7 +27,7 @@ export const AVATAR_PARTS = {
   // ※「long」は承認済みボブ形状の名前（旧bobをリネーム。旧ロングは廃止）
   //   「bob」はあご下丈、「short」は耳が出る短さ（2026-07-29 追加）
   // 2026-08-06 追加: ぱっつん（前髪を横一直線に切り揃えた形・loyさん要望）
-  hairStyles: ['long', 'bob', 'short', 'twin', 'bun', 'pony', 'patsun'],
+  hairStyles: ['long', 'bob', 'short', 'twin', 'bun', 'pony', 'patsun', 'partr', 'partl'],
   outfits: ['middle', 'long', 'short'],
   // 2026-08-03 追加: しっぽ・羽・天使の輪・リボン・サングラス・メガネ
   accessories: [

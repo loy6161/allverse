@@ -26,6 +26,8 @@ const HAIR_LABELS = {
   bun: 'お団子',
   pony: 'ポニーテール',
   patsun: 'ぱっつん',
+  partr: '右分け',
+  partl: '左分け',
   hat: 'ぼうし',
 };
 
