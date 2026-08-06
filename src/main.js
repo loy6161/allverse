@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createWorld } from './world.js';
+import { createOpenWorld } from './world_open.js';
 import { createClubWorld } from './world_club.js';
 import { createAvatar } from './avatar.js';
 import { preloadAvatars } from './avatar_glb.js';
@@ -60,12 +61,16 @@ camera.position.set(0, 6, 14);
 camera.lookAt(0, 1, 0);
 
 // 会場の切り替え。既定はVRChatから持ってきた clubVERSE。
-// 仮ワールドに戻したいときは ?world=mock を付ける（見比べ用に残してある）
-const WORLD_KIND = new URLSearchParams(location.search).get('world') === 'mock' ? 'mock' : 'club';
+//   ?world=mock … 仮ワールド（見比べ用に残してある）
+//   ?world=open … 巨大エリアの実験（2026-08-06追加・world_open.js の説明を参照）
+const WORLD_PARAM = new URLSearchParams(location.search).get('world');
+const WORLD_KIND = WORLD_PARAM === 'mock' || WORLD_PARAM === 'open' ? WORLD_PARAM : 'club';
 const world =
   WORLD_KIND === 'club'
     ? createClubWorld(scene, { renderer })
-    : createWorld(scene, { lowSpec: IS_TOUCH }); // タッチ端末は負荷を抑えた構成
+    : WORLD_KIND === 'open'
+      ? createOpenWorld(scene)
+      : createWorld(scene, { lowSpec: IS_TOUCH }); // タッチ端末は負荷を抑えた構成
 
 // 別会場（ラウンジ）のサンプル（2026-08-06追加・loyさん「入り口出ると別会場に移動」）。
 // ⚠ ワールドを差し替えるのではなく、**同じシーンの遠く**に建てて歩いて移動する。
@@ -117,6 +122,10 @@ const fpsMeter = initFpsMeter({
     reflect: getReflection(),
     width: renderer.domElement.width,
     height: renderer.domElement.height,
+    // 巨大エリアの実験（?world=open）のときだけ出す
+    tiles: world.debugInfo ? world.debugInfo() : null,
+    calls: renderer.info.render.calls,
+    tris: renderer.info.render.triangles,
   }),
 });
 
@@ -1270,7 +1279,9 @@ function loop() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.elapsedTime;
 
-  if (world.update) world.update(dt, t);
+  // ⚠ 巨大エリア（?world=open）はプレイヤーの位置でタイルを出し入れするので、
+  //   位置も渡す。他のワールドは受け取らないだけで害はない
+  if (world.update) world.update(dt, t, player ? player.position.x : 0, player ? player.position.z : 0);
 
   if (player) {
     controls.update(dt);

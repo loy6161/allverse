@@ -116,7 +116,17 @@ const WS_PATH = '/ws';
 const RATE_LIMIT_PER_SEC = 20;    // 1クライアントが1秒に送れる最大メッセージ数
 const MAX_NAME_LEN = 12;          // n の最大文字数
 const MAX_TXT_LEN = 200;          // chat.txt の最大文字数
-const MAX_COORD_ABS = 100;        // 座標の絶対値上限（これを超える/非数は破棄）
+// 座標の絶対値上限（これを超える/非数は破棄）。
+// ⚠ 100 → 20000 に広げた（2026-08-06）。
+//   loyさん「VRCのALLVERSEが20平方キロメートルあっても稼働してる」を受けて、
+//   ブラウザ側で**同じ規模のエリアをタイルに分けて繋げる**実験（?world=open）を始めた。
+//   20km² は 4.5km 四方なので、中心から ±2250 まで座標が伸びる。余裕を見て 20000。
+//   ⚠ ここを広げても presence.json（VRChat連携）の意味は変わらない。
+//     VRC側の会場は clubVERSE の1会場ぶんしかないので、
+//     広いエリアに出た人はVRC会場の外に立つことになる。
+//     本採用するときは「どの会場に居るか」をサーバーに持たせて分ける必要がある
+//     （docs/HANDOFF_20260806_NIGHT.md の残課題）。
+const MAX_COORD_ABS = 20000;
 
 // エモートの既定リスト（docs/PROTOCOL.md と一致させること。ここにないidは破棄）
 // hop … Spaceキーで実際に跳んだことを他の人へ見せるための1回だけのジャンプ。
@@ -734,7 +744,7 @@ function clampString(value, maxLen, fallback = '') {
   return value.slice(0, maxLen);
 }
 
-/** 数値検証: 非数・±100超は無効(null)を返す */
+/** 数値検証: 非数・上限（MAX_COORD_ABS）超は無効(null)を返す */
 function validCoord(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   if (Math.abs(value) > MAX_COORD_ABS) return null;

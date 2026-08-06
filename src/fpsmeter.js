@@ -100,7 +100,15 @@ export function initFpsMeter({ getStats }) {
       + `ブルーム ${s.bloom ? 'ON' : 'OFF'}  反射 ${s.reflect ? 'ON' : 'OFF'}\n`
       // 実際に描いている画素数。画面の大きさ×画面の細かさ（Retina等）で決まり、
       // 重さに直結する。「同じ設定なのに人によって重い」の切り分けに要る
-      + `解像度 ${s.width ?? '-'}x${s.height ?? '-'}`;
+      + `解像度 ${s.width ?? '-'}x${s.height ?? '-'}`
+      // 巨大エリアの実験（?world=open）用。総面積を増やしても
+      // ここが一定なら「面積は負担にならない」と言える
+      + (s.tiles
+        ? `
+区画 描画${s.tiles.visible}/保持${s.tiles.built}（全${s.tiles.grid}x${s.tiles.grid}=${s.tiles.areaKm2}km²）`
+          + `
+描画コール ${s.calls ?? '-'}  三角形 ${s.tris ?? '-'}`
+        : '');
   }
 
   return {

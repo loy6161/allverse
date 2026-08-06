@@ -128,6 +128,8 @@ export function initControls(
 
 
   const SPEED = 4.2;
+  /** 走る速さの倍率（Shift）。20km²級のエリアを見て回るのに要る（2026-08-06追加） */
+  const RUN_MULT = 6;
 
   // ---- ダブルクリックでその場所まで歩く（2026-08-03追加） ----
   //
@@ -412,6 +414,9 @@ export function initControls(
     if (keys.has('KeyD') || keys.has('ArrowRight')) side += 1;
 
     const manual = Math.abs(fw) > 0.1 || Math.abs(side) > 0.1;
+    // 走る（Shiftを押している間）。巨大エリア（?world=open）を端まで移動できるように
+    // 2026-08-06 追加。ふだんの会場でも「急いで席に戻る」のに使える
+    const speed = keys.has('ShiftLeft') || keys.has('ShiftRight') ? SPEED * RUN_MULT : SPEED;
     // 自分で動かしたら自動移動はやめる（操作を奪われる感じを出さない）
     if (manual && moveTarget) cancelMoveTarget();
 
@@ -425,7 +430,7 @@ export function initControls(
         cancelMoveTarget();
       } else {
         autoMoving = true;
-        const step = Math.min(SPEED * dt, dist2); // 行き過ぎて往復しないよう残り距離で頭打ち
+        const step = Math.min(speed * dt, dist2); // 行き過ぎて往復しないよう残り距離で頭打ち
         const prevX = avatar.position.x;
         const prevZ = avatar.position.z;
         avatar.position.x += (dx / dist2) * step;
@@ -452,7 +457,7 @@ export function initControls(
 
       const prevX = avatar.position.x;
       const prevZ = avatar.position.z;
-      avatar.position.addScaledVector(move, SPEED * dt);
+      avatar.position.addScaledVector(move, speed * dt);
       const c = stepTo(avatar.position.x, avatar.position.z, prevX, prevZ);
       avatar.position.x = c.x;
       avatar.position.z = c.z;
