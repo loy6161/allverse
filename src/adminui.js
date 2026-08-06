@@ -367,6 +367,8 @@ export function initAdminUI({
       'サーバーの中に仮想のユーザーを作って、本物と同じ「位置を配る処理」を回します。'
       + 'お客さんの画面には何も起きません（1通も届きません）が、サーバーのCPUは本当に使うので、'
       + '本番中に大きな人数で回すと本物の動きが遅れます。3分で自動的に止まります。'
+      + ' 「見せる」に人数を入れると、そのぶんだけ**自分の画面にだけ**アバターが出ます'
+      + '（お客さんには1体も出ません）。見た目と描画の重さをその場で確かめられます。最大300人。'
       + ' ⚠ ここで測れるのは「配る内容を組み立てるまで」です。実際はこれに通信の書き出しが乗ります。'
       + '実際に接続して測った限界は約13万通/秒だったので、その数字と見比べてください。';
     sec3.appendChild(note4);
@@ -390,6 +392,15 @@ export function initAdminUI({
     perIn.value = String(simState.perRoom || 15);
     perIn.className = 'vc-adm-input';
     perIn.style.maxWidth = '90px';
+    // アバターを何人ぶん出すか（2026-08-06追加・loyさん「実際にあばたーはでないの？」）
+    const showIn = document.createElement('input');
+    showIn.type = 'number';
+    showIn.min = '0';
+    showIn.max = '300';
+    showIn.value = String(simState.show ?? 0);
+    showIn.className = 'vc-adm-input';
+    showIn.style.maxWidth = '90px';
+
     const startBtn = document.createElement('button');
     startBtn.type = 'button';
     startBtn.className = 'vc-adm-btn';
@@ -402,7 +413,8 @@ export function initAdminUI({
       } else {
         simState.n = Math.max(0, Number(nIn.value) || 0);
         simState.perRoom = Math.max(1, Number(perIn.value) || 15);
-        onLoadSim({ n: simState.n, perRoom: simState.perRoom });
+        simState.show = Math.max(0, Number(showIn.value) || 0);
+        onLoadSim({ n: simState.n, perRoom: simState.perRoom, show: simState.show });
       }
     });
     const lab = (t) => {
@@ -412,7 +424,7 @@ export function initAdminUI({
       e.textContent = t;
       return e;
     };
-    simRow.append(lab('人数'), nIn, lab('1ルーム'), perIn, startBtn);
+    simRow.append(lab('人数'), nIn, lab('1ルーム'), perIn, lab('見せる'), showIn, startBtn);
     sec3.appendChild(simRow);
 
     const out = document.createElement('div');
@@ -436,7 +448,7 @@ export function initAdminUI({
   }
 
   /** 測定の状態（画面を描き直しても残す） */
-  const simState = { running: false, n: 1000, perRoom: 15, text: '' };
+  const simState = { running: false, n: 1000, perRoom: 15, show: 0, text: '' };
   let simOutEl = null;
   let simBtnEl = null; // 走っている間は「止める」に変える（描き直さずに文字だけ差し替える）
 
@@ -474,7 +486,8 @@ export function initAdminUI({
         simState.text =
           `${judge}
 `
-          + `仮想ユーザー ${r.users}人（${r.perRoom}人 × ${r.rooms}ルーム）
+          + `仮想ユーザー ${r.users}人（${r.perRoom}人 × ${r.rooms}ルーム）`
+          + `${simState.show ? ` ／ うち${simState.show}人を画面に表示中` : ''}
 `
           + `遅れ 平均${r.lagAvgMs}ms／最大${r.lagWorstMs}ms
 `

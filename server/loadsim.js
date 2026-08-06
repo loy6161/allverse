@@ -25,6 +25,12 @@
 /** 一度に作れる仮想ユーザーの上限（事故防止） */
 export const MAX_VIRTUAL = 20000;
 
+/**
+ * アバターとして見せられる人数の上限。
+ * アバター1体＝約12回の描画なので、300体で3,600回。ここが1台の画面の現実的な上限。
+ */
+export const MAX_SHOWN = 300;
+
 /** 何もしなくても自動で止まるまでの時間（測りっぱなしを防ぐ） */
 const AUTO_STOP_MS = 3 * 60 * 1000;
 
@@ -63,12 +69,19 @@ function makeSink(counters) {
  * @param {object} p
  * @param {(payload:object) => void} p.onReport 1秒ごとに結果を渡す相手
  */
-export function createLoadSim({ onReport } = {}) {
+export function createLoadSim({ onReport, onShow } = {}) {
   /** 仮想ユーザー。{ id, room, x, z, r } の配列 */
   let users = [];
   /** ルーム番号 -> そのルームの仮想ユーザー */
   let byRoom = new Map();
   let perRoom = 15;
+  /**
+   * そのうち何人を**実際のアバターとして測定者の画面へ流すか**（2026-08-06追加）。
+   * loyさん「これは数値だけ？実際にあばたーはでないの？だして検証したい。」
+   * 全員ぶんを1人へ流すのは無理なので（1万人＝10万通/秒を1本の回線へ）、
+   * 先頭から指定人数だけ配る。見た目と描画の負担を目で確かめるためのもの。
+   */
+  let showCount = 0;
   let timer = null;
   let reportTimer = null;
   let stopAt = 0;
@@ -120,8 +133,9 @@ export function createLoadSim({ onReport } = {}) {
     outer: for (const [, members] of byRoom) {
       for (const u of members) {
         // 少しずつ歩く（同じ値だと本物と違って圧縮が効いてしまう）
-        u.x = Math.sin((now / 1000 + u.n) * 0.7) * 8;
-        u.z = Math.cos((now / 1000 + u.n) * 0.5) * 8;
+        // その場を中心に少しだけ歩く（見せたときに動いて見えるように）
+        u.x = u.x0 + Math.sin((now / 1000 + u.n) * 0.7) * 0.6;
+        u.z = u.z0 + Math.cos((now / 1000 + u.n) * 0.5) * 0.6;
         u.r = (u.r + 3) % 360;
         // ★ 本物と同じ「1通ずつ JSON にして全員へ書く」形にする。
         //   ここを「1回だけ stringify して使い回す」と実装が変わってしまい、
@@ -140,6 +154,17 @@ export function createLoadSim({ onReport } = {}) {
     }
     busyMs += Number(process.hrtime.bigint() - t0) / 1e6;
     if (over) skipped += Math.max(0, tickIntended - sent);
+
+    // 測定者の画面へ「見せるぶん」だけ位置を流す（1周期に1通だけにまとめる）
+    if (showCount > 0 && onShow) {
+      const n = Math.min(showCount, users.length);
+      const list = new Array(n);
+      for (let i = 0; i < n; i++) {
+        const u = users[i];
+        list[i] = [u.id, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, u.r];
+      }
+      onShow(list);
+    }
 
     if (stopAt && Date.now() > stopAt) stop('時間切れ（自動停止）');
   }
@@ -175,18 +200,32 @@ export function createLoadSim({ onReport } = {}) {
    * @param {number} n 仮想ユーザーの人数
    * @param {number} sizeOfRoom 1ルームあたりの人数
    */
-  function start(n, sizeOfRoom = 15) {
+  function start(n, sizeOfRoom = 15, show = 0) {
     stop();
     const count = Math.max(0, Math.min(MAX_VIRTUAL, Math.trunc(Number(n) || 0)));
     // ⚠ 1ルームの人数に上限は付けない（2026-08-06 loyさん「1ルームの上限決めないで。
     //   それもテストしたいから」）。無茶な値を入れても固まらないよう、
     //   1周期の時間を TICK_BUDGET_MS で打ち切り、捌けなかった量を結果に出す
     perRoom = Math.max(1, Math.min(MAX_VIRTUAL, Math.trunc(Number(sizeOfRoom) || 15)));
+    // 見せる人数。1人の画面が耐えられる範囲に抑える（アバター1体＝約12回の描画）
+    showCount = Math.max(0, Math.min(MAX_SHOWN, Math.trunc(Number(show) || 0)));
     users = [];
     byRoom = new Map();
     for (let i = 0; i < count; i++) {
       const room = Math.floor(i / perRoom) + 1;
-      const u = { id: `v${i}`, n: i, room, x: 0, z: 0, r: 0 };
+      // 会場の中に散らす（見せるときに重ならないよう、格子状に置いてから歩かせる）
+      const col = i % 20;
+      const row = Math.floor(i / 20) % 20;
+      const u = {
+        id: `v${i}`,
+        n: i,
+        room,
+        x: -9 + col * 1.6,
+        z: -12 + row * 1.6,
+        x0: -9 + col * 1.6,
+        z0: -12 + row * 1.6,
+        r: 0,
+      };
       users.push(u);
       if (!byRoom.has(room)) byRoom.set(room, []);
       byRoom.get(room).push(u);
@@ -197,7 +236,7 @@ export function createLoadSim({ onReport } = {}) {
     stopAt = Date.now() + AUTO_STOP_MS;
     timer = setInterval(tick, TICK_MS);
     reportTimer = setInterval(report, 1000);
-    return { users: users.length, rooms: byRoom.size, perRoom };
+    return { users: users.length, rooms: byRoom.size, perRoom, showCount };
   }
 
   function stop(reason = '') {

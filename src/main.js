@@ -397,6 +397,44 @@ function applyNpcCount(n) {
   return total;
 }
 
+/**
+ * 測定中の仮想ユーザーを、自分の画面にアバターとして出す（2026-08-06追加）。
+ *
+ * loyさん「これは数値だけ？実際にあばたーはでないの？だして検証したい。」
+ * 実在の人と同じ仕組み（remote.js）で出すので、**見え方も描画の重さも本物と同じ**。
+ * ⚠ 出るのは測定した本人の画面だけ。他のお客さんには1体も出ない。
+ */
+const loadSimShown = new Set();
+function applyLoadSimAvatars(list) {
+  if (!remote) return;
+  const alive = new Set();
+  for (const [id, x, z, r] of list) {
+    alive.add(id);
+    if (!loadSimShown.has(id)) {
+      loadSimShown.add(id);
+      // 見た目は適当に散らす（本物と同じ形式の av を渡す）
+      const n = Number(String(id).slice(1)) || 0;
+      remote.addPeer({
+        id,
+        n: `測定${n + 1}`,
+        av: { h: 'bob', o: 'middle', ac: 'none', hc: n % 6, sc: n % 8, bc: n % 4, ec: 0, pl: 0 },
+        role: 'user',
+        x,
+        z,
+        r,
+      });
+    }
+    remote.movePeer({ id, x, z, r, m: true });
+  }
+  // 消えたぶんは片付ける
+  for (const id of loadSimShown) {
+    if (!alive.has(id)) {
+      remote.removePeer(id);
+      loadSimShown.delete(id);
+    }
+  }
+}
+
 /** いま出ているNPCの総数（アバター＋人影） */
 function npcCount() {
   return (sim ? sim.count() : 0) + (crowd ? crowd.count() : 0);
@@ -931,7 +969,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       // 負荷の測定の結果（管理者が始めたときだけ1秒ごとに届く）
       onLoadSim: (r) => {
         if (adminUI && adminUI.setLoadSim) adminUI.setLoadSim(r);
+        if (!r.running) applyLoadSimAvatars([]); // 止めたらアバターも片付ける
       },
+      // 測定中の仮想ユーザーを、実際のアバターとして自分の画面に出す（2026-08-06追加）
+      onLoadSimAvatars: (list) => applyLoadSimAvatars(list),
       onScreen: ({ v, by }) => {
         liveScreen.setVideo(v || '');
         if (screenUI) screenUI.setCurrent(v || '');

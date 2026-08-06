@@ -58,7 +58,7 @@ import {
   deleteStaff,
 } from './store.js';
 // 負荷の測定（管理者専用・2026-08-06追加）
-import { createLoadSim, MAX_VIRTUAL } from './loadsim.js';
+import { createLoadSim, MAX_VIRTUAL, MAX_SHOWN } from './loadsim.js';
 import { summarize, gridSeries, autoStepMs, visitsCsv, seriesCsv, chatCsv } from './stats.js';
 // YouTubeのライブチャットを読んで、本人のアバターに吹き出しを出す（2026-08-03追加）
 import { LiveChatReader, isYouTubeReadEnabled, getYouTubeReadStatus } from './ytread.js';
@@ -2166,6 +2166,13 @@ const loadSim = createLoadSim({
       send(loadSimWatcher.ws, { t: 'loadsim', ...payload });
     }
   },
+  // 見せるぶんの位置（2026-08-06追加）。**測定した人にだけ**届く。
+  // 1周期に1通へまとめる（1人ずつ送ると回線が先に詰まる）
+  onShow: (list) => {
+    if (loadSimWatcher && loadSimWatcher.ws.readyState === loadSimWatcher.ws.OPEN) {
+      send(loadSimWatcher.ws, { t: 'loadsim-av', a: list });
+    }
+  },
 });
 
 /** loadsim: 負荷の測定を始める/止める（管理者だけ） */
@@ -2179,12 +2186,16 @@ function handleLoadSim(client, msg) {
     loadSim.stop('手で停止');
     loadSimWatcher = null;
     send(client.ws, { t: 'loadsim', running: false, users: 0 });
+    send(client.ws, { t: 'loadsim-av', a: [] }); // 出していたアバターを消す
     return;
   }
   loadSimWatcher = client;
-  const started = loadSim.start(msg.n, msg.perRoom);
-  console.log(`[loadsim] 開始: ${started.users}人 / ${started.rooms}ルーム（${started.perRoom}人ずつ） by ${client.n}`);
-  send(client.ws, { t: 'loadsim', running: true, ...started, max: MAX_VIRTUAL });
+  const started = loadSim.start(msg.n, msg.perRoom, msg.show);
+  console.log(
+    `[loadsim] 開始: ${started.users}人 / ${started.rooms}ルーム（${started.perRoom}人ずつ）`
+    + ` 表示${started.showCount}人 by ${client.n}`,
+  );
+  send(client.ws, { t: 'loadsim', running: true, ...started, max: MAX_VIRTUAL, maxShown: MAX_SHOWN });
 }
 
 const HANDLERS = {

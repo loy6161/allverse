@@ -368,6 +368,10 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
         case 'loadsim':
           if (h.onLoadSim) h.onLoadSim(msg);
           break;
+        // 測定中の仮想ユーザーの位置（測定した本人にだけ届く）
+        case 'loadsim-av':
+          if (h.onLoadSimAvatars) h.onLoadSimAvatars(msg.a || []);
+          break;
         case 'playback':
           if (h.onPlayback) h.onPlayback({ st: msg.st, pos: msg.pos });
           break;
