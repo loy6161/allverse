@@ -66,6 +66,27 @@ export function saveLocalPrefs({ config }) {
 }
 
 /**
+ * サーバーの記録を使うか、この端末の保存を使うかの判断（2026-08-06追加）。
+ *
+ * ★ 優先順位は **この端末 ＞ サーバー**。理由:
+ *   サーバーは**入場のたび**に保存されるので、端末の保存（決定を押した時刻）より
+ *   必ず数秒新しい。「新しい方を採る」で比べると**いつでもサーバーが勝つ**ため、
+ *   サーバーの記録が古い/違うと毎回そこへ戻される
+ *   （2026-08-04〜06 に「リセットされた」が3回続いた原因）。
+ *
+ * この端末に保存があれば二度と勝手に変わらない。無い端末（初めての機器・ブラウザ）
+ * では引き続きサーバーの記録を使うので、別端末への引き継ぎは効く。
+ *
+ * @param {{config?:object}|null} local loadLocalPrefs() の結果
+ * @returns {boolean} true ならサーバーの記録を使う
+ */
+export function shouldUseServerPrefs(local) {
+  if (!local || !local.config || typeof local.config !== 'object') return true;
+  // 中身が空（壊れた保存）なら、無いのと同じ扱いにする
+  return Object.keys(local.config).length === 0;
+}
+
+/**
  * サーバーに保存してある設定を取る（ログイン済みのときだけ）。
  * @param {string} idToken
  * @returns {Promise<{name?:string, config?:object, googleName?:string, role?:string}|null>}

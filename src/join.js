@@ -5,7 +5,7 @@ import { getVisitorId } from './visitorid.js';
 import { avToConfig } from './net.js';
 import { fetchConfig, getConfig, renderLoginButton, getIdToken, isSignedIn } from './login.js';
 import { APP_NAME, APP_TAGLINE } from './brand.js';
-import { loadLocalPrefs, saveLocalPrefs, fetchServerPrefs } from './prefs.js';
+import { loadLocalPrefs, saveLocalPrefs, fetchServerPrefs, shouldUseServerPrefs } from './prefs.js';
 import { UPDATES } from './updates.js';
 import {
   parseAccessories,
@@ -824,15 +824,19 @@ function buildCustomizeScreen({
         if (!p) return;
         const server = await fetchServerPrefs(getIdToken());
         if (!server) return;
-        // ★ サーバーの記録で上書きするのは、**この端末の保存より新しいときだけ**。
-        //   無条件に上書きしていたら、別の機会に別端末で保存した古い姿が
-        //   いま設定したばかりの姿を消してしまった
-        //   （2026-08-04 loyさん「ログインでアバター違うのになる」）。
-        //   この端末に保存が無ければ（＝別の端末で入った）そのまま採用する
-        const local = loadLocalPrefs();
-        const localAt = local ? local.savedAt || 0 : -1;
-        const serverIsNewer = localAt < 0 || (server.updatedAt || 0) > localAt;
-        if (server.config && serverIsNewer) {
+        // ★★ サーバーの記録を使うのは、**この端末に保存が無いときだけ**。
+        //
+        //   2026-08-04〜06 に「リセットされた」「違う姿になった」が3回続いた。
+        //   間に入れた「保存時刻が新しい方を採る」も効かなかった。理由は単純で、
+        //   **サーバー側は入場のたびに保存される**ので、端末の保存（決定を押した時刻）より
+        //   必ず数秒新しくなる。つまり時刻で比べる限り**いつでもサーバーが勝つ**＝
+        //   サーバーの記録が何かの理由で古い/違うと、毎回それに戻される。
+        //
+        //   優先順位を「この端末 ＞ サーバー」に固定する。
+        //   ・その端末で一度でも入っていれば、**二度と勝手に変わらない**（今回の要求）
+        //   ・保存が無い端末（初めての機器・ブラウザ）ではサーバーの記録を使うので、
+        //     別端末への引き継ぎも今までどおり効く
+        if (server.config && shouldUseServerPrefs(loadLocalPrefs())) {
           Object.assign(config, server.config);
           rebuildPreviewAvatar();
           refreshSelections();
@@ -855,8 +859,15 @@ function buildCustomizeScreen({
     // ここで渡すのは表示用の控えで、サーバーはこれを採用しない
     const name = nameInput.value.trim();
 
-    // 次回そのまま入れるように見た目をブラウザへ保存する
-    saveLocalPrefs({ config });
+    // 次回そのまま入れるように見た目をブラウザへ保存する。
+    //
+    // ⚠ ゲスト表示中（ログインしていない間）は、`config` の中身が
+    //   **サーバーが匿名IDから決めたゲストの姿**に差し替わっている（applyGuestLock）。
+    //   そのまま保存すると、本人が選んだ姿がゲストの姿で上書きされ、
+    //   次に来たとき「リセットされた」ように見える。
+    //   ログインが間に合わないうちに決定を押すと起きる（2026-08-06 リセット報告の原因候補）。
+    //   控えが残っているときは**控えの方**を保存する
+    saveLocalPrefs({ config: guestPreviewBackup || config });
 
     closeScreen();
     onSubmit({
