@@ -384,7 +384,9 @@ export function initAdminUI({
     const perIn = document.createElement('input');
     perIn.type = 'number';
     perIn.min = '1';
-    perIn.max = '60';
+    // ⚠ 1ルームの上限は付けない（2026-08-06 loyさん「1ルームの上限決めないで。
+    //   それもテストしたいから」）。無茶な値でもサーバーは固まらない（時間で打ち切る）
+    perIn.max = '20000';
     perIn.value = String(simState.perRoom || 15);
     perIn.className = 'vc-adm-input';
     perIn.style.maxWidth = '90px';
@@ -424,8 +426,10 @@ export function initAdminUI({
     const note5 = document.createElement('div');
     note5.className = 'vc-adm-note';
     note5.textContent =
-      '見るのは「遅れ」です。10msを超え始めたら、サーバーが追いつけていません'
-      + '（本物のユーザーの位置も遅れ始めます）。1ルームの人数を減らすと軽くなります。';
+      '見るのは「遅れ」と「捌けなかった通数」です。遅れが10msを超える、または'
+      + '捌けなかった通数が出たら、その設定はもう無理という意味です。'
+      + '1ルームの人数には上限を付けていません（1ルーム1万人なども試せます）。'
+      + '通数は1ルームの人数の2乗で増えるので、まずそこを動かしてみてください。';
     sec3.appendChild(note5);
 
     body.appendChild(sec3);
@@ -456,11 +460,17 @@ export function initAdminUI({
         //   ① 遅れ（このサーバーが実際に詰まっているか）
         //   ② 通数（実接続で測った限界 13万通/秒 に対してどうか）
         const REAL_LIMIT = 130000;
-        const judge = r.lagAvgMs > 30 || r.msgsPerSec > REAL_LIMIT * 1.2
+        const judge = r.skippedPerSec > 0 || r.lagAvgMs > 30 || r.msgsPerSec > REAL_LIMIT * 1.2
           ? '✕ 実接続なら破綻する規模'
           : r.lagAvgMs > 10 || r.msgsPerSec > REAL_LIMIT * 0.7
             ? '△ そろそろ限界'
             : '◎ 余裕あり';
+        // 捌けなかったぶん（1ルームを大きくすると、まずここが出る）
+        const over = r.skippedPerSec > 0
+          ? `
+捌けなかった ${r.skippedPerSec.toLocaleString()}通/秒`
+            + `（本来 ${r.intendedPerSec.toLocaleString()}通/秒 必要）← この設定は無理`
+          : '';
         simState.text =
           `${judge}
 `
@@ -468,7 +478,7 @@ export function initAdminUI({
 `
           + `遅れ 平均${r.lagAvgMs}ms／最大${r.lagWorstMs}ms
 `
-          + `配信 ${r.msgsPerSec.toLocaleString()}通/秒（${r.mbPerSec}MB/秒）／実接続の限界は約130,000通/秒
+          + `配信 ${r.msgsPerSec.toLocaleString()}通/秒（${r.mbPerSec}MB/秒）／実接続の限界は約130,000通/秒${over}
 `
           + `処理に使った時間 ${r.busyMsPerSec}ms/秒（1000で限界）
 `

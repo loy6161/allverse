@@ -32,6 +32,18 @@ const AUTO_STOP_MS = 3 * 60 * 1000;
 const TICK_MS = 100;
 
 /**
+ * 1周期に使ってよい時間の上限（ms）。
+ *
+ * ⚠ これが無いとサーバーが固まる（2026-08-06 loyさん「1ルームの上限決めないで」）。
+ *   1ルームに1万人置くと 1周期あたり 1万 × 9,999 ＝ **約1億通**になり、
+ *   1周期が数十秒かかって、その間サーバーは何も応答できない
+ *   （自動停止の判定すら回らない）。
+ *   そこで**途中で打ち切り**、「捌けなかったぶん」を結果として出す。
+ *   捌けなかった量そのものが「この人数は無理」という答えになる。
+ */
+const TICK_BUDGET_MS = 60;
+
+/**
  * 受け取り口の代わり。**本物と同じように JSON を組み立てて**、
  * 送った通数とバイト数だけ数える（ソケットに書き出す代わり）。
  */
@@ -71,10 +83,14 @@ export function createLoadSim({ onReport } = {}) {
   let sumLag = 0;
   let ticks = 0;
   let busyMs = 0; // 配信そのものに使った時間
+  let skipped = 0; // 時間切れで送れなかった通数
+  let intended = 0; // 本来送るはずだった通数
 
   function reset() {
     counters.msgs = 0;
     counters.bytes = 0;
+    skipped = 0;
+    intended = 0;
     worstLag = 0;
     sumLag = 0;
     ticks = 0;
@@ -90,24 +106,40 @@ export function createLoadSim({ onReport } = {}) {
     sumLag += Math.max(0, lag);
     ticks++;
 
+    // この周期で本来送るはずの通数（1ルームN人なら N×(N-1)）。
+    // ⚠ 「この周期ぶん」と「集計ぶん」を分けること。混ぜると
+    //   捌けなかった数が本来必要な数より大きくなる（2026-08-06 実際にそうなった）
+    let tickIntended = 0;
+    for (const [, members] of byRoom) tickIntended += members.length * (members.length - 1);
+    intended += tickIntended;
+
     const t0 = process.hrtime.bigint();
-    for (const [, members] of byRoom) {
+    const deadline = t0 + BigInt(TICK_BUDGET_MS * 1e6);
+    let over = false;
+    let sent = 0;
+    outer: for (const [, members] of byRoom) {
       for (const u of members) {
         // 少しずつ歩く（同じ値だと本物と違って圧縮が効いてしまう）
-        u.x = Math.sin((now / 1000 + u.id) * 0.7) * 8;
-        u.z = Math.cos((now / 1000 + u.id) * 0.5) * 8;
+        u.x = Math.sin((now / 1000 + u.n) * 0.7) * 8;
+        u.z = Math.cos((now / 1000 + u.n) * 0.5) * 8;
         u.r = (u.r + 3) % 360;
         // ★ 本物と同じ「1通ずつ JSON にして全員へ書く」形にする。
         //   ここを「1回だけ stringify して使い回す」と実装が変わってしまい、
         //   測っているものが本物と別物になる（server.js の send() は毎回 stringify する）
-        const members2 = members;
-        for (let i = 0; i < members2.length; i++) {
-          if (members2[i] === u) continue;
+        for (let i = 0; i < members.length; i++) {
+          if (members[i] === u) continue;
           sink.send(JSON.stringify({ t: 'pos', id: u.id, x: u.x, z: u.z, r: u.r, m: true }));
+          sent++;
+          // 1024通ごとに時間を見る（毎回見ると時計を読む費用の方が高くつく）
+          if ((sent & 1023) === 0 && process.hrtime.bigint() > deadline) {
+            over = true;
+            break outer;
+          }
         }
       }
     }
     busyMs += Number(process.hrtime.bigint() - t0) / 1e6;
+    if (over) skipped += Math.max(0, tickIntended - sent);
 
     if (stopAt && Date.now() > stopAt) stop('時間切れ（自動停止）');
   }
@@ -128,6 +160,9 @@ export function createLoadSim({ onReport } = {}) {
       lagWorstMs: worstLag,
       // 1秒のうち何msを配信に使っているか（1000に近いほど余裕がない）
       busyMsPerSec: Math.round(busyMs / secs),
+      // 時間内に捌けなかった通数（0でなければ、その設定は無理という答え）
+      skippedPerSec: Math.round(skipped / secs),
+      intendedPerSec: Math.round(intended / secs),
       memMB: Math.round(mem.rss / 1024 / 1024),
       elapsedSec: Math.round((Date.now() - startedAt) / 1000),
     };
@@ -143,12 +178,15 @@ export function createLoadSim({ onReport } = {}) {
   function start(n, sizeOfRoom = 15) {
     stop();
     const count = Math.max(0, Math.min(MAX_VIRTUAL, Math.trunc(Number(n) || 0)));
-    perRoom = Math.max(1, Math.min(60, Math.trunc(Number(sizeOfRoom) || 15)));
+    // ⚠ 1ルームの人数に上限は付けない（2026-08-06 loyさん「1ルームの上限決めないで。
+    //   それもテストしたいから」）。無茶な値を入れても固まらないよう、
+    //   1周期の時間を TICK_BUDGET_MS で打ち切り、捌けなかった量を結果に出す
+    perRoom = Math.max(1, Math.min(MAX_VIRTUAL, Math.trunc(Number(sizeOfRoom) || 15)));
     users = [];
     byRoom = new Map();
     for (let i = 0; i < count; i++) {
       const room = Math.floor(i / perRoom) + 1;
-      const u = { id: `v${i}`, room, x: 0, z: 0, r: 0 };
+      const u = { id: `v${i}`, n: i, room, x: 0, z: 0, r: 0 };
       users.push(u);
       if (!byRoom.has(room)) byRoom.set(room, []);
       byRoom.get(room).push(u);
