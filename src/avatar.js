@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createGlbAvatar } from './avatar_glb.js';
 import { HAIR_LENGTHS, HAIR_ARRANGES, BANGS } from './hair.js';
+import { STAFF_ONLY_ACCESSORIES } from './accessory.js';
 
 // ------------------------------------------------------------------
 // プリセット式・デフォルメちびキャラアバター
@@ -62,6 +63,16 @@ function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+/**
+ * ランダムに配ってよいアクセサリー（2026-08-07追加）。
+ *
+ * ⚠ 管理者・VIP専用のもの（前髪メッシュ）を**外す**。
+ *   外さないと **NPCが付けて歩く**（loyさん指摘「メッシュをNPCが使ってたよ？」）。
+ *   初めて来た人の入場画面の初期値にも出てしまい、「選べる」ように見える
+ *   （入場時にサーバーが剥がすので実害はないが、混乱のもと）
+ */
+const PICKABLE_ACCESSORIES = AVATAR_PARTS.accessories.filter((a) => !STAFF_ONLY_ACCESSORIES.has(a));
+
 export function randomConfig() {
   return {
     bodyColor: pick(AVATAR_PARTS.bodyColors),
@@ -69,7 +80,7 @@ export function randomConfig() {
     hairStyle: pick(AVATAR_PARTS.hairStyles),
     bangs: pick(AVATAR_PARTS.bangs),
     outfit: pick(AVATAR_PARTS.outfits),
-    accessory: pick(AVATAR_PARTS.accessories),
+    accessory: pick(PICKABLE_ACCESSORIES),
     hairColor: pick(AVATAR_PARTS.hairColors),
     shirtColor: pick(AVATAR_PARTS.shirtColors),
     eyeColor: pick(AVATAR_PARTS.eyeColors),
