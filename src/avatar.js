@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createGlbAvatar } from './avatar_glb.js';
 import { HAIR_LENGTHS, HAIR_ARRANGES, BANGS } from './hair.js';
 import { STAFF_ONLY_ACCESSORIES } from './accessory.js';
+import { STREAK_DEFAULT } from './hairfx.js';
 
 // ------------------------------------------------------------------
 // プリセット式・デフォルメちびキャラアバター
@@ -84,9 +85,22 @@ export function randomConfig() {
     hairColor: pick(AVATAR_PARTS.hairColors),
     shirtColor: pick(AVATAR_PARTS.shirtColors),
     eyeColor: pick(AVATAR_PARTS.eyeColors),
+    // 目の上（2026-08-07に選べるようになった）。ランダムにはしない。
+    // 上まで派手な色にすると遠目で「目」に見えなくなるため、既定は黒
+    eyeTopColor: AVATAR_PARTS.eyeColors[0],
+    // 左右で違う色にするか（VIP・管理者だけ）。既定は揃える
+    eyeSplit: false,
+    eyeColorR: '',
+    eyeTopColorR: '',
     penlightColor: pick(AVATAR_PARTS.penlightColors),
     // 前髪メッシュの色（既定は暗い髪色。アクセサリーを付けたときだけ使う）
     meshColor: AVATAR_PARTS.hairColors[0],
+    // 髪の飾り（運営専用）はランダムにしない。NPCや初期値に出さないため
+    streakCount: STREAK_DEFAULT.count,
+    streakPosition: STREAK_DEFAULT.position,
+    streakWidth: STREAK_DEFAULT.width,
+    hairGradColor: '',
+    hairInnerColor: '',
     height: 'mid',
     // ランダムにしない。VRChat側に合わせた既定（右）から始める
     handedness: 'right',

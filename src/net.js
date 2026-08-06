@@ -2,6 +2,7 @@ import { AVATAR_PARTS } from './avatar.js';
 import { getVisitorId } from './visitorid.js';
 import { formatAccessories } from './accessory.js';
 import { normalizeHair, legacyHairId } from './hair.js';
+import { STREAK_COUNTS, STREAK_POSITIONS, STREAK_WIDTHS, STREAK_DEFAULT } from './hairfx.js';
 
 // ------------------------------------------------------------------
 // アバターconfig（hex色形式） ⇔ av（プリセット番号形式）の相互変換
@@ -37,6 +38,17 @@ export function configToAv(config) {
   const ac = formatAccessories(cfg.accessory);
   // 前髪メッシュの色（2026-08-06追加）。髪のカラーパレットの番号で送る
   const mc = AVATAR_PARTS.hairColors.indexOf(cfg.meshColor);
+  // 目の色（2026-08-07に4つへ分割）。ec=左下（従来）／et=左上／ec2・et2=右目。
+  // es=左右を分けているか（VIP・管理者だけ）。分けていなければ右は左と同じ
+  // 髪の飾り（2026-08-07追加・運営専用）。
+  //   sn=本数 / sp=位置id / sw=太さid / hg=グラデ色 / hi=インナー色。
+  //   色は「0＝なし」にしたいので **番号+1** で送る（0のままだと黒と区別できない）
+  const hg = AVATAR_PARTS.hairColors.indexOf(cfg.hairGradColor);
+  const hi = AVATAR_PARTS.hairColors.indexOf(cfg.hairInnerColor);
+  const et = AVATAR_PARTS.eyeColors.indexOf(cfg.eyeTopColor);
+  const es = cfg.eyeSplit ? 1 : 0;
+  const ec2 = AVATAR_PARTS.eyeColors.indexOf(cfg.eyeColorR);
+  const et2 = AVATAR_PARTS.eyeColors.indexOf(cfg.eyeTopColorR);
   return {
     h,
     hl: hair.hairLength,
@@ -52,6 +64,15 @@ export function configToAv(config) {
     ht,
     hd,
     mc: mc >= 0 ? mc : 0,
+    sn: STREAK_COUNTS.includes(Number(cfg.streakCount)) ? Number(cfg.streakCount) : STREAK_DEFAULT.count,
+    sp: STREAK_POSITIONS.some((p) => p.id === cfg.streakPosition) ? cfg.streakPosition : STREAK_DEFAULT.position,
+    sw: STREAK_WIDTHS.some((w) => w.id === cfg.streakWidth) ? cfg.streakWidth : STREAK_DEFAULT.width,
+    hg: hg >= 0 ? hg + 1 : 0,
+    hi: hi >= 0 ? hi + 1 : 0,
+    et: et >= 0 ? et : 0,
+    es,
+    ec2: es && ec2 >= 0 ? ec2 : (ec >= 0 ? ec : 0),
+    et2: es && et2 >= 0 ? et2 : (et >= 0 ? et : 0),
   };
 }
 
@@ -76,6 +97,18 @@ export function avToConfig(av) {
   const handedness = a.hd === 'l' ? 'left' : 'right';
   const mcIdx =
     Number.isInteger(a.mc) && a.mc >= 0 && a.mc < AVATAR_PARTS.hairColors.length ? a.mc : 0;
+  // 目の色（2026-08-07に4つへ分割）。古い av には et/ec2/et2 が無いので、
+  // その場合は上＝黒（パレット0）・右＝左と同じに倒す＝**見た目は今までどおり**
+  const eyeIdx = (v, fallback) =>
+    (Number.isInteger(v) && v >= 0 && v < AVATAR_PARTS.eyeColors.length ? v : fallback);
+  // 髪の飾り（2026-08-07追加）。色は番号+1で来る（0＝なし）
+  const paletteOrNone = (v) =>
+    (Number.isInteger(v) && v >= 1 && v <= AVATAR_PARTS.hairColors.length
+      ? AVATAR_PARTS.hairColors[v - 1] : '');
+  const etIdx = eyeIdx(a.et, 0);
+  const eyeSplit = Boolean(a.es);
+  const ec2Idx = eyeSplit ? eyeIdx(a.ec2, ecIdx) : ecIdx;
+  const et2Idx = eyeSplit ? eyeIdx(a.et2, etIdx) : etIdx;
   return {
     height,
     handedness,
@@ -88,6 +121,15 @@ export function avToConfig(av) {
     eyeColor: AVATAR_PARTS.eyeColors[ecIdx],
     penlightColor: AVATAR_PARTS.penlightColors[plIdx],
     meshColor: AVATAR_PARTS.hairColors[mcIdx],
+    streakCount: STREAK_COUNTS.includes(Number(a.sn)) ? Number(a.sn) : STREAK_DEFAULT.count,
+    streakPosition: STREAK_POSITIONS.some((p) => p.id === a.sp) ? a.sp : STREAK_DEFAULT.position,
+    streakWidth: STREAK_WIDTHS.some((w) => w.id === a.sw) ? a.sw : STREAK_DEFAULT.width,
+    hairGradColor: paletteOrNone(a.hg),
+    hairInnerColor: paletteOrNone(a.hi),
+    eyeTopColor: AVATAR_PARTS.eyeColors[etIdx],
+    eyeSplit,
+    eyeColorR: AVATAR_PARTS.eyeColors[ec2Idx],
+    eyeTopColorR: AVATAR_PARTS.eyeColors[et2Idx],
   };
 }
 

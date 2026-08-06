@@ -77,7 +77,8 @@ import { emoteFromText, MAX_REPEAT } from './chatemote.js';
 // 別々に持つと片方だけ直したときに姿がズレるので、1本のファイルを共有する
 import { guestLookFor } from '../src/guestlook.js';
 // アクセサリーの複数付け（2026-08-04）。判定はクライアントと同じ1本を読む
-import { formatAccessories, stripStaffOnly } from '../src/accessory.js';
+import { formatAccessories } from '../src/accessory.js';
+import { sanitizeStaffAv } from '../src/staffonly.js';
 import {
   verifyIdToken,
   roleForEmail,
@@ -788,12 +789,10 @@ function validCoord(value) {
  */
 function sanitizeAv(av, role = 'user') {
   if (!av || typeof av !== 'object' || Array.isArray(av)) return {};
-  if (typeof av.ac === 'string') {
-    // ⚠ 管理者・VIP専用のアクセサリー（前髪メッシュ）は権限で落とす（2026-08-06追加）。
-    //   画面で隠すだけでは、細工した通信で付けられてしまう
-    return { ...av, ac: stripStaffOnly(av.ac, role) };
-  }
-  return av;
+  // ⚠ 管理者・VIP専用のもの（前髪メッシュ・左右で違う目の色）は権限で落とす。
+  //   画面で隠すだけでは、細工した通信で使われてしまう。
+  //   何が運営専用かは src/staffonly.js が原本（クライアントと同じものを読む）
+  return sanitizeStaffAv(av, role);
 }
 
 /** JSON文字列として安全にwsへ送信する（送信失敗は無視） */

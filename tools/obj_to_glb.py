@@ -36,7 +36,9 @@ MAT_BY_GROUP = {
     'armR': 'MatSkin',
     'legL': 'MatDark',
     'legR': 'MatDark',
-    'eye': 'MatEye',
+    'eye': 'MatEye',       # 本人の左目・上（黒っぽい側）
+    'eyeR': 'MatEyeR',     # 本人の右目・上（2026-08-07 左右分割）
+    'eyecR': 'MatEyeCR',   # 本人の右目・下（2026-08-07 左右分割）
     'eyec': 'MatEyeC',
     'eyew': 'MatEyeGlint',
     'cheek': 'MatCheek',
