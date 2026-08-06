@@ -1,11 +1,26 @@
 // ============================================================
-// 巨大エリアの実験ワールド（2026-08-06追加）— `?world=open` で開く
+// CITY — clubVERSE のまわりに広がる街（2026-08-06追加）
+//
+// ⚠ 名前は「CITY」。最初 OPEN と呼んでいたが、loyさん「『OPEN』だとわかりにくいから
+//   『CITY』で。」で改名した（`?world=city`／イベント設定の「ワールド」）。
+//
+// ⚠ この街の中身は**仮**。loyさん:
+//   > 実際に、clubVERSEの外や、もう１つANDERVERSEというライブハウスやマンションなどは
+//   > VRCでは存在してて、clubVERSEの様に移植予定なのでいまはそれのテストとして
+//   > 仮でやるだけ
+//   なので建物は箱で置いてある。VRCから移植したモデルに差し替える前提で、
+//   「区画に何を置くか」だけ差し替えれば済む形にしてある（buildTile）。
 //
 // loyさんの狙い（本人の言葉）:
 //   > VRCは巨大なエリアは重くなるし、分割したら別ワールドになってワールド移動に
 //   > なるから、それがブラウザならシームレスに移動できるってメリットがあると思う。
 //   > 実質オープンワールドでも負荷にならずに巨大なエリアを作れる。その実験。
 //   > VRCのALLVERSEが20平方キロメートルあっても稼働してる。
+//
+// ★ clubVERSE と地続き
+//   街の**中央の区画には何も建てない**。そこに clubVERSE（world_club.js）が建っている。
+//   座標系は共通なので、会場の入り口を出るとそのまま街路に出る。
+//   **テレポートも読み込み画面も無い**（そこがVRCとの違いなので、境目を作らないこと）。
 //
 // ★ 何を示す実験か
 //   「**総面積をいくら増やしても、1フレームの負担は増えない**」こと。
@@ -68,10 +83,11 @@ const NEON_COLORS = [0x00ffea, 0xff00e5, 0x6ff2ff, 0xffd147];
  * 巨大エリアを作る。clubVERSE と同じ形の値を返すので、操作まわりはそのまま使える。
  * @param {THREE.Scene} scene
  */
-export function createOpenWorld(scene) {
-  scene.background = new THREE.Color(0x05070f);
-  // 霧。遠くを溶かして「描いていないタイルの向こう」を見せない
-  scene.fog = new THREE.Fog(0x05070f, VIEW_DIST * 0.45, VIEW_DIST);
+export function createCityLayer(scene, { hole } = {}) {
+  // ⚠ 背景と霧は clubVERSE が持っているものを壊さない。
+  //   街は clubVERSE の**まわりに足すだけ**なので、遠景を溶かす霧だけ入れる。
+  //   （霧の色は夜空と同じ。ここを変えると会場の中まで色が変わる）
+  if (!scene.fog) scene.fog = new THREE.Fog(0x05070f, VIEW_DIST * 0.45, VIEW_DIST);
 
   const root = new THREE.Group();
   scene.add(root);
@@ -118,6 +134,14 @@ export function createOpenWorld(scene) {
 
   const key = (ix, iz) => `${ix},${iz}`;
   const half = (GRID - 1) / 2;
+  /**
+   * その区画を建てるか。
+   * ★ **中央の区画には何も建てない**。そこに clubVERSE が建っているため
+   *   （hole で「何区画ぶん空けるか」を渡す）。ここを埋めると会場に街がめり込む。
+   */
+  const HOLE = hole || { minIx: 0, maxIx: 0, minIz: 0, maxIz: 0 };
+  const inHole = (ix, iz) =>
+    ix >= HOLE.minIx && ix <= HOLE.maxIx && iz >= HOLE.minIz && iz <= HOLE.maxIz;
   const inGrid = (ix, iz) => Math.abs(ix) <= half && Math.abs(iz) <= half;
 
   /** そのタイルの中身を組み立てる（座標から決まるので毎回同じ形になる） */
@@ -131,8 +155,9 @@ export function createOpenWorld(scene) {
     parts.push(piece(PLANE, 0x161b2b, [0, 0.02, 0], [TILE, roadW, 1], -Math.PI / 2));
     parts.push(piece(PLANE, 0x161b2b, [0, 0.02, 0], [roadW, TILE, 1], -Math.PI / 2));
 
-    // 建物。1区画あたり 6〜11 棟
-    const count = 6 + Math.floor(hash01(ix, iz, 1) * 6);
+    // 建物。1区画あたり 6〜11 棟。
+    // ★ 会場のある区画には建てない（地面と道だけ残す＝会場のまわりが広場になる）
+    const count = inHole(ix, iz) ? 0 : 6 + Math.floor(hash01(ix, iz, 1) * 6);
     for (let i = 0; i < count; i++) {
       const rx = hash01(ix, iz, 10 + i);
       const rz = hash01(ix, iz, 40 + i);
@@ -204,20 +229,22 @@ export function createOpenWorld(scene) {
   }
 
   return {
-    kind: 'open',
-    /** 歩ける範囲＝エリア全体。タイルの切れ目に壁は無い（シームレス） */
+    kind: 'city',
+    /** 歩ける範囲＝街ぜんぶ。区画の切れ目に壁は無い（シームレス） */
     bounds: { minX: -HALF_WORLD, maxX: HALF_WORLD, minZ: -HALF_WORLD, maxZ: HALF_WORLD },
-    spawnPoint: new THREE.Vector3(0, 0, 0),
-    // スクリーンはこのワールドには無いが、screen.js が参照するので形だけ揃える
-    screen: { x: 0, y: 5.4, z: -18.95, width: 14, height: 7 },
+    /** 街から入るときの立ち位置（会場の入り口の外・南の大通り） */
+    spawnPoint: new THREE.Vector3(4.5, 0, 40),
     groundYAt: () => 0,
     canStandAt: () => true,
-    isLoaded: () => true,
-    ready: Promise.resolve(),
-    error: () => '',
     /** 毎フレーム呼ぶ（main.js の loop から）。プレイヤーの位置を渡す */
     update(dt, t, playerX = 0, playerZ = 0) {
       updateStreaming(playerX, playerZ);
+    },
+    /** 会場の敷地（区画を空けてある範囲）の中か */
+    isInVenue(x, z) {
+      const ix = Math.round(x / TILE);
+      const iz = Math.round(z / TILE);
+      return inHole(ix, iz);
     },
     /** 実験の記録に使う数字 */
     debugInfo() {

@@ -190,6 +190,14 @@ const MAX_EVENT_NAME_LEN = 24;
 const EVENT_ID_RE = /^[a-z0-9_-]{1,24}$/;
 const MAX_EVENT_CODE_LEN = 24;                // 合言葉の最大文字数
 const DEFAULT_CAPACITY = 30;                  // 1ルームの既定キャパ
+/**
+ * イベントで使えるワールド（2026-08-06追加）。
+ * loyさん「イベント設定でどれにするかを選べるといいね」。
+ *   club … clubVERSE だけ
+ *   city … clubVERSE ＋ まわりの街（CITY）。地続きで歩いて出入りできる
+ */
+const WORLD_KINDS = new Set(['club', 'city']);
+
 const MIN_CAPACITY = 1;
 // 1ルームの定員の上限。
 // ⚠ 60 → 20000（2026-08-06 loyさん「定員60の上限を外して」）。
@@ -498,6 +506,7 @@ function makeEvent({
   noticeText = '',
   callList = '',
   brightness = 'normal',
+  world = 'club',
   stageAccess = false,
 }) {
   return {
@@ -524,6 +533,9 @@ function makeEvent({
     // 会場の明るさ（2026-08-04追加・loyさん要望）。運営が決めて全員に反映される。
     // 既定の 'normal' はこれまでの見た目そのまま（既存イベントの絵が変わらない）
     brightness: BRIGHTNESS_LEVELS.has(brightness) ? brightness : 'normal',
+    // 使うワールド（2026-08-06追加）。'club' … clubVERSEだけ／'city' … 街つき。
+    // 街は clubVERSE のまわりに足す層なので、'city' でも会場はそのまま入っている
+    world: WORLD_KINDS.has(world) ? world : 'club',
     // ステージに上がれるか（2026-08-04追加・テストユーザー要望）。
     // ONにしても上がれるのは管理者とVIPだけ。既定はOFF（普段は誰も上がらない）
     stageAccess: Boolean(stageAccess),
@@ -604,6 +616,8 @@ function toEventInfo(ev) {
     callList: ev.callList,
     // 会場の明るさ。全員の画面に効く（2026-08-04追加）
     brightness: ev.brightness,
+    // 使うワールド（'club' / 'city'）。全員の画面に効く
+    world: ev.world,
     // ステージに上がれるか。ONでも上がれるのは管理者・VIPだけ（2026-08-04追加）
     stageAccess: ev.stageAccess,
   };
@@ -1345,6 +1359,10 @@ async function handleEventUpdate(client, msg) {
     ev.chatMode = msg.chatMode;
   }
   // 会場の明るさ。知らない値は無視する（既定に戻して驚かせない）
+  if (typeof msg.world === 'string' && WORLD_KINDS.has(msg.world)) {
+    ev.world = msg.world;
+    changed = true;
+  }
   if (typeof msg.brightness === 'string' && BRIGHTNESS_LEVELS.has(msg.brightness)) {
     ev.brightness = msg.brightness;
   }

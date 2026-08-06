@@ -180,6 +180,8 @@ export async function openPlacePicker({ onDecide, onBack }) {
   // 入るルームは必ず明示的に選ばせる（「おまかせ」は 2026-07-30 に廃止）。
   // 既定は「空きのある一番小さい番号」で、画面を開いた時点で選択済みの状態にする
   let selectedRoom = null;
+  /** 入場する場所（CITYのイベントのときだけ選べる。既定は会場の中） */
+  let spawnAt = 'club';
   // 合言葉つきイベント用。イベントごとに覚えておく（選び直しても消えないように）
   const codeByEvent = new Map();
 
@@ -354,6 +356,31 @@ export async function openPlacePicker({ onDecide, onBack }) {
     }
 
     if (canEnter) {
+      // ---- ジョイン地点（2026-08-06追加）----
+      // loyさん「結局繋がるわけだけどジョイン地点として選べるといい」
+      // CITY のイベントだけ、会場の中と街のどちらから始めるかを選べる
+      const evNow = events.find((e) => e.id === selectedEventId);
+      if (evNow && evNow.world === 'city') {
+        const spawnRow = document.createElement('div');
+        spawnRow.className = 'vc-place-rooms';
+        const label = document.createElement('div');
+        label.className = 'vc-place-sub';
+        label.textContent = '入場する場所';
+        spawnRow.appendChild(label);
+        for (const [value, text] of [['club', 'clubVERSE の中'], ['city', '街（会場の外）']]) {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'vc-place-chip' + (spawnAt === value ? ' selected' : '');
+          chip.textContent = text;
+          chip.addEventListener('click', () => {
+            spawnAt = value;
+            render();
+          });
+          spawnRow.appendChild(chip);
+        }
+        frag.appendChild(spawnRow);
+      }
+
       const go = document.createElement('button');
       go.type = 'button';
       go.className = 'vc-place-go';
@@ -366,6 +393,8 @@ export async function openPlacePicker({ onDecide, onBack }) {
           eventId: selectedEventId,
           roomNumber: selectedRoom,
           entryCode: codeByEvent.get(selectedEventId) || '',
+          // 'club'（会場の中）/ 'city'（街）。CITY のイベントでだけ選べる
+          spawnAt,
         });
       });
       btns.appendChild(go);

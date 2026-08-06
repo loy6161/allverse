@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createWorld } from './world.js';
-import { createOpenWorld } from './world_open.js';
+import { createCityLayer } from './world_city.js';
 import { createCrowd } from './crowd.js';
 import { createClubWorld } from './world_club.js';
 import { createAvatar } from './avatar.js';
@@ -36,7 +36,7 @@ import { initSelfView, getReflection, getBloom } from './selfview.js';
 import { createBloom } from './bloom.js';
 import { initFpsMeter, getFpsMeter } from './fpsmeter.js';
 import { createLowPower } from './lowpower.js';
-import { createLounge, isInLounge, atClubExit } from './world_lounge.js';
+import { createLounge } from './world_lounge.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
@@ -61,23 +61,48 @@ const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerH
 camera.position.set(0, 6, 14);
 camera.lookAt(0, 1, 0);
 
-// 会場の切り替え。既定はVRChatから持ってきた clubVERSE。
-//   ?world=mock … 仮ワールド（見比べ用に残してある）
-//   ?world=open … 巨大エリアの実験（2026-08-06追加・world_open.js の説明を参照）
+// 会場。既定はVRChatから持ってきた clubVERSE（?world=mock で仮ワールド）。
+//
+// ★ CITY は**別のワールドではなく、clubVERSE のまわりに足す層**（2026-08-06）。
+//   座標系が共通なので、会場の入り口を出るとそのまま街路に出る。
+//   有効になるのは「イベント設定でCITYを選んだとき」か `?world=city` のとき。
 const WORLD_PARAM = new URLSearchParams(location.search).get('world');
-const WORLD_KIND = WORLD_PARAM === 'mock' || WORLD_PARAM === 'open' ? WORLD_PARAM : 'club';
+const WORLD_KIND = WORLD_PARAM === 'mock' ? 'mock' : 'club';
 const world =
   WORLD_KIND === 'club'
     ? createClubWorld(scene, { renderer })
-    : WORLD_KIND === 'open'
-      ? createOpenWorld(scene)
-      : createWorld(scene, { lowSpec: IS_TOUCH }); // タッチ端末は負荷を抑えた構成
+    : createWorld(scene, { lowSpec: IS_TOUCH }); // タッチ端末は負荷を抑えた構成
 
-// 別会場（ラウンジ）のサンプル（2026-08-06追加・loyさん「入り口出ると別会場に移動」）。
-// ⚠ ワールドを差し替えるのではなく、**同じシーンの遠く**に建てて歩いて移動する。
-//   差し替えると同じ部屋にいる人どうしが見えなくなるため（world_lounge.js の説明）。
-//   clubVERSE のときだけ。仮ワールドでは出さない
+/**
+ * clubVERSE の敷地。ここの中では会場に足元の高さを聞き、外は街（平ら）とみなす。
+ * 会場の実寸（x -13〜25／z -30〜23）に少し余裕を持たせた範囲。
+ */
+const CLUB_AREA = { minX: -45, maxX: 55, minZ: -50, maxZ: 40 };
+const inClubArea = (x, z) =>
+  x >= CLUB_AREA.minX && x <= CLUB_AREA.maxX && z >= CLUB_AREA.minZ && z <= CLUB_AREA.maxZ;
+
+/** 街（CITY）。要るときだけ作る。中央の区画には建てない（そこに会場がある） */
+let city = null;
+function ensureCity() {
+  if (city || WORLD_KIND !== 'club') return city;
+  city = createCityLayer(scene, { hole: { minIx: 0, maxIx: 0, minIz: 0, maxIz: 0 } });
+  if (controls) controls.setBounds(city.bounds);
+  return city;
+}
+/** 街を出す/しまう（イベント設定の「ワールド」で切り替わる） */
+function applyWorldKind(kind) {
+  if (kind === 'city') {
+    ensureCity();
+  } else if (city) {
+    // 街をやめたら会場の範囲に戻す（造形は残るが、外へは歩けなくなる）
+    if (controls) controls.setBounds(world.bounds);
+  }
+}
+
+// ラウンジ。街（CITY）の広場にある建物のひとつ（2026-08-06に置き直した）。
+// ⚠ テレポートは廃止。歩いて出入りする（世界がひと続きになったため）
 const lounge = WORLD_KIND === 'club' ? createLounge(scene) : null;
+if (lounge) lounge.setVisible(true);
 
 // 背景色はキャンバスではなくページ側で持つ（キャンバスを透過させるため）。
 // 見た目は変わらないが、スクリーン面の穴から背後のiframeが見えるようになる。
@@ -514,6 +539,9 @@ function applyEventSettings(ev) {
   // 会場の明るさ（2026-08-04追加）。運営が決めた値が全員に効く。
   // 途中で変えられたときもここを通るので、その場で明るさが変わる
   if (world && world.setBrightness) world.setBrightness(ev.brightness || 'normal');
+  // 使うワールド（2026-08-06追加）。CITY なら会場のまわりに街を足す。
+  // ⚠ URLで ?world=city を指定したときは、イベント設定より優先する（試すため）
+  applyWorldKind(WORLD_PARAM === 'city' ? 'city' : ev.world || 'club');
   // ステージに上がれるか（2026-08-04追加）。イベント設定がONで、
   // かつ自分が管理者かVIPのときだけ。どちらか欠けたら上がれない
   applyStageAccess();
@@ -547,8 +575,8 @@ function startDemoMode() {
 function startEntryFlow(prev = {}) {
   initJoinScreen((picked) => {
     openPlacePicker({
-      onDecide: ({ eventId, roomNumber, entryCode }) => {
-        enterWorld({ ...picked, eventId, roomNumber, entryCode });
+      onDecide: ({ eventId, roomNumber, entryCode, spawnAt }) => {
+        enterWorld({ ...picked, eventId, roomNumber, entryCode, spawnAt });
       },
       // 「← アバター」で1歩目に戻る（選んだ見た目と名前は保つ）
       onBack: () => startEntryFlow({ name: picked.name, config: picked.config }),
@@ -557,7 +585,7 @@ function startEntryFlow(prev = {}) {
 }
 startEntryFlow();
 
-function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
+function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spawnAt }) {
   // 入場ボタンのクリック（ユーザー操作）を起点にライブ再生を開始する
   liveScreen.play();
 
@@ -565,7 +593,13 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   session.config = { ...config };
 
   player = createAvatar({ ...config, name });
-  player.position.copy(world.spawnPoint);
+  // 入場する場所（2026-08-06追加）。CITY のイベントでは街から始めることもできる
+  if (spawnAt === 'city') {
+    ensureCity();
+    player.position.copy(city ? city.spawnPoint : world.spawnPoint);
+  } else {
+    player.position.copy(world.spawnPoint);
+  }
   scene.add(player);
 
   controls = initControls(camera, player, renderer.domElement, {
@@ -574,11 +608,11 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     // その場合は登壇そのものが成立しない（従来どおり客席だけ）
     stage: world.stage,
     // 足元の高さ。clubVERSE は実際のモデルにレイを撃って拾う（矩形の近似ではない）
-    // ⚠ 会場が2つあるので、居る方に聞く（2026-08-06追加）
-    groundYAt: (x, z) => (lounge && isInLounge(x) ? lounge.groundYAt(x, z) : world.groundYAt(x, z)),
-    // 入り口側は縁が斜めなので、床があるかをワールドに聞いてから足を出す
-    canStandAt: (x, z) =>
-      (lounge && isInLounge(x) ? lounge.canStandAt(x, z) : world.canStandAt(x, z)),
+    // ⚠ 会場の敷地の中だけモデルに聞く。街は平らなので0でよい（2026-08-06）
+    groundYAt: (x, z) => (inClubArea(x, z) ? world.groundYAt(x, z) : 0),
+    // 入り口側は縁が斜めなので、床があるかをワールドに聞いてから足を出す。
+    // 街に出たあとはどこでも立てる
+    canStandAt: (x, z) => (inClubArea(x, z) ? world.canStandAt(x, z) : true),
     // シアター表示でカメラを寄せる先。ワールドごとにスクリーンの位置が違う
     screen: world.screen,
     // 自分は物理でジャンプするが、高さは誰にも送っていない（presence も x/z/向き だけ）。
@@ -1273,48 +1307,16 @@ const clock = new THREE.Clock();
 const prevPos = new THREE.Vector3();
 
 /**
- * 別会場（ラウンジ）への出入り（2026-08-06追加）。
+ * 街（CITY）の読み込み（2026-08-06）。
  *
- * loyさん「入り口出ると別会場に移動みたいなサンプルを作って」。
- * clubVERSE の入り口を出ると移動し、ラウンジの門をくぐると戻ってくる。
- * ⚠ サーバーから見ればどちらも同じ部屋なので、**位置の同期はそのまま効く**
- *   （ラウンジに居る人どうしもちゃんと見える）。
+ * ⚠ テレポートは無い。会場と街は同じ座標系で地続きなので、
+ *   プレイヤーの位置に合わせて**区画を出し入れするだけ**。
+ *   loyさん「結局繋がるわけだけど」の方針。
  */
-let inLounge = false;
-let venueCooldown = 0; // 移動直後に連続で反応しないための待ち時間（秒）
-
 function updateVenue(dt) {
-  if (!lounge || !player) return;
-  if (venueCooldown > 0) venueCooldown -= dt;
-
-  const { x, z } = player.position;
-  const nowInLounge = isInLounge(x);
-  // 遠くに居る間は丸ごと非表示（描画の負担を増やさない）
-  lounge.setVisible(nowInLounge);
-
-  if (venueCooldown > 0) return;
-
-  if (!nowInLounge && atClubExit(x, z)) {
-    // clubVERSE の入り口を出た → ラウンジへ
-    player.position.copy(lounge.spawnPoint);
-    controls.setBounds(lounge.bounds);
-    lounge.setVisible(true);
-    inLounge = true;
-    venueCooldown = 1;
-    if (chat) chat.addMessage('', 'ラウンジに移動しました（西の門から会場へ戻れます）', { system: true });
-  } else if (nowInLounge && lounge.atExit(x, z)) {
-    // ラウンジの門をくぐった → clubVERSE の入り口へ
-    player.position.set(CLUB_RETURN.x, 0, CLUB_RETURN.z);
-    controls.setBounds(world.bounds);
-    lounge.setVisible(false);
-    inLounge = false;
-    venueCooldown = 1;
-    if (chat) chat.addMessage('', 'clubVERSE に戻りました', { system: true });
-  }
+  if (!city || !player) return;
+  city.update(dt, 0, player.position.x, player.position.z);
 }
-
-/** ラウンジから戻ってきたときに立つ場所（入り口の階段の下・出口の判定より内側） */
-const CLUB_RETURN = { x: 9, z: 19 };
 
 function loop() {
   requestAnimationFrame(loop);
@@ -1387,12 +1389,13 @@ window.__vc = {
   bloom,
   // 軽くするための設定（2026-08-06追加）。効き目を数値で確かめるための入口
   lowPower,
-  // 別会場の出入り（2026-08-06追加）。描画が止まる環境でも手で1回進められる
+  // 街の読み込み（2026-08-06追加）。描画が止まる環境でも手で1回進められる
   updateVenue,
+  get city() { return city; },
+  ensureCity,
   // NPCの人数（2026-08-06追加）。負荷テストで一気に増やすときの入口
   applyNpcCount,
   get npcCount() { return npcCount(); },
-  get inLounge() { return inLounge; },
   get bloomOn() { return bloomOn; },
   set bloomOn(v) { bloomOn = Boolean(v); },
 };

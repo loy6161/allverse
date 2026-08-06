@@ -27,14 +27,14 @@ import * as THREE from 'three';
 import { createTextSprite } from './avatar.js';
 
 /**
- * ラウンジを建てる場所。clubVERSE（x=-13〜25）と重ならない離れた所。
+ * ラウンジを建てる場所。
  *
- * ⚠ **±100 を超えてはいけない**。サーバーは座標の絶対値が100を超える位置を
- *   捨てる（server.js の MAX_COORD_ABS）。最初 x=200 で作ったら、
- *   ラウンジに居る間だけ**他の人に位置が伝わらない**状態になっていた。
- *   x=70 なら部屋の端（±11）を入れても 59〜81 で収まる。
+ * ⚠ 2026-08-06 に **街（CITY）の広場の中**へ移した（x=70 → x=-62, z=26）。
+ *   それまでは遠くに別置きして門でテレポートしていたが、
+ *   loyさん「結局繋がるわけだけど」の方針で**歩いて行ける場所**に置き直した。
+ *   会場の南西、入り口を出て左手。テレポートは廃止。
  */
-export const LOUNGE_ORIGIN = new THREE.Vector3(70, 0, 0);
+export const LOUNGE_ORIGIN = new THREE.Vector3(-62, 0, 26);
 
 /** 部屋の広さ（原点からの半分の長さ） */
 const HALF_X = 11;

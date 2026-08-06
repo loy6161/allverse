@@ -331,6 +331,29 @@ export function initRoomUI({
     //   「いちばん明るい＋画面全体」のような説明は、選ぶ場では読まれない。
     // ⚠ **選んだ瞬間に反映する**（同 loyさん「プダウンセレクトしら即反映してほしい」）。
     //   保存を押すまで分からないと、見比べながら決められない。
+    // ---- 使うワールド（2026-08-06追加）----
+    // loyさん「イベント設定でどれにするかを選べるといいね」
+    const worldSel = field(box, 'ワールド', () => {
+      const sel = document.createElement('select');
+      sel.className = 'vc-room-input';
+      for (const [value, label] of [
+        ['club', 'clubVERSE だけ'],
+        ['city', 'CITY（clubVERSE ＋ まわりの街）'],
+      ]) {
+        const o = document.createElement('option');
+        o.value = value;
+        o.textContent = label;
+        sel.appendChild(o);
+      }
+      sel.value = ev.world || 'club';
+      sel.addEventListener('change', () => {
+        onUpdateEvent({ id: ev.id, world: sel.value });
+      });
+      return sel;
+    }, 'CITY を選ぶと、会場のまわりに街が広がります。会場の入り口を出るとそのまま街路に出られます'
+       + '（読み込み画面もテレポートもありません）。選ぶとすぐ全員の画面に反映されます。'
+       + '街の建物はいまは仮のものです。');
+
     const briSel = field(box, '会場の明るさ', () => {
       const s = document.createElement('select');
       s.className = 'vc-room-input';
@@ -430,6 +453,7 @@ export function initRoomUI({
         chatMode: ytC.checked ? 'youtube' : 'local',
         callList: callSel.value,
         brightness: briSel.value,
+        world: worldSel.value,
         stageAccess: stgC.checked,
         // 空欄は自動（-1）。数値ならその値を全体の上限にする
         npcMax: npcRaw === '' ? -1 : Math.max(0, Math.min(100, Number(npcRaw) || 0)),

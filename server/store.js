@@ -98,6 +98,8 @@ export async function initStore() {
       // stage_access … ステージに上がれるか（2026-08-04追加）。
       //   ONにしても上がれるのは管理者・VIPだけ。既定はOFF
       `ALTER TABLE events ADD COLUMN stage_access INTEGER NOT NULL DEFAULT 0`,
+      // world … 使うワールド 'club'（clubVERSEだけ）/'city'（まわりの街つき）。2026-08-06追加
+      `ALTER TABLE events ADD COLUMN world TEXT NOT NULL DEFAULT 'club'`,
     ]) {
       try {
         await db.execute(ddl);
@@ -300,7 +302,7 @@ export async function loadEvents() {
     const rs = await db.execute(
       `SELECT id, name, video_id, require_login, entry_code, capacity, vrc_bridge, created_at,
               owner_email, npc_max, chat_mode, notice_level, notice_text, call_list, brightness,
-              stage_access
+              stage_access, world
          FROM events`,
     );
     return rs.rows.map((r) => ({
@@ -320,6 +322,7 @@ export async function loadEvents() {
       callList: r.call_list == null ? '' : String(r.call_list),
       brightness: r.brightness == null ? 'normal' : String(r.brightness),
       stageAccess: Number(r.stage_access) === 1,
+      world: r.world == null ? 'club' : String(r.world),
     }));
   } catch (e) {
     console.warn('[store] イベント読み込みに失敗:', e.message);
@@ -334,8 +337,8 @@ export async function saveEvent(ev) {
     await db.execute({
       sql: `INSERT INTO events (id, name, video_id, require_login, entry_code, capacity, vrc_bridge, created_at,
                                 owner_email, npc_max, chat_mode, notice_level, notice_text, call_list,
-                                brightness, stage_access)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                brightness, stage_access, world)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               name = excluded.name,
               video_id = excluded.video_id,
@@ -350,7 +353,8 @@ export async function saveEvent(ev) {
               notice_text = excluded.notice_text,
               call_list = excluded.call_list,
               brightness = excluded.brightness,
-              stage_access = excluded.stage_access`,
+              stage_access = excluded.stage_access,
+              world = excluded.world`,
       args: [
         ev.id,
         ev.name,
@@ -368,6 +372,7 @@ export async function saveEvent(ev) {
         ev.callList || '',
         ev.brightness || 'normal',
         ev.stageAccess ? 1 : 0,
+        ev.world || 'club',
       ],
     });
     return true;
