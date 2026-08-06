@@ -44,11 +44,14 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true 
 renderer.setClearColor(0x000000, 0);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
-// タッチ端末（スマホ想定）では負荷軽減のため影を無効化
 const IS_TOUCH =
   'ontouchstart' in window || navigator.maxTouchPoints > 0 || location.search.includes('mobile=1');
-renderer.shadowMap.enabled = !IS_TOUCH;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// ⚠ 影は使わない（2026-08-06 loyさん「影って普段ONなの？なんかこうかわからんからなくていいよ」）。
+//   調べたところ **clubVERSEの会場では最初から影が一つも出ていなかった**
+//   （ライト5つとも castShadow=false／影を落とすメッシュ 0個／受けるメッシュ 0個）。
+//   仕組みだけONで中身が空だったので、見えないのが正解だった。
+//   ここを false にしておけば、今後うっかり影付きのものを足しても勝手に重くならない
+renderer.shadowMap.enabled = false;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
@@ -89,10 +92,8 @@ let bloomOn = getBloom();
 //   描画の細かさ・影・ライトをまとめて落とす（lowpower.js の説明を参照）
 const lowPower = createLowPower({
   renderer,
-  scene,
   world,
   basePixelRatio: Math.min(window.devicePixelRatio, 2),
-  baseShadow: !IS_TOUCH,
   onResize: () => {
     if (bloom) bloom.setSize(window.innerWidth, window.innerHeight);
   },

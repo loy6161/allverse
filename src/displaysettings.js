@@ -47,7 +47,7 @@ export function renderDisplaySettings(
   const noteL = document.createElement('div');
   noteL.className = 'vc-help-note';
   noteL.textContent =
-    '画面の細かさを7割に落とし、影を消して、照明をひとつ減らします。少しぼやけますが、'
+    '画面の細かさを7割に落として、照明をひとつ減らします。少しぼやけますが、'
     + 'そのぶん動きがなめらかになります。パソコンのグラフィック機能を切っている場合'
     + '（VRに回しているときなど）は、こちらをONにしてください。'
     + 'この設定はこの端末にだけ保存されます。';

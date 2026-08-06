@@ -7,8 +7,8 @@
 // つまり**この会場はCPUで描かれる前提**で成立させる必要がある。
 // GPUのときと効き方が違い、効く順に:
 //   1. 塗る画素の数（いちばん効く）
-//   2. 影（実質もう1回描くのと同じ）
-//   3. ライトの数（1画素あたりの計算量に直結する）
+//   2. ライトの数（1画素あたりの計算量に直結する）
+//   ※ 影は元から出していないので落としようがない（main.js 参照）
 // 描画コールの数は（GPUのときほど）効かないので、アバターのメッシュ統合は後回しにした。
 //
 // 実測（1493x861・NPC29体・同じ画面）: GPUあり 2.83ms / loyさんの環境 42.8ms ＝ 約15倍。
@@ -19,7 +19,8 @@
 
 const STORE_KEY = 'vc-lowpower';
 
-/** 軽量モードのときの描画の細かさ。1.0の70%＝塗る画素はおよそ半分になる */
+/** 軽量モードのときの描画の細かさ。1.0の70%＝塗る画素はおよそ半分になる。
+ *  実測（loyさんの環境・NPC29体）: 1384x861 で 24fps → 968x602 で 43fps */
 const LOW_SCALE = 0.7;
 
 /** 軽量モードにするか。既定はOFF（見た目を落とすので、本人が選んだときだけ） */
@@ -48,12 +49,9 @@ export function setLowPowerPref(on) {
  * @param {import('three').Scene} p.scene
  * @param {object} p.world 会場（setLowPower を持っていれば呼ぶ）
  * @param {number} p.basePixelRatio ふだんの描画の細かさ
- * @param {boolean} p.baseShadow ふだん影を出しているか（スマホは元から出していない）
  * @param {() => void} [p.onResize] 描画の細かさが変わったときに大きさを配り直す相手
  */
-export function createLowPower({
-  renderer, scene, world, basePixelRatio, baseShadow, onResize,
-}) {
+export function createLowPower({ renderer, world, basePixelRatio, onResize }) {
   let on = false;
 
   function apply() {
@@ -62,19 +60,8 @@ export function createLowPower({
     renderer.setPixelRatio(on ? basePixelRatio * LOW_SCALE : basePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
 
-    // 2. 影を切る。
-    //    ⚠ three は影の有無で**シェーダーを作り直す**必要がある。
-    //      needsUpdate を立てないと、切り替えた瞬間に真っ黒になったり影が残ったりする
-    const wantShadow = baseShadow && !on;
-    if (renderer.shadowMap.enabled !== wantShadow) {
-      renderer.shadowMap.enabled = wantShadow;
-      scene.traverse((o) => {
-        if (!o.material) return;
-        for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true;
-      });
-    }
-
-    // 3. ライトを減らす（会場が持っている判断に任せる）
+    // 2. ライトを減らす（会場が持っている判断に任せる）
+    //    ※ 影の切り替えはここに無い。会場では最初から影を出していないため（main.js 参照）
     if (world && world.setLowPower) world.setLowPower(on);
 
     if (onResize) onResize();
