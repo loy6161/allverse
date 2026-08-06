@@ -368,7 +368,7 @@ export function initAdminUI({
       + 'お客さんの画面には何も起きません（1通も届きません）が、サーバーのCPUは本当に使うので、'
       + '本番中に大きな人数で回すと本物の動きが遅れます。3分で自動的に止まります。'
       + ' 「見せる」に人数を入れると、そのぶんだけ**自分の画面にだけ**アバターが出ます'
-      + '（お客さんには1体も出ません）。見た目と描画の重さをその場で確かめられます。最大300人。'
+      + '（お客さんには1体も出ません）。見た目と描画の重さをその場で確かめられます。最大5000人。'
       + ' ⚠ ここで測れるのは「配る内容を組み立てるまで」です。実際はこれに通信の書き出しが乗ります。'
       + '実際に接続して測った限界は約13万通/秒だったので、その数字と見比べてください。';
     sec3.appendChild(note4);
@@ -396,7 +396,7 @@ export function initAdminUI({
     const showIn = document.createElement('input');
     showIn.type = 'number';
     showIn.min = '0';
-    showIn.max = '300';
+    showIn.max = '5000';
     showIn.value = String(simState.show ?? 0);
     showIn.className = 'vc-adm-input';
     showIn.style.maxWidth = '90px';

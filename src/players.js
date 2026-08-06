@@ -193,7 +193,9 @@ export function initSimPlayers(scene, { count = 0, bounds }) {
    *   ここは手前の数十体だけを想定している（main.js の NPC_AVATAR_MAX）。
    */
   function setCount(n) {
-    const target = Math.max(0, Math.min(200, Math.floor(Number(n) || 0)));
+    // ⚠ 上限は付けない（2026-08-06 loyさん「負荷テストなのにセーフティーにして
+    //   どうするの？テストにならん」）。重くなる点は実際に出して見つける
+    const target = Math.max(0, Math.floor(Number(n) || 0));
     while (npcs.length < target) addOne();
     while (npcs.length > target) removeOne();
     return npcs.length;
