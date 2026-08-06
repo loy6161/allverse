@@ -33,6 +33,7 @@ import { initExitButton } from './exitbtn.js';
 import { initSelfView, getReflection, getBloom } from './selfview.js';
 import { createBloom } from './bloom.js';
 import { initFpsMeter, getFpsMeter } from './fpsmeter.js';
+import { createLowPower, getLowPower } from './lowpower.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
@@ -82,6 +83,21 @@ if (WORLD_KIND === 'club') {
 //   代わりに描き先側でMSAAを持つ。負荷が上がるぶん、タッチ端末では諦める）
 const bloom = WORLD_KIND === 'club' ? createBloom(renderer, { samples: IS_TOUCH ? 0 : 2 }) : null;
 let bloomOn = getBloom();
+
+// 軽量モード（2026-08-06追加）。
+// ⚠ loyさんの環境はGPUを使わない設定（VRChat優先）なので、CPU描画でも成立させる必要がある。
+//   描画の細かさ・影・ライトをまとめて落とす（lowpower.js の説明を参照）
+const lowPower = createLowPower({
+  renderer,
+  scene,
+  world,
+  basePixelRatio: Math.min(window.devicePixelRatio, 2),
+  baseShadow: !IS_TOUCH,
+  onResize: () => {
+    if (bloom) bloom.setSize(window.innerWidth, window.innerHeight);
+  },
+});
+lowPower.setEnabled(getLowPower());
 
 // fps表示（2026-08-04追加・管理者/VIP用）。既定はOFF。
 // 何を切れば軽くなるかを本番中に判断できるよう、人数と重い機能の状態も一緒に出す
@@ -1096,6 +1112,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     // fps表示（2026-08-04追加）。運営が重さを見るための道具
     onFpsMeterChange: (on) => {
       fpsMeter.setEnabled(on);
+    },
+    // 軽量モード（2026-08-06追加）。端末ごとの設定
+    onLowPowerChange: (on) => {
+      lowPower.setEnabled(on);
     },
   });
   // 前回「出す」にしていたら、権限があるあいだは出したままにする

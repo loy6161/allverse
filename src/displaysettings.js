@@ -17,6 +17,7 @@ import {
   getSelfView, setSelfView, getReflection, setReflectionPref, getBloom, setBloomPref,
 } from './selfview.js';
 import { getFpsMeter, setFpsMeter } from './fpsmeter.js';
+import { getLowPower, setLowPowerPref } from './lowpower.js';
 
 /**
  * 表示のせっていを描く。
@@ -27,10 +28,54 @@ export function renderDisplaySettings(
   body,
   {
     onEmotePrefsChange, onChatEmoteChange, onSelfViewChange, onReflectionChange, onBloomChange,
-    onFpsMeterChange, showFpsMeter = false,
+    onFpsMeterChange, showFpsMeter = false, onLowPowerChange,
   } = {},
 ) {
   body.innerHTML = '';
+
+  // ---- 軽量モード（2026-08-06追加） ----
+  // loyさん「ハードウェア アクセラレーションONにはしないよ。
+  //          VRやってるときにGPUはVRに回すためにそうしてる」
+  // GPUを使わない設定のブラウザでも動くように、まとめて画質を落とすスイッチ。
+  // 一番上に置く（重くて困っている人が最初に見つけられる場所）
+  const boxL = document.createElement('div');
+  boxL.className = 'vc-help-box';
+  const hL = document.createElement('div');
+  hL.className = 'vc-help-h';
+  hL.textContent = '軽くする（動きがカクつくとき）';
+  boxL.appendChild(hL);
+  const noteL = document.createElement('div');
+  noteL.className = 'vc-help-note';
+  noteL.textContent =
+    '画面の細かさを7割に落とし、影を消して、照明をひとつ減らします。少しぼやけますが、'
+    + 'そのぶん動きがなめらかになります。パソコンのグラフィック機能を切っている場合'
+    + '（VRに回しているときなど）は、こちらをONにしてください。'
+    + 'この設定はこの端末にだけ保存されます。';
+  boxL.appendChild(noteL);
+  const rowL = document.createElement('div');
+  rowL.className = 'vc-help-choices';
+  let curLow = getLowPower();
+  const lowBtns = [];
+  function paintLow() {
+    for (const b of lowBtns) b.classList.toggle('active', (b.dataset.v === 'on') === curLow);
+  }
+  for (const [v, label] of [['on', '軽くする'], ['off', 'きれいに出す']]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'vc-help-choice';
+    b.dataset.v = v;
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      curLow = setLowPowerPref(v === 'on');
+      paintLow();
+      if (onLowPowerChange) onLowPowerChange(curLow);
+    });
+    lowBtns.push(b);
+    rowL.appendChild(b);
+  }
+  paintLow();
+  boxL.appendChild(rowL);
+  body.appendChild(boxL);
 
   // ---- fps表示（2026-08-04追加・管理者/VIPだけ） ----
   // loyさん「fpsって管理者用に表示できない？」

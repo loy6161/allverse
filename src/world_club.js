@@ -810,6 +810,17 @@ export function createClubWorld(scene, { renderer } = {}) {
     setBrightness,
     /** 床の反射（アバターとエモートは映さない）。負荷が上がるので端末ごとに選ぶ */
     setReflection,
+    /**
+     * 軽量モードのときにライトを減らす（2026-08-06追加）。
+     *
+     * loyさんのChromeは**GPUを使わない設定**（VRChatにGPUを回すため）。
+     * CPUで描くときはライトの数がそのまま1画素あたりの計算量になるので、
+     * 見た目への影響がいちばん小さい「奥からの青い補助光」を消す。
+     * キーライト・環境光・ステージと床の照り返しは残す（消すと会場の印象が変わる）。
+     */
+    setLowPower(on) {
+      back.visible = !on;
+    },
     ready: loading,
     isLoaded: () => loaded,
     error: () => failed,
