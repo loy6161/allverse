@@ -4,6 +4,7 @@ import { guestLookFor } from './guestlook.js';
 import { getVisitorId } from './visitorid.js';
 import { avToConfig } from './net.js';
 import { normalizeHair } from './hair.js';
+import { STREAK_COUNTS, STREAK_POSITIONS, STREAK_WIDTHS } from './hairfx.js';
 import { fetchConfig, getConfig, renderLoginButton, getIdToken, isSignedIn } from './login.js';
 import { APP_NAME, APP_TAGLINE } from './brand.js';
 import { loadLocalPrefs, saveLocalPrefs, fetchServerPrefs, shouldUseServerPrefs } from './prefs.js';
@@ -399,12 +400,89 @@ function injectStyle() {
   border-color: rgba(255, 255, 255, 0.45);
 }
 
+/* ---- プレビューを貼り付ける（2026-08-07・loyさん指示）----
+   項目が増えて、下の方を選ぶころにはアバターが画面の外に出ていた。
+   スクロールするのは .join-panel なので、その中で sticky にすれば
+   どこまで下がってもアバターが見える */
+.join-preview {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+/* プレビューの操作説明。触ると消える（邪魔なので） */
+.preview-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 6px;
+  text-align: center;
+  font-size: 10px;
+  color: rgba(220, 235, 255, 0.45);
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.preview-hint.hidden-hint { opacity: 0; }
+
+.join-preview canvas { cursor: grab; touch-action: none; }
+.join-preview canvas:active { cursor: grabbing; }
+
+/* ---- 項目のタブ（2026-08-07）---- */
+.customize-tabs {
+  position: sticky;
+  top: 300px; /* プレビューの高さぶん下。プレビューと一緒に貼り付く */
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+  padding: 8px 0 10px;
+  background: linear-gradient(180deg, rgba(12, 12, 28, 0.96) 70%, rgba(12, 12, 28, 0));
+}
+
+.ctab {
+  flex: 1 1 0;
+  padding: 8px 4px;
+  font-size: 13px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+  color: #eaf6ff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ctab:hover { border-color: rgba(0, 255, 234, 0.6); }
+
+.ctab.selected {
+  background: linear-gradient(90deg, rgba(0, 255, 234, 0.25), rgba(255, 0, 229, 0.2));
+  border-color: #00ffea;
+  box-shadow: 0 0 12px rgba(0, 255, 234, 0.35);
+}
+
+/* いま選んでいないタブの項目は隠す */
+.customize-row.tab-hidden { display: none !important; }
+
+/* 運営専用の項目につける印 */
+.staff-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: #ffe9a8;
+  background: rgba(255, 209, 71, 0.16);
+  border: 1px solid rgba(255, 209, 71, 0.5);
+}
+
 @media (max-width: 640px) {
   .join-panel { padding: 20px; }
   /* スマホは今まで通り縦1カラム。お知らせは「なまえ」の上に来る（DOM順のまま） */
   .join-body { flex-direction: column; }
   .join-col-left, .join-col-right { width: 100%; }
-  .join-preview { width: 100%; height: 240px; }
+  .join-preview { width: 100%; height: 200px; }
+  /* スマホでもプレビューは上に貼り付く。タブはその直下 */
+  .customize-tabs { top: 200px; }
+  .ctab { font-size: 12px; padding: 7px 2px; }
 }
 `;
   document.head.appendChild(style);
@@ -489,59 +567,111 @@ function buildCustomizeScreen({
         <div class="join-col join-col-left">
           <div class="join-preview">
             <canvas id="avatar-preview-canvas"></canvas>
+            <div class="preview-hint" id="preview-hint">ドラッグで回せます（ダブルクリックで正面）</div>
+          </div>
+          <!-- 項目が増えたのでタブに分ける（2026-08-07・loyさん指示）。
+               縦一列だと、下の項目を選ぶころにはプレビューが画面外に出ていた -->
+          <div class="customize-tabs" id="customize-tabs">
+            <button type="button" class="ctab selected" data-tab="hair">髪</button>
+            <button type="button" class="ctab" data-tab="face">顔</button>
+            <button type="button" class="ctab" data-tab="cloth">服</button>
+            <button type="button" class="ctab" data-tab="body">体</button>
           </div>
           <div class="join-customize">
-            <div class="customize-row">
+            <!-- ===== 髪 ===== -->
+            <div class="customize-row" data-tab="hair">
               <div class="customize-label">髪の長さ</div>
               <div class="hairstyle-buttons" id="hairlength-buttons"></div>
             </div>
-            <div class="customize-row">
+            <div class="customize-row" data-tab="hair">
               <div class="customize-label">髪型</div>
               <div class="hairstyle-buttons" id="hairstyle-buttons"></div>
             </div>
-            <div class="customize-row">
+            <div class="customize-row" data-tab="hair">
               <div class="customize-label">前髪</div>
               <div class="hairstyle-buttons" id="bangs-buttons"></div>
             </div>
-            <div class="customize-row">
-              <div class="customize-label">服装</div>
-              <div class="hairstyle-buttons" id="outfit-buttons"></div>
-            </div>
-            <div class="customize-row">
-              <div class="customize-label">アクセサリー</div>
-              <div class="hairstyle-buttons" id="accessory-buttons"></div>
-            </div>
-            <div class="customize-row">
-              <div class="customize-label">身長</div>
-              <div class="hairstyle-buttons" id="height-buttons"></div>
-            </div>
-            <div class="customize-row">
-              <div class="customize-label">利き手</div>
-              <div class="hairstyle-buttons" id="hand-buttons"></div>
-            </div>
-            <div class="customize-row">
-              <div class="customize-label">肌色</div>
-              <div class="swatch-row" id="bodycolor-swatches"></div>
-            </div>
-            <div class="customize-row">
+            <div class="customize-row" data-tab="hair">
               <div class="customize-label">髪色</div>
               <div class="swatch-row" id="haircolor-swatches"></div>
             </div>
-            <div class="customize-row" id="meshcolor-row" style="display:none">
+            <div class="customize-row staff-only" data-tab="hair" id="hairgrad-row" style="display:none">
+              <div class="customize-label">毛先の色（グラデ）<span class="staff-tag">運営</span></div>
+              <div class="swatch-row" id="hairgrad-swatches"></div>
+            </div>
+            <div class="customize-row staff-only" data-tab="hair" id="hairinner-row" style="display:none">
+              <div class="customize-label">インナーカラー<span class="staff-tag">運営</span></div>
+              <div class="swatch-row" id="hairinner-swatches"></div>
+            </div>
+            <div class="customize-row" data-tab="hair" id="meshcolor-row" style="display:none">
               <div class="customize-label">前髪メッシュの色</div>
               <div class="swatch-row" id="meshcolor-swatches"></div>
             </div>
-            <div class="customize-row">
-              <div class="customize-label">目の色</div>
+            <div class="customize-row staff-only" data-tab="hair" id="streakcount-row" style="display:none">
+              <div class="customize-label">メッシュの本数<span class="staff-tag">運営</span></div>
+              <div class="hairstyle-buttons" id="streakcount-buttons"></div>
+            </div>
+            <div class="customize-row staff-only" data-tab="hair" id="streakpos-row" style="display:none">
+              <div class="customize-label">メッシュの位置<span class="staff-tag">運営</span></div>
+              <div class="hairstyle-buttons" id="streakpos-buttons"></div>
+            </div>
+            <div class="customize-row staff-only" data-tab="hair" id="streakwidth-row" style="display:none">
+              <div class="customize-label">メッシュの太さ<span class="staff-tag">運営</span></div>
+              <div class="hairstyle-buttons" id="streakwidth-buttons"></div>
+            </div>
+
+            <!-- ===== 顔 ===== -->
+            <div class="customize-row" data-tab="face">
+              <div class="customize-label">目・上の色</div>
+              <div class="swatch-row" id="eyetopcolor-swatches"></div>
+            </div>
+            <div class="customize-row" data-tab="face">
+              <div class="customize-label">目・下の色</div>
               <div class="swatch-row" id="eyecolor-swatches"></div>
             </div>
-            <div class="customize-row">
+            <div class="customize-row staff-only" data-tab="face" id="eyesplit-row" style="display:none">
+              <div class="customize-label">左右で分ける<span class="staff-tag">運営</span></div>
+              <div class="hairstyle-buttons" id="eyesplit-buttons"></div>
+            </div>
+            <div class="customize-row staff-only" data-tab="face" id="eyetopcolorr-row" style="display:none">
+              <div class="customize-label">右目・上の色<span class="staff-tag">運営</span></div>
+              <div class="swatch-row" id="eyetopcolorr-swatches"></div>
+            </div>
+            <div class="customize-row staff-only" data-tab="face" id="eyecolorr-row" style="display:none">
+              <div class="customize-label">右目・下の色<span class="staff-tag">運営</span></div>
+              <div class="swatch-row" id="eyecolorr-swatches"></div>
+            </div>
+            <div class="customize-row" data-tab="face">
+              <div class="customize-label">肌色</div>
+              <div class="swatch-row" id="bodycolor-swatches"></div>
+            </div>
+
+            <!-- ===== 服 ===== -->
+            <div class="customize-row" data-tab="cloth">
+              <div class="customize-label">服装</div>
+              <div class="hairstyle-buttons" id="outfit-buttons"></div>
+            </div>
+            <div class="customize-row" data-tab="cloth">
               <div class="customize-label">服色</div>
               <div class="swatch-row" id="shirtcolor-swatches"></div>
             </div>
-            <div class="customize-row">
+            <div class="customize-row" data-tab="cloth">
               <div class="customize-label">ペンライトの色</div>
               <div class="swatch-row" id="penlightcolor-swatches"></div>
+            </div>
+
+            <!-- ===== 体 ===== -->
+            <div class="customize-row" data-tab="body">
+              <div class="customize-label">アクセサリー</div>
+              <div class="hairstyle-buttons" id="accessory-buttons"></div>
+            </div>
+            <div class="customize-row" data-tab="body">
+              <div class="customize-label">身長</div>
+              <div class="hairstyle-buttons" id="height-buttons"></div>
+            </div>
+            <div class="customize-row" data-tab="body">
+              <div class="customize-label">利き手</div>
+              <div class="hairstyle-buttons" id="hand-buttons"></div>
             </div>
           </div>
         </div>
@@ -602,6 +732,14 @@ function buildCustomizeScreen({
   // 旧保存configとの互換: 新フィールドが無ければ既定を補い、廃止した髪型はフォールバック
   // 髪は3つ（長さ・髪型・前髪）。古い1つだけの保存データはここで読み替わる
   Object.assign(config, normalizeHair(config));
+  // 目の色は2026-08-07に4つへ増えた。古い保存データには上・右目が無いので補う
+  // （補わないと、どのスウォッチも選択表示にならない）
+  if (!AVATAR_PARTS.eyeColors.includes(config.eyeTopColor)) {
+    [config.eyeTopColor] = AVATAR_PARTS.eyeColors; // 既定は黒
+  }
+  config.eyeSplit = Boolean(config.eyeSplit);
+  if (!AVATAR_PARTS.eyeColors.includes(config.eyeColorR)) config.eyeColorR = config.eyeColor;
+  if (!AVATAR_PARTS.eyeColors.includes(config.eyeTopColorR)) config.eyeTopColorR = config.eyeTopColor;
   if (!AVATAR_PARTS.outfits.includes(config.outfit)) config.outfit = AVATAR_PARTS.outfits[0];
   // アクセサリーは複数付けになった（"wing+halo"）。ここで正規化すれば、
   // 古い保存データ（1つだけ）も新しいデータも同じ形になる
@@ -647,12 +785,61 @@ function buildCustomizeScreen({
   let myRole = knownRole;
   const isStaff = () => myRole === 'admin' || myRole === 'vip';
 
+  // ---- プレビューの向き（2026-08-07・loyさん指示「じぶんでも回せるといい」）----
+  // 触るまでは今までどおり自動で回る。一度触ったら止めて、その向きを保つ
+  // （前髪や目を見たいのに後ろを向いている、という不便をなくすため）。
+  // ダブルクリック（ダブルタップ）で正面に戻す
+  let previewAngle = 0;
+  let autoSpin = true;
+
+  /**
+   * 条件つきの行を出し入れする（2026-08-07）。
+   * ・運営専用（.staff-only）… 管理者・VIPのときだけ
+   * ・前髪メッシュの色と形 … メッシュを付けているときだけ
+   * ・右目の色 … 「左右で分ける」を選んでいるときだけ
+   * ⚠ 出し分けは見た目だけ。実際の可否はサーバーが決める（staffonly.js）
+   */
+  function applyOptionRows() {
+    const staff = isStaff();
+    document.querySelectorAll('.staff-only').forEach((el) => {
+      el.style.display = staff ? '' : 'none';
+    });
+    // ⚠ 前髪メッシュそのものが運営専用なので、色も形も staff のときだけ。
+    //   staff を見ないと、権限が外れた後も設定に残っていたメッシュで行が出てしまう
+    const hasMesh = staff && parseAccessories(config.accessory).includes('mesh');
+    for (const id of ['meshcolor-row', 'streakcount-row', 'streakpos-row', 'streakwidth-row']) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = hasMesh ? '' : 'none';
+    }
+    for (const id of ['eyetopcolorr-row', 'eyecolorr-row']) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = staff && config.eyeSplit ? '' : 'none';
+    }
+  }
+
+  // ---- 項目のタブ（2026-08-07・loyさん指示）----
+  function applyTab(tab) {
+    document.querySelectorAll('.customize-row[data-tab]').forEach((el) => {
+      el.classList.toggle('tab-hidden', el.dataset.tab !== tab);
+    });
+    document.querySelectorAll('.ctab').forEach((b) => {
+      b.classList.toggle('selected', b.dataset.tab === tab);
+    });
+  }
+  document.querySelectorAll('.ctab').forEach((b) => {
+    b.addEventListener('click', () => applyTab(b.dataset.tab));
+  });
+  applyTab('hair');
+
   function rebuildPreviewAvatar() {
+    applyOptionRows();
     if (previewAvatar) {
       previewScene.remove(previewAvatar);
       disposeObject3D(previewAvatar);
     }
     previewAvatar = createAvatar({ ...config });
+    // 作り直しても向きは引き継ぐ（色を変えるたびに正面へ戻ると選びにくい）
+    previewAvatar.rotation.y = previewAngle;
     previewScene.add(previewAvatar);
   }
   rebuildPreviewAvatar();
@@ -663,12 +850,49 @@ function buildCustomizeScreen({
     previewRafId = requestAnimationFrame(renderPreviewLoop);
     const dt = Math.min(previewClock.getDelta(), 0.1);
     if (previewAvatar) {
-      previewAvatar.rotation.y += dt * 0.7;
+      if (autoSpin) previewAngle += dt * 0.7;
+      previewAvatar.rotation.y = previewAngle;
       if (previewAvatar.userData.update) previewAvatar.userData.update(dt);
     }
     previewRenderer.render(previewScene, previewCamera);
   }
   renderPreviewLoop();
+
+  // ドラッグで回す。マウスと指を同じ扱いにしたいので pointer イベントを使う
+  {
+    const hint = document.getElementById('preview-hint');
+    let dragging = false;
+    let lastX = 0;
+    const hideHint = () => { if (hint) hint.classList.add('hidden-hint'); };
+    previewCanvas.addEventListener('pointerdown', (e) => {
+      dragging = true;
+      lastX = e.clientX;
+      autoSpin = false; // 触った時点で自動回転をやめる
+      hideHint();
+      // 指を canvas の外へ動かしても追い続ける。
+      // 対応していない場合もあるので、失敗しても止めない
+      try { previewCanvas.setPointerCapture(e.pointerId); } catch { /* 無くても回せる */ }
+    });
+    previewCanvas.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      // 画面の横幅ぶん動かすと約1回転。指でもマウスでも同じ感覚になる
+      previewAngle += ((e.clientX - lastX) / previewCanvas.clientWidth) * Math.PI * 2;
+      lastX = e.clientX;
+    });
+    const endDrag = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      try { previewCanvas.releasePointerCapture(e.pointerId); } catch { /* 既に外れている */ }
+    };
+    previewCanvas.addEventListener('pointerup', endDrag);
+    previewCanvas.addEventListener('pointercancel', endDrag);
+    // 正面に戻す。自動回転は再開しない（見たい向きで止めたい人が多いはずなので）
+    previewCanvas.addEventListener('dblclick', () => {
+      previewAngle = 0;
+      autoSpin = false;
+      hideHint();
+    });
+  }
 
   function cleanupPreview() {
     if (previewRafId !== null) {
@@ -699,7 +923,7 @@ function buildCustomizeScreen({
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.dataset.value = value;
-      btn.className = 'hair-btn' + (value === config[configKey] ? ' selected' : '');
+      btn.className = 'hair-btn' + (String(value) === String(config[configKey] ?? '') ? ' selected' : '');
       btn.textContent = labels[value] || value;
       btn.addEventListener('click', () => {
         config[configKey] = value;
@@ -724,9 +948,8 @@ function buildCustomizeScreen({
     el.innerHTML = ''; // 権限が分かったあとに作り直せるようにする
     const paint = () => {
       const on = parseAccessories(config.accessory);
-      // 前髪メッシュを選んでいるときだけ、色の行を出す
-      const meshRow = document.getElementById('meshcolor-row');
-      if (meshRow) meshRow.style.display = on.includes('mesh') ? '' : 'none';
+      // 条件つきの行（メッシュの色・形）の出し入れは applyOptionRows に集約してある
+      applyOptionRows();
       el.querySelectorAll('.hair-btn').forEach((b) => {
         const v = b.dataset.value;
         const sel = v === 'none' ? on.length === 0 : on.includes(v);
@@ -763,11 +986,48 @@ function buildCustomizeScreen({
   buildAccessoryRow();
   buildButtonRow('height-buttons', AVATAR_PARTS.heights, HEIGHT_LABELS, 'height');
   buildButtonRow('hand-buttons', AVATAR_PARTS.handedness, HAND_LABELS, 'handedness');
+  // 前髪メッシュの形（運営専用・2026-08-07）。一覧の原本は hairfx.js
+  buildButtonRow(
+    'streakcount-buttons',
+    STREAK_COUNTS,
+    Object.fromEntries(STREAK_COUNTS.map((n) => [n, `${n}本`])),
+    'streakCount',
+  );
+  buildButtonRow(
+    'streakpos-buttons',
+    STREAK_POSITIONS.map((x) => x.id),
+    Object.fromEntries(STREAK_POSITIONS.map((x) => [x.id, x.label])),
+    'streakPosition',
+  );
+  buildButtonRow(
+    'streakwidth-buttons',
+    STREAK_WIDTHS.map((x) => x.id),
+    Object.fromEntries(STREAK_WIDTHS.map((x) => [x.id, x.label])),
+    'streakWidth',
+  );
+  // 目を左右で分けるか（運営専用）。分けたときだけ右目の色の行を出す
+  buildButtonRow('eyesplit-buttons', [false, true], { false: '同じ', true: '左右で分ける' }, 'eyeSplit');
 
   // ---- 色スウォッチ ----
-  function buildSwatchRow(containerId, colors, configKey) {
+  function buildSwatchRow(containerId, colors, configKey, allowNone = false) {
     const el = document.getElementById(containerId);
+    if (!el) return;
     selectableRows.push({ containerId, configKey, itemClass: 'swatch' });
+    // 「なし」（グラデ・インナーカラー用）。色の丸ではなくボタンで出す
+    if (allowNone) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.value = '';
+      btn.className = 'hair-btn' + (config[configKey] ? '' : ' selected');
+      btn.textContent = 'なし';
+      btn.addEventListener('click', () => {
+        config[configKey] = '';
+        el.querySelectorAll('.swatch').forEach((x) => x.classList.remove('selected'));
+        el.querySelectorAll('.hair-btn').forEach((x) => x.classList.add('selected'));
+        rebuildPreviewAvatar();
+      });
+      el.appendChild(btn);
+    }
     colors.forEach((color) => {
       const sw = document.createElement('div');
       sw.dataset.value = color;
@@ -777,6 +1037,8 @@ function buildCustomizeScreen({
       sw.addEventListener('click', () => {
         config[configKey] = color;
         el.querySelectorAll('.swatch').forEach((s) => s.classList.remove('selected'));
+        // 「なし」ボタンがある行では、色を選んだらそちらの選択を外す
+        el.querySelectorAll('.hair-btn').forEach((b) => b.classList.remove('selected'));
         sw.classList.add('selected');
         rebuildPreviewAvatar();
       });
@@ -789,7 +1051,9 @@ function buildCustomizeScreen({
       const el = document.getElementById(row.containerId);
       if (!el) continue;
       el.querySelectorAll('.' + row.itemClass).forEach((item) => {
-        item.classList.toggle('selected', item.dataset.value === config[row.configKey]);
+        // ⚠ dataset は必ず文字列になる。本数(数値)や「左右で分ける」(真偽値)を
+        //   そのまま === で比べると一致しないので、文字列に揃えて比べる
+        item.classList.toggle('selected', item.dataset.value === String(config[row.configKey] ?? ''));
       });
     }
   }
@@ -799,6 +1063,13 @@ function buildCustomizeScreen({
   // 前髪メッシュの色。髪と同じパレットから選ぶ（loyさん指定 2026-08-06）
   buildSwatchRow('meshcolor-swatches', AVATAR_PARTS.hairColors, 'meshColor');
   buildSwatchRow('eyecolor-swatches', AVATAR_PARTS.eyeColors, 'eyeColor');
+  // 目の色（2026-08-07に4つへ）。上＝いままで黒で固定だったところ
+  buildSwatchRow('eyetopcolor-swatches', AVATAR_PARTS.eyeColors, 'eyeTopColor');
+  buildSwatchRow('eyecolorr-swatches', AVATAR_PARTS.eyeColors, 'eyeColorR');
+  buildSwatchRow('eyetopcolorr-swatches', AVATAR_PARTS.eyeColors, 'eyeTopColorR');
+  // 髪の飾り（運営専用）。「なし」を選べるようにするため allowNone を立てる
+  buildSwatchRow('hairgrad-swatches', AVATAR_PARTS.hairColors, 'hairGradColor', true);
+  buildSwatchRow('hairinner-swatches', AVATAR_PARTS.hairColors, 'hairInnerColor', true);
   buildSwatchRow('shirtcolor-swatches', AVATAR_PARTS.shirtColors, 'shirtColor');
   buildSwatchRow('penlightcolor-swatches', AVATAR_PARTS.penlightColors, 'penlightColor');
 
@@ -893,6 +1164,7 @@ function buildCustomizeScreen({
           myRole = server.role;
           knownRole = server.role;
           buildAccessoryRow();
+          applyOptionRows();
         }
         // 名前はGoogleアカウントの表示名で固定（サーバーが確定させる）。
         // ここでは「入場したらこう表示される」ことを見せているだけ
