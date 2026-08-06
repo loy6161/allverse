@@ -186,7 +186,12 @@ export function initSimPlayers(scene, { count = 0, bounds }) {
     created = Math.max(0, created - 1);
   }
 
-  /** 人数を指定の数に合わせる（負荷テスト用に増減できる） */
+  /**
+   * 人数を指定の数に合わせる。
+   * ⚠ ここは**アバターそのもの**のNPC（1体で約12回の描画）。
+   *   大人数は crowd.js（インスタンス描画の人影）が受け持つので、
+   *   ここは手前の数十体だけを想定している（main.js の NPC_AVATAR_MAX）。
+   */
   function setCount(n) {
     const target = Math.max(0, Math.min(200, Math.floor(Number(n) || 0)));
     while (npcs.length < target) addOne();

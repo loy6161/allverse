@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createWorld } from './world.js';
 import { createOpenWorld } from './world_open.js';
+import { createCrowd } from './crowd.js';
 import { createClubWorld } from './world_club.js';
 import { createAvatar } from './avatar.js';
 import { preloadAvatars } from './avatar_glb.js';
@@ -117,7 +118,7 @@ const lowPower = createLowPower({
 const fpsMeter = initFpsMeter({
   getStats: () => ({
     people: 1 + (remote ? remote.count() : 0),
-    npc: sim ? sim.count() : 0,
+    npc: npcCount(),
     bloom: Boolean(bloom && bloomOn),
     reflect: getReflection(),
     width: renderer.domElement.width,
@@ -272,7 +273,7 @@ let lastServerCount = null;
 function updateCount(serverCount) {
   if (serverCount !== undefined) lastServerCount = serverCount;
   autoFillNpc(); // 先に空席を埋めてから数える（表示が1回ぶん遅れないように）
-  const npc = sim ? sim.count() : 0;
+  const npc = npcCount(); // アバターぶん＋人影ぶん
   const others = remote ? remote.count() : 0;
   // 数えるのは実在の人だけ。NPCは「+NPC 18」と別に出して、人数を水増しして見せない
   const real = lastServerCount != null ? lastServerCount : 1 + others;
@@ -343,6 +344,39 @@ function ensureSim() {
   return sim;
 }
 
+/**
+ * NPCの人数の内訳（2026-08-06追加）。
+ *
+ * loyさん「NPCの上限を100000人くらいまでできない？負荷テストしたい」。
+ * ふつうのNPCは1体につき約12回の描画（メッシュ11＋ネームプレート1）なので、
+ * 10万体だと120万回になって止まる。そこで:
+ *   ・手前の NPC_AVATAR_MAX 体まで … 今までどおりのアバター（名前・吹き出し・動き）
+ *   ・それを超えたぶん            … インスタンス描画の人影（全員まとめて描画1回）
+ */
+const NPC_AVATAR_MAX = 60;
+let crowd = null;
+
+function ensureCrowd() {
+  // 10万体ぶんの入れ物は約8MB使うので、実際に要るまで作らない
+  if (!crowd) crowd = createCrowd(scene, { max: 100000 });
+  return crowd;
+}
+
+/** NPCの人数を合わせる（アバターと人影に振り分ける） */
+function applyNpcCount(n) {
+  const total = Math.max(0, Math.trunc(n) || 0);
+  ensureSim().setCount(Math.min(total, NPC_AVATAR_MAX));
+  const rest = total - NPC_AVATAR_MAX;
+  if (rest > 0) ensureCrowd().setCount(rest, world.bounds);
+  else if (crowd) crowd.setCount(0, world.bounds);
+  return total;
+}
+
+/** いま出ているNPCの総数（アバター＋人影） */
+function npcCount() {
+  return (sim ? sim.count() : 0) + (crowd ? crowd.count() : 0);
+}
+
 // ---- NPC（賑やかし）の人数 ----
 //
 // 2026-08-02 に二段構えへ変更（loyさん設計）:
@@ -395,7 +429,7 @@ function desiredNpc() {
 function autoFillNpc() {
   if (!sim || demoMode) return; // デモモードは別枠で人数を決めている
   const want = desiredNpc();
-  if (sim.count() !== want) sim.setCount(want);
+  if (npcCount() !== want) applyNpcCount(want);
 }
 
 /** 5 → 「5分」 / 60 → 「1時間」。キックの締め出し時間の表示に使う */
@@ -1034,7 +1068,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
       if (net && !demoMode) net.requestEvents();
     },
     // NPCは自分の画面にだけ出る。上限は管理者がイベント設定で決めている
-    getNpcCount: () => (sim ? sim.count() : 0),
+    getNpcCount: () => npcCount(),
     getNpcCeiling: () => npcCeiling(),
     isNpcAuto: () => npcUserLimit == null,
     onNpcCount: (n) => {
@@ -1288,6 +1322,7 @@ function loop() {
     updateVenue(dt);
     if (player.userData.update) player.userData.update(dt);
     if (sim) sim.update(dt);
+    if (crowd) crowd.update(t); // 人影（手前のぶんだけ軽く揺れる）
     if (remote) remote.update(dt);
 
     // 自分の位置をサーバーへ（net.js側で10Hzスロットル＋変化なしスキップ）
@@ -1346,6 +1381,9 @@ window.__vc = {
   lowPower,
   // 別会場の出入り（2026-08-06追加）。描画が止まる環境でも手で1回進められる
   updateVenue,
+  // NPCの人数（2026-08-06追加）。負荷テストで一気に増やすときの入口
+  applyNpcCount,
+  get npcCount() { return npcCount(); },
   get inLounge() { return inLounge; },
   get bloomOn() { return bloomOn; },
   set bloomOn(v) { bloomOn = Boolean(v); },

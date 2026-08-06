@@ -376,12 +376,15 @@ export function initRoomUI({
       const i = document.createElement('input');
       i.type = 'number';
       i.min = '0';
-      i.max = '100';
+      // 2026-08-06: 100 → 100000（loyさん「負荷テストしたい」）。
+      // 手前60体はふつうのアバター、それ以降は人影（インスタンス描画）になる
+      i.max = '100000';
       i.className = 'vc-room-input';
       i.placeholder = '自動';
       i.value = Number.isFinite(ev.npcMax) && ev.npcMax >= 0 ? String(ev.npcMax) : '';
       return i;
-    }, '空欄なら自動（定員の空きぶん）。0にすると全員の画面から消えます。');
+    }, '空欄なら自動（定員の空きぶん）。0にすると全員の画面から消えます。'
+       + ' 60人を超えたぶんは「人影」（名前・吹き出し無し）になります。10万人まで入れられます（負荷テスト用）。');
 
     // ---- 運営メッセージの固定枠 ----
     const noticeI = field(box, '運営メッセージ', () => {
@@ -649,6 +652,8 @@ export function initRoomUI({
     range.type = 'range';
     range.min = '0';
     range.max = String(Math.max(0, ceil));
+    // 上限が大きいとスライダーの1目盛りが粗くなるので、桁に応じて刻みを変える
+    range.step = ceil > 5000 ? '500' : ceil > 500 ? '50' : '1';
     range.step = '1';
     range.value = String(Math.min(now, Math.max(0, ceil)));
     range.disabled = ceil <= 0;
