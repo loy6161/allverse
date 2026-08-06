@@ -34,6 +34,7 @@ import { initSelfView, getReflection, getBloom } from './selfview.js';
 import { createBloom } from './bloom.js';
 import { initFpsMeter, getFpsMeter } from './fpsmeter.js';
 import { createLowPower } from './lowpower.js';
+import { createLounge, isInLounge, atClubExit } from './world_lounge.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
@@ -65,6 +66,12 @@ const world =
   WORLD_KIND === 'club'
     ? createClubWorld(scene, { renderer })
     : createWorld(scene, { lowSpec: IS_TOUCH }); // タッチ端末は負荷を抑えた構成
+
+// 別会場（ラウンジ）のサンプル（2026-08-06追加・loyさん「入り口出ると別会場に移動」）。
+// ⚠ ワールドを差し替えるのではなく、**同じシーンの遠く**に建てて歩いて移動する。
+//   差し替えると同じ部屋にいる人どうしが見えなくなるため（world_lounge.js の説明）。
+//   clubVERSE のときだけ。仮ワールドでは出さない
+const lounge = WORLD_KIND === 'club' ? createLounge(scene) : null;
 
 // 背景色はキャンバスではなくページ側で持つ（キャンバスを透過させるため）。
 // 見た目は変わらないが、スクリーン面の穴から背後のiframeが見えるようになる。
@@ -524,9 +531,11 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     // その場合は登壇そのものが成立しない（従来どおり客席だけ）
     stage: world.stage,
     // 足元の高さ。clubVERSE は実際のモデルにレイを撃って拾う（矩形の近似ではない）
-    groundYAt: world.groundYAt,
+    // ⚠ 会場が2つあるので、居る方に聞く（2026-08-06追加）
+    groundYAt: (x, z) => (lounge && isInLounge(x) ? lounge.groundYAt(x, z) : world.groundYAt(x, z)),
     // 入り口側は縁が斜めなので、床があるかをワールドに聞いてから足を出す
-    canStandAt: world.canStandAt,
+    canStandAt: (x, z) =>
+      (lounge && isInLounge(x) ? lounge.canStandAt(x, z) : world.canStandAt(x, z)),
     // シアター表示でカメラを寄せる先。ワールドごとにスクリーンの位置が違う
     screen: world.screen,
     // 自分は物理でジャンプするが、高さは誰にも送っていない（presence も x/z/向き だけ）。
@@ -1212,6 +1221,50 @@ avatarBtn.addEventListener('click', () => {
 const clock = new THREE.Clock();
 const prevPos = new THREE.Vector3();
 
+/**
+ * 別会場（ラウンジ）への出入り（2026-08-06追加）。
+ *
+ * loyさん「入り口出ると別会場に移動みたいなサンプルを作って」。
+ * clubVERSE の入り口を出ると移動し、ラウンジの門をくぐると戻ってくる。
+ * ⚠ サーバーから見ればどちらも同じ部屋なので、**位置の同期はそのまま効く**
+ *   （ラウンジに居る人どうしもちゃんと見える）。
+ */
+let inLounge = false;
+let venueCooldown = 0; // 移動直後に連続で反応しないための待ち時間（秒）
+
+function updateVenue(dt) {
+  if (!lounge || !player) return;
+  if (venueCooldown > 0) venueCooldown -= dt;
+
+  const { x, z } = player.position;
+  const nowInLounge = isInLounge(x);
+  // 遠くに居る間は丸ごと非表示（描画の負担を増やさない）
+  lounge.setVisible(nowInLounge);
+
+  if (venueCooldown > 0) return;
+
+  if (!nowInLounge && atClubExit(x, z)) {
+    // clubVERSE の入り口を出た → ラウンジへ
+    player.position.copy(lounge.spawnPoint);
+    controls.setBounds(lounge.bounds);
+    lounge.setVisible(true);
+    inLounge = true;
+    venueCooldown = 1;
+    if (chat) chat.addMessage('', 'ラウンジに移動しました（西の門から会場へ戻れます）', { system: true });
+  } else if (nowInLounge && lounge.atExit(x, z)) {
+    // ラウンジの門をくぐった → clubVERSE の入り口へ
+    player.position.set(CLUB_RETURN.x, 0, CLUB_RETURN.z);
+    controls.setBounds(world.bounds);
+    lounge.setVisible(false);
+    inLounge = false;
+    venueCooldown = 1;
+    if (chat) chat.addMessage('', 'clubVERSE に戻りました', { system: true });
+  }
+}
+
+/** ラウンジから戻ってきたときに立つ場所（入り口の階段の下・出口の判定より内側） */
+const CLUB_RETURN = { x: 9, z: 19 };
+
 function loop() {
   requestAnimationFrame(loop);
   const dt = Math.min(clock.getDelta(), 0.1);
@@ -1221,6 +1274,7 @@ function loop() {
 
   if (player) {
     controls.update(dt);
+    updateVenue(dt);
     if (player.userData.update) player.userData.update(dt);
     if (sim) sim.update(dt);
     if (remote) remote.update(dt);
@@ -1279,6 +1333,9 @@ window.__vc = {
   bloom,
   // 軽くするための設定（2026-08-06追加）。効き目を数値で確かめるための入口
   lowPower,
+  // 別会場の出入り（2026-08-06追加）。描画が止まる環境でも手で1回進められる
+  updateVenue,
+  get inLounge() { return inLounge; },
   get bloomOn() { return bloomOn; },
   set bloomOn(v) { bloomOn = Boolean(v); },
 };

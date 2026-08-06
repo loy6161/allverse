@@ -9,8 +9,10 @@ export function initControls(
   camera,
   avatar,
   domElement,
-  { bounds, onJump, screen, stage, groundYAt: worldGroundYAt, canStandAt: worldCanStandAt } = {},
+  { bounds: initialBounds, onJump, screen, stage, groundYAt: worldGroundYAt, canStandAt: worldCanStandAt } = {},
 ) {
+  // 歩ける範囲は途中で入れ替わる（別会場へ移動したとき・2026-08-06追加）
+  let bounds = initialBounds;
   const keys = new Set();
 
   // ---- ステージ登壇（2026-08-04追加・テストユーザー要望）----
@@ -535,6 +537,13 @@ export function initControls(
     isOnStage: () => onStage(avatar.position.x, avatar.position.z),
     setFirstPerson,
     isFirstPerson: () => firstPerson,
+    /**
+     * 歩ける範囲を入れ替える（2026-08-06追加）。
+     * 別会場（ラウンジ）へ移動したときに、その部屋の範囲へ差し替える。
+     */
+    setBounds(b) {
+      if (b) bounds = b;
+    },
     /** 視点の高さ（中ボタンドラッグ）。0が既定の高さ */
     setViewHeight,
     getViewHeight: () => viewHeight,
