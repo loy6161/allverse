@@ -100,10 +100,7 @@ export function initFpsMeter({ getStats }) {
       + `ブルーム ${s.bloom ? 'ON' : 'OFF'}  反射 ${s.reflect ? 'ON' : 'OFF'}\n`
       // 実際に描いている画素数。画面の大きさ×画面の細かさ（Retina等）で決まり、
       // 重さに直結する。「同じ設定なのに人によって重い」の切り分けに要る
-      + `解像度 ${s.width ?? '-'}x${s.height ?? '-'}`
-      // URLで測定用の指定をしているときは、見間違えないように明示する
-      + (s.mode ? `
-<b class="warn">測定モード: ${s.mode}</b>` : '');
+      + `解像度 ${s.width ?? '-'}x${s.height ?? '-'}`;
   }
 
   return {

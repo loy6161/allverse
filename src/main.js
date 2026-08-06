@@ -33,7 +33,7 @@ import { initExitButton } from './exitbtn.js';
 import { initSelfView, getReflection, getBloom } from './selfview.js';
 import { createBloom } from './bloom.js';
 import { initFpsMeter, getFpsMeter } from './fpsmeter.js';
-import { createLowPower, getLowPower } from './lowpower.js';
+import { createLowPower } from './lowpower.js';
 
 preloadAvatars(); // GLBアバターを先読み（入場前にロードを済ませる）
 
@@ -87,9 +87,10 @@ if (WORLD_KIND === 'club') {
 const bloom = WORLD_KIND === 'club' ? createBloom(renderer, { samples: IS_TOUCH ? 0 : 2 }) : null;
 let bloomOn = getBloom();
 
-// 軽量モード（2026-08-06追加）。
+// 軽くするための設定（2026-08-06追加）。
 // ⚠ loyさんの環境はGPUを使わない設定（VRChat優先）なので、CPU描画でも成立させる必要がある。
-//   描画の細かさとライトをまとめて落とす（lowpower.js の説明を参照）
+//   「画質を下げる」と「照明を減らす」は**別々のスイッチ**にしてある
+//   （設定から個別に切れば、開き直さずに効果を確かめられる。lowpower.js の説明を参照）
 const lowPower = createLowPower({
   renderer,
   world,
@@ -98,7 +99,6 @@ const lowPower = createLowPower({
     if (bloom) bloom.setSize(window.innerWidth, window.innerHeight);
   },
 });
-lowPower.setEnabled(getLowPower());
 
 // fps表示（2026-08-04追加・管理者/VIP用）。既定はOFF。
 // 何を切れば軽くなるかを本番中に判断できるよう、人数と重い機能の状態も一緒に出す
@@ -110,8 +110,6 @@ const fpsMeter = initFpsMeter({
     reflect: getReflection(),
     width: renderer.domElement.width,
     height: renderer.domElement.height,
-    // URLで ?low=scale / ?low=light を指定して測っているときの目印
-    mode: lowPower.override(),
   }),
 });
 
@@ -1116,9 +1114,12 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     onFpsMeterChange: (on) => {
       fpsMeter.setEnabled(on);
     },
-    // 軽量モード（2026-08-06追加）。端末ごとの設定
-    onLowPowerChange: (on) => {
-      lowPower.setEnabled(on);
+    // 軽くするための設定（2026-08-06追加）。端末ごと・個別に切れる
+    onRenderScaleChange: (on) => {
+      lowPower.setRenderScaleLow(on);
+    },
+    onLightCutChange: (on) => {
+      lowPower.setLightCut(on);
     },
   });
   // 前回「出す」にしていたら、権限があるあいだは出したままにする
@@ -1268,6 +1269,8 @@ window.__vc = {
   get currentEvent() { return currentEvent; },
   // ブルーム（2026-08-04追加）。効き目を絵と数値で確かめるための入口
   bloom,
+  // 軽くするための設定（2026-08-06追加）。効き目を数値で確かめるための入口
+  lowPower,
   get bloomOn() { return bloomOn; },
   set bloomOn(v) { bloomOn = Boolean(v); },
 };

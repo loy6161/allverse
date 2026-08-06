@@ -95,7 +95,8 @@ export function initSettingsUI({
   onReflectionChange,
   onBloomChange,
   onFpsMeterChange,
-  onLowPowerChange,
+  onRenderScaleChange,
+  onLightCutChange,
 }) {
   injectStyle();
 
@@ -196,7 +197,8 @@ export function initSettingsUI({
         onReflectionChange,
         onBloomChange,
         onFpsMeterChange,
-        onLowPowerChange,
+        onRenderScaleChange,
+        onLightCutChange,
         // fps表示は運営向けの道具なので、管理者とVIPにだけ出す
         //（お客さんの画面に数字が並んでいても使い道がない）
         showFpsMeter: ['admin', 'vip'].includes(getRole ? getRole() : ''),

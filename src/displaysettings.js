@@ -17,7 +17,9 @@ import {
   getSelfView, setSelfView, getReflection, setReflectionPref, getBloom, setBloomPref,
 } from './selfview.js';
 import { getFpsMeter, setFpsMeter } from './fpsmeter.js';
-import { getLowPower, setLowPowerPref } from './lowpower.js';
+import {
+  getRenderScaleLow, setRenderScaleLow, getLightCut, setLightCut,
+} from './lowpower.js';
 
 /**
  * 表示のせっていを描く。
@@ -28,54 +30,80 @@ export function renderDisplaySettings(
   body,
   {
     onEmotePrefsChange, onChatEmoteChange, onSelfViewChange, onReflectionChange, onBloomChange,
-    onFpsMeterChange, showFpsMeter = false, onLowPowerChange,
+    onFpsMeterChange, showFpsMeter = false, onRenderScaleChange, onLightCutChange,
   } = {},
 ) {
   body.innerHTML = '';
 
-  // ---- 軽量モード（2026-08-06追加） ----
+  /**
+   * ON/OFFの2択を1項目ぶん置く（2026-08-06追加）。
+   * 同じ形の項目が増えたので、作り方をここにまとめた。
+   */
+  function toggle(title, note, labels, initial, save, notify) {
+    const box = document.createElement('div');
+    box.className = 'vc-help-box';
+    const h = document.createElement('div');
+    h.className = 'vc-help-h';
+    h.textContent = title;
+    box.appendChild(h);
+    const n = document.createElement('div');
+    n.className = 'vc-help-note';
+    n.textContent = note;
+    box.appendChild(n);
+    const row = document.createElement('div');
+    row.className = 'vc-help-choices';
+    let cur = initial;
+    const btns = [];
+    const paint = () => {
+      for (const b of btns) b.classList.toggle('active', (b.dataset.v === 'on') === cur);
+    };
+    for (const [v, label] of [['on', labels[0]], ['off', labels[1]]]) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'vc-help-choice';
+      b.dataset.v = v;
+      b.textContent = label;
+      b.addEventListener('click', () => {
+        cur = save(v === 'on');
+        paint();
+        if (notify) notify(cur);
+      });
+      btns.push(b);
+      row.appendChild(b);
+    }
+    paint();
+    box.appendChild(row);
+    body.appendChild(box);
+  }
+
+  // ---- 軽くするための設定（2026-08-06追加） ----
+  //
   // loyさん「ハードウェア アクセラレーションONにはしないよ。
   //          VRやってるときにGPUはVRに回すためにそうしてる」
-  // GPUを使わない設定のブラウザでも動くように、まとめて画質を落とすスイッチ。
-  // 一番上に置く（重くて困っている人が最初に見つけられる場所）
-  const boxL = document.createElement('div');
-  boxL.className = 'vc-help-box';
-  const hL = document.createElement('div');
-  hL.className = 'vc-help-h';
-  hL.textContent = '軽くする（動きがカクつくとき）';
-  boxL.appendChild(hL);
-  const noteL = document.createElement('div');
-  noteL.className = 'vc-help-note';
-  noteL.textContent =
-    '画面の細かさを7割に落として、照明をひとつ減らします。少しぼやけますが、'
-    + 'そのぶん動きがなめらかになります。パソコンのグラフィック機能を切っている場合'
-    + '（VRに回しているときなど）は、こちらをONにしてください。'
-    + 'この設定はこの端末にだけ保存されます。';
-  boxL.appendChild(noteL);
-  const rowL = document.createElement('div');
-  rowL.className = 'vc-help-choices';
-  let curLow = getLowPower();
-  const lowBtns = [];
-  function paintLow() {
-    for (const b of lowBtns) b.classList.toggle('active', (b.dataset.v === 'on') === curLow);
-  }
-  for (const [v, label] of [['on', '軽くする'], ['off', 'きれいに出す']]) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'vc-help-choice';
-    b.dataset.v = v;
-    b.textContent = label;
-    b.addEventListener('click', () => {
-      curLow = setLowPowerPref(v === 'on');
-      paintLow();
-      if (onLowPowerChange) onLowPowerChange(curLow);
-    });
-    lowBtns.push(b);
-    rowL.appendChild(b);
-  }
-  paintLow();
-  boxL.appendChild(rowL);
-  body.appendChild(boxL);
+  // → GPUを使わない設定のブラウザでも動くようにするための項目。
+  //
+  // ⚠ 1つにまとめない（2026-08-06 loyさん「普通に設定でそれぞれON/OFFつけた方が早くね？」）。
+  //   個別に切れると、開き直さずにfpsの差をその場で確かめられる。
+  //   重くて困っている人が最初に見つけられるよう、一番上に置く
+  toggle(
+    '画質を下げる（軽くなる）',
+    '画面の細かさを7割に落とします。塗る画素の数がおよそ半分になるので、'
+    + 'グラフィック機能を切っているパソコン（VRにGPUを回しているときなど）では特に効きます。'
+    + '少しぼやけます。この設定はこの端末にだけ保存されます。',
+    ['下げる', 'そのまま'],
+    getRenderScaleLow(),
+    setRenderScaleLow,
+    onRenderScaleChange,
+  );
+  toggle(
+    '照明を減らす（軽くなる）',
+    '会場の奥から当てている青い補助光を消します。見た目はほとんど変わりませんが、'
+    + '照明の数は画面の計算量に直結します。この設定はこの端末にだけ保存されます。',
+    ['減らす', 'そのまま'],
+    getLightCut(),
+    setLightCut,
+    onLightCutChange,
+  );
 
   // ---- fps表示（2026-08-04追加・管理者/VIPだけ） ----
   // loyさん「fpsって管理者用に表示できない？」
