@@ -1150,6 +1150,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
     onRefresh: () => {
       if (net && !demoMode) net.requestEvents();
     },
+    // 保存できたことをチャットにも出す（押した手応えが分かるように・2026-08-06追加）
+    onSaved: (name) => {
+      if (chat) chat.addMessage('', `「${name}」の設定を保存しました`, { system: true });
+    },
     // NPCは自分の画面にだけ出る。上限は管理者がイベント設定で決めている
     getNpcCount: () => npcCount(),
     getNpcCeiling: () => npcCeiling(),

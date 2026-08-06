@@ -155,6 +155,7 @@ export function initRoomUI({
   onUpdateEvent,
   onDeleteEvent,
   onRefresh,
+  onSaved,
   getNpcCount,
   getNpcCeiling,
   isNpcAuto,
@@ -462,6 +463,12 @@ export function initRoomUI({
       if (codeTouched) payload.code = codeI.value.trim();
       onUpdateEvent(payload);
       openSettings = '';
+      // ⚠ ここで描き直す（2026-08-06追加）。
+      //   以前はサーバーから一覧が返ってくるまで画面が何も変わらず、
+      //   「押しても反応がない」ように見えた（loyさん指摘）。
+      //   閉じることで「効いた」と分かる
+      render();
+      if (onSaved) onSaved(ev.name);
     });
     box.appendChild(save);
     return box;
@@ -522,13 +529,15 @@ export function initRoomUI({
 
         const del = document.createElement('button');
         del.className = 'vc-room-del';
-        del.textContent = '閉じる';
+        // ⚠ 「閉じる」だけだと**設定画面を閉じる**と読み違える（2026-08-06 loyさん指摘）。
+        //   これはイベントそのものを終わらせる操作なので、そうと分かる文言にする
+        del.textContent = 'イベントを終了';
         del.addEventListener('click', () => {
           const n = ev.count || 0;
           const msg =
             n > 0
-              ? `「${ev.name}」を閉じます。いま入っている${n}人も退場になります。よろしいですか？`
-              : `「${ev.name}」を閉じます。よろしいですか？`;
+              ? `「${ev.name}」を終了します。いま入っている${n}人も退場になります。よろしいですか？`
+              : `「${ev.name}」を終了します。よろしいですか？`;
           if (window.confirm(msg)) onDeleteEvent(ev.id);
         });
         head.appendChild(del);

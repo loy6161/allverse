@@ -1358,10 +1358,14 @@ async function handleEventUpdate(client, msg) {
   if (msg.chatMode === 'local' || msg.chatMode === 'youtube') {
     ev.chatMode = msg.chatMode;
   }
-  // 会場の明るさ。知らない値は無視する（既定に戻して驚かせない）
+  // 使うワールド（'club' / 'city'）。知らない値は無視する。
+  // ⚠ ここに `changed = true;` と書いていて、**宣言していない変数への代入**で
+  //   例外になっていた（2026-08-06 loyさん「保存ボタン押しても反応ない」）。
+  //   ESM は常に strict なので、宣言なしの代入は ReferenceError になる。
+  //   例外でこの関数が止まり、**保存もイベント一覧の配信も行われていなかった**
+  //   （メモリ上の値だけ書き換わるので、状態APIでは変わって見えるのが厄介だった）。
   if (typeof msg.world === 'string' && WORLD_KINDS.has(msg.world)) {
     ev.world = msg.world;
-    changed = true;
   }
   if (typeof msg.brightness === 'string' && BRIGHTNESS_LEVELS.has(msg.brightness)) {
     ev.brightness = msg.brightness;
