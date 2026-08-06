@@ -191,7 +191,13 @@ const EVENT_ID_RE = /^[a-z0-9_-]{1,24}$/;
 const MAX_EVENT_CODE_LEN = 24;                // 合言葉の最大文字数
 const DEFAULT_CAPACITY = 30;                  // 1ルームの既定キャパ
 const MIN_CAPACITY = 1;
-const MAX_CAPACITY = 60;                      // presence.json の web[] 上限に合わせる
+// 1ルームの定員の上限。
+// ⚠ 60 → 20000（2026-08-06 loyさん「定員60の上限を外して」）。
+//   もともとは presence.json の web[] 上限（60）に合わせていたが、
+//   presence 側は PRESENCE_MAX_WEB で別に切っているので、ここを広げても
+//   VRChat連携の形は変わらない（**61人目以降はVRChatには出ない**だけ）。
+//   数字を完全に無くさないのは、入力ミスで巨大な値が入ったときの歯止めとして。
+const MAX_CAPACITY = 20000;
 
 // ゲスト（未ログイン）の見た目は src/guestlook.js が匿名IDから決める（2026-08-02）。
 // 以前は全員同じ固定アバターだったが、

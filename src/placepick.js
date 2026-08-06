@@ -408,13 +408,13 @@ export async function openPlacePicker({ onDecide, onBack }) {
     const capI = input('30');
     capI.type = 'number';
     capI.min = '1';
-    capI.max = '60';
+    capI.max = '20000'; // 上限は外してある（2026-08-06 loyさん指示）
     capI.value = '30';
 
     box.appendChild(mk('イベント名', nameI));
     const row = document.createElement('div');
     row.className = 'vc-place-row2';
-    row.append(mk('合言葉', codeI), mk('1ルームの定員（1〜60）', capI));
+    row.append(mk('合言葉', codeI), mk('1ルームの定員', capI));
     box.appendChild(row);
 
     const loginChk = document.createElement('input');

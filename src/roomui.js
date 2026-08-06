@@ -295,15 +295,18 @@ export function initRoomUI({
       return i;
     }, '管理者は合言葉なしでも入れます。');
 
-    const capI = field(box, '定員（1〜60）', () => {
+    const capI = field(box, '定員', () => {
       const i = document.createElement('input');
       i.type = 'number';
       i.min = '1';
-      i.max = '60';
+      i.max = '20000';
       i.className = 'vc-room-input';
       i.value = String(ev.cap ?? 30);
       return i;
-    }, `いま ${ev.count}人 入っているので、それより少なくはできません。`);
+    }, `いま ${ev.count}人 入っているので、それより少なくはできません。`
+       + ' 上限は外してあります（2026-08-06）。ただし人数が増えるほど1人あたりの通信が増えるので、'
+       + '実際に耐えられるのは1ルーム数十人までです（⚙設定→管理→負荷の測定で確かめられます）。'
+       + 'VRChat側の客席に出るのは先頭60人までです。');
 
     const loginC = check(box, 'ログインした人だけ入れるようにする', ev.requireLogin);
     const vrcC = check(box, 'VRChatの客席に出す', ev.vrc, 'ONにできるのは同時に1つのイベントだけです。');
@@ -572,7 +575,7 @@ export function initRoomUI({
       const capInput = document.createElement('input');
       capInput.type = 'number';
       capInput.min = '1';
-      capInput.max = '60';
+      capInput.max = '20000';
       capInput.value = '30';
       capInput.placeholder = '1ルームの定員';
       admin.appendChild(capInput);
