@@ -19,6 +19,32 @@
 
 const STORE_KEY = 'vc-lowpower';
 
+/**
+ * 内訳を測るための切り分け（2026-08-06追加・URLに付けるだけ。UIには出さない）。
+ *
+ * loyさん「影は影響してなかったってことは、照明1つと画質での軽量だったわけで、
+ *          画質がどこまで影響してるかによるよね。照明だけの負荷だったのか。」
+ *
+ * ⚠ こちらの機械（GPUあり）では**内訳を測れない**。3840x2160 まで上げても
+ *   2.5ms前後で頭打ちになり、解像度もライトも差が誤差に埋もれた。
+ *   CPUで描いているloyさんの環境で測るしかないので、URLで片方だけ効かせられるようにする。
+ *
+ *   ?low=scale … 画質だけ7割に落とす（照明はそのまま）
+ *   ?low=light … 照明だけ1つ消す（画質はそのまま）
+ *   ?low=both  … 両方（⚙設定のONと同じ）
+ *
+ * 指定があるときは⚙設定より優先し、保存もしない（測り終えたらURLを外すだけで元に戻る）。
+ */
+function urlOverride() {
+  try {
+    const q = new URLSearchParams(location.search).get('low');
+    if (q === 'scale' || q === 'light' || q === 'both') return q;
+  } catch {
+    /* URLが読めない環境でも普通に動かす */
+  }
+  return null;
+}
+
 /** 軽量モードのときの描画の細かさ。1.0の70%＝塗る画素はおよそ半分になる。
  *  実測（loyさんの環境・NPC29体）: 1384x861 で 24fps → 968x602 で 43fps */
 const LOW_SCALE = 0.7;
@@ -52,17 +78,23 @@ export function setLowPowerPref(on) {
  * @param {() => void} [p.onResize] 描画の細かさが変わったときに大きさを配り直す相手
  */
 export function createLowPower({ renderer, world, basePixelRatio, onResize }) {
+  const override = urlOverride();
   let on = false;
+
+  /** いま画質を落とすか（URL指定があればそちらが勝つ） */
+  const wantScale = () => (override ? override === 'scale' || override === 'both' : on);
+  /** いま照明を減らすか（同上） */
+  const wantLight = () => (override ? override === 'light' || override === 'both' : on);
 
   function apply() {
     // 1. 塗る画素を減らす。canvas の見た目の大きさは変えないので、
     //    小さく描いたものをブラウザが引き伸ばす（少しぼやける代わりに速い）
-    renderer.setPixelRatio(on ? basePixelRatio * LOW_SCALE : basePixelRatio);
+    renderer.setPixelRatio(wantScale() ? basePixelRatio * LOW_SCALE : basePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
 
     // 2. ライトを減らす（会場が持っている判断に任せる）
     //    ※ 影の切り替えはここに無い。会場では最初から影を出していないため（main.js 参照）
-    if (world && world.setLowPower) world.setLowPower(on);
+    if (world && world.setLowPower) world.setLowPower(wantLight());
 
     if (onResize) onResize();
   }
@@ -74,6 +106,8 @@ export function createLowPower({ renderer, world, basePixelRatio, onResize }) {
     },
     isEnabled: () => on,
     /** いまの描画の細かさ（fps表示の解像度欄が拾う） */
-    scale: () => (on ? LOW_SCALE : 1),
+    scale: () => (wantScale() ? LOW_SCALE : 1),
+    /** 測定用の指定が効いているか。fps表示に出して、見間違いを防ぐ */
+    override: () => override,
   };
 }

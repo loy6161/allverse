@@ -89,7 +89,7 @@ let bloomOn = getBloom();
 
 // 軽量モード（2026-08-06追加）。
 // ⚠ loyさんの環境はGPUを使わない設定（VRChat優先）なので、CPU描画でも成立させる必要がある。
-//   描画の細かさ・影・ライトをまとめて落とす（lowpower.js の説明を参照）
+//   描画の細かさとライトをまとめて落とす（lowpower.js の説明を参照）
 const lowPower = createLowPower({
   renderer,
   world,
@@ -110,6 +110,8 @@ const fpsMeter = initFpsMeter({
     reflect: getReflection(),
     width: renderer.domElement.width,
     height: renderer.domElement.height,
+    // URLで ?low=scale / ?low=light を指定して測っているときの目印
+    mode: lowPower.override(),
   }),
 });
 
