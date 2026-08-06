@@ -12,6 +12,7 @@ import {
   formatAccessories,
   toggleAccessory,
   MAX_ACCESSORIES,
+  STAFF_ONLY_ACCESSORIES,
 } from './accessory.js';
 
 // 入場画面の「📢 お知らせ」欄に出す件数。多すぎると縦に伸びすぎるため5件に絞る
@@ -24,6 +25,7 @@ const HAIR_LABELS = {
   twin: 'ツインテール',
   bun: 'お団子',
   pony: 'ポニーテール',
+  patsun: 'ぱっつん',
   hat: 'ぼうし',
 };
 
@@ -56,6 +58,7 @@ const ACCESSORY_LABELS = {
   ribbon: 'リボン',
   sunglasses: 'サングラス',
   glasses: 'メガネ',
+  mesh: '前髪メッシュ',
 };
 
 const STYLE_ID = 'join-screen-style';
@@ -505,6 +508,10 @@ function buildCustomizeScreen({
               <div class="customize-label">髪色</div>
               <div class="swatch-row" id="haircolor-swatches"></div>
             </div>
+            <div class="customize-row" id="meshcolor-row" style="display:none">
+              <div class="customize-label">前髪メッシュの色</div>
+              <div class="swatch-row" id="meshcolor-swatches"></div>
+            </div>
             <div class="customize-row">
               <div class="customize-label">目の色</div>
               <div class="swatch-row" id="eyecolor-swatches"></div>
@@ -612,6 +619,13 @@ function buildCustomizeScreen({
   let previewAvatar = null;
   // ゲスト表示に切り替える前の見た目。ログインしたら戻すために控える
   let guestPreviewBackup = null;
+  /**
+   * いまの権限（2026-08-06追加）。管理者・VIPだけが選べるアクセサリーの出し分けに使う。
+   * ログインの返事が来るまでは 'user' 扱い（来た時点で作り直す）。
+   * ⚠ 画面の出し分けだけ。実際の可否はサーバーが決める（accessory.js の stripStaffOnly）
+   */
+  let myRole = knownRole;
+  const isStaff = () => myRole === 'admin' || myRole === 'vip';
 
   function rebuildPreviewAvatar() {
     if (previewAvatar) {
@@ -687,8 +701,12 @@ function buildCustomizeScreen({
   function buildAccessoryRow() {
     const el = document.getElementById('accessory-buttons');
     if (!el) return;
+    el.innerHTML = ''; // 権限が分かったあとに作り直せるようにする
     const paint = () => {
       const on = parseAccessories(config.accessory);
+      // 前髪メッシュを選んでいるときだけ、色の行を出す
+      const meshRow = document.getElementById('meshcolor-row');
+      if (meshRow) meshRow.style.display = on.includes('mesh') ? '' : 'none';
       el.querySelectorAll('.hair-btn').forEach((b) => {
         const v = b.dataset.value;
         const sel = v === 'none' ? on.length === 0 : on.includes(v);
@@ -696,6 +714,9 @@ function buildCustomizeScreen({
       });
     };
     for (const value of AVATAR_PARTS.accessories) {
+      // ⚠ 管理者・VIP専用のもの（前髪メッシュ）は、権限が無い人には出さない。
+      //   隠すだけでは細工で付けられるので、サーバー側でも同じ判定をしている
+      if (STAFF_ONLY_ACCESSORIES.has(value) && !isStaff()) continue;
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.dataset.value = value;
@@ -753,6 +774,8 @@ function buildCustomizeScreen({
 
   buildSwatchRow('bodycolor-swatches', AVATAR_PARTS.bodyColors, 'bodyColor');
   buildSwatchRow('haircolor-swatches', AVATAR_PARTS.hairColors, 'hairColor');
+  // 前髪メッシュの色。髪と同じパレットから選ぶ（loyさん指定 2026-08-06）
+  buildSwatchRow('meshcolor-swatches', AVATAR_PARTS.hairColors, 'meshColor');
   buildSwatchRow('eyecolor-swatches', AVATAR_PARTS.eyeColors, 'eyeColor');
   buildSwatchRow('shirtcolor-swatches', AVATAR_PARTS.shirtColors, 'shirtColor');
   buildSwatchRow('penlightcolor-swatches', AVATAR_PARTS.penlightColors, 'penlightColor');
@@ -841,6 +864,12 @@ function buildCustomizeScreen({
           rebuildPreviewAvatar();
           refreshSelections();
         }
+        // 権限が分かったら、管理者・VIP専用のアクセサリーを出し直す
+        if (server.role && server.role !== myRole) {
+          myRole = server.role;
+          knownRole = server.role;
+          buildAccessoryRow();
+        }
         // 名前はGoogleアカウントの表示名で固定（サーバーが確定させる）。
         // ここでは「入場したらこう表示される」ことを見せているだけ
         showResolvedName(server.googleName || server.name || '');
@@ -895,6 +924,19 @@ function buildCustomizeScreen({
  * @param {(r:{name:string,config:object,idToken:string}) => void} onJoin
  * @param {{name?:string, config?:object}} [prev] 「← アバター」で戻ってきたときの復元用
  */
+/**
+ * サーバーが認めた権限（入場の返事に入っている）。
+ * 入場前の画面ではログインの返事からしか分からないが、
+ * 入場後の「アバター変更」はこれを見て管理者・VIP専用の項目を出す。
+ * ⚠ 画面の出し分けだけ。実際の可否はサーバーが決める（accessory.js の stripStaffOnly）
+ */
+let knownRole = 'user';
+
+/** 入場の返事（onWelcome）で分かった権限を覚える。main.js から呼ぶ */
+export function setKnownRole(role) {
+  if (role) knownRole = role;
+}
+
 export function initJoinScreen(onJoin, prev = {}) {
   // 見た目の優先順位: 「← アバター」で戻ってきた内容 → 前回の保存 → ランダム。
   // 名前はサーバーが決めるので、ここでは空にしておく（ログインすれば自動で入る）

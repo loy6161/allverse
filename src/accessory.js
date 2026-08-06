@@ -20,7 +20,26 @@
 export const ACCESSORY_IDS = [
   'none', 'kemo', 'ahoge',
   'tail', 'wing', 'halo', 'ribbon', 'sunglasses', 'glasses',
+  // 2026-08-06 追加: 前髪メッシュ（管理者・VIPだけが選べる）。
+  // ⚠ これだけ**3Dパーツを持たない**。髪の材質に筋を描いて表す（avatar_glb.js）。
+  //   3Dパーツを探しに行かないよう、読み込み側で 'mesh' を弾くこと
+  'mesh',
 ];
+
+/** 管理者・VIPだけが選べるアクセサリー（サーバーでも同じ判定を使う） */
+export const STAFF_ONLY_ACCESSORIES = new Set(['mesh']);
+
+/**
+ * 権限で選べないものを落とす（2026-08-06追加）。
+ * ⚠ 画面で隠すだけでは足りない。細工した通信で付けられてしまうので、
+ *   サーバーの受け口でも必ずこれを通すこと。
+ */
+export function stripStaffOnly(raw, role) {
+  const ok = role === 'admin' || role === 'vip';
+  if (ok) return formatAccessories(raw);
+  const kept = parseAccessories(raw).filter((id) => !STAFF_ONLY_ACCESSORIES.has(id));
+  return kept.join('+');
+}
 
 /** 同時に付けられる数。増やしすぎると誰が誰だか分からなくなるので3つで止める */
 export const MAX_ACCESSORIES = 3;

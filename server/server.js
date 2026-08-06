@@ -77,7 +77,7 @@ import { emoteFromText, MAX_REPEAT } from './chatemote.js';
 // 別々に持つと片方だけ直したときに姿がズレるので、1本のファイルを共有する
 import { guestLookFor } from '../src/guestlook.js';
 // アクセサリーの複数付け（2026-08-04）。判定はクライアントと同じ1本を読む
-import { formatAccessories } from '../src/accessory.js';
+import { formatAccessories, stripStaffOnly } from '../src/accessory.js';
 import {
   verifyIdToken,
   roleForEmail,
@@ -786,10 +786,12 @@ function validCoord(value) {
  *   VRChat側へそのまま流れる**。知らないidや長すぎる並びを素通しすると、
  *   向こうの分割処理にゴミが渡る。上限3つ・排他・未知idの除去はここで済ませる。
  */
-function sanitizeAv(av) {
+function sanitizeAv(av, role = 'user') {
   if (!av || typeof av !== 'object' || Array.isArray(av)) return {};
   if (typeof av.ac === 'string') {
-    return { ...av, ac: formatAccessories(av.ac) };
+    // ⚠ 管理者・VIP専用のアクセサリー（前髪メッシュ）は権限で落とす（2026-08-06追加）。
+    //   画面で隠すだけでは、細工した通信で付けられてしまう
+    return { ...av, ac: stripStaffOnly(av.ac, role) };
   }
   return av;
 }
@@ -988,7 +990,7 @@ async function handleJoin(client, msg) {
   client.n = resolveDisplayName(email, googleName);
   // ゲストの見た目はサーバーが決める（クライアントの申告は使わない）。
   // 同じブラウザなら毎回同じ姿になるので「あの黄色いゲスト、また来てる」が成立する
-  client.av = role === 'guest' ? guestLookFor(client.visitor) : sanitizeAv(msg.av);
+  client.av = role === 'guest' ? guestLookFor(client.visitor) : sanitizeAv(msg.av, role);
   client.x = 0;
   client.z = 0;
   client.r = 0;
@@ -1166,7 +1168,7 @@ async function handleUpdate(client, msg) {
   }
 
   // 名前は入場時にサーバーが確定させたものを使い続ける。msg.n は無視する
-  client.av = sanitizeAv(msg.av);
+  client.av = sanitizeAv(msg.av, client.role);
 
   broadcastFrom(client, { t: 'peer-update', id: client.id, n: client.n, av: client.av, role: client.role });
 

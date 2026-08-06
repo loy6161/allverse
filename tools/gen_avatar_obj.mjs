@@ -10,7 +10,7 @@
 //
 // 座標系: OBJ標準 (Y=上, キャラは +Z を向く)。単位 m。身長 ≈ 1.21m
 // 使い方: node tools/gen_avatar_obj.mjs <part>
-//   part: hair_long | hair_short | hair_twin | hair_bun | hair_pony
+//   part: hair_long | hair_short | hair_twin | hair_bun | hair_pony | hair_patsun
 //       | body_long | body_middle | body_short
 //       | acc_kemo | acc_ahoge | acc_tail | acc_wing | acc_halo | acc_ribbon
 //       | acc_glasses | acc_sunglasses
@@ -130,7 +130,7 @@ const RINGS_ALL = [
 const WINDOW_COLS = new Set([18, 19, 0, 1]);
 const HAIRLINE_RING = 1;
 
-function hairDome({ rings = RINGS_ALL, hemDrop = 0.075, lockTipY = -0.24 }) {
+function hairDome({ rings = RINGS_ALL, hemDrop = 0.075, lockTipY = -0.24, bangs = 'v', bangY = -0.115 }) {
   const pole = V(0, HEAD_C + 0.3, 0);
   const ringIdx = rings.map(([y, r]) =>
     Array.from({ length: N }, (_, i) => {
@@ -162,12 +162,26 @@ function hairDome({ rings = RINGS_ALL, hemDrop = 0.075, lockTipY = -0.24 }) {
     const a = rad(angDeg);
     return V(rr * Math.sin(a) * 0.9, HEAD_C + yOff, rr * Math.cos(a) + out);
   };
-  const tCenter = bangTip(0, -0.13, 0.03);
-  F('hair', hl[19], tCenter, hl[1]);
-  const tL = bangTip(-29, -0.075, 0.022);
-  F('hair', hl[18], tL, hl[19]);
-  const tR = bangTip(29, -0.075, 0.022);
-  F('hair', hl[1], tR, hl[2]);
+  if (bangs === 'blunt') {
+    // ぱっつん（2026-08-06追加・loyさん要望）。
+    // 尖った房を作らず、**同じ高さで横一直線に切り揃える**。
+    // 窓の列（18,19,0,1）をまたいで前面をぐるっと1枚で塞ぐ
+    const cols = [17, 18, 19, 0, 1, 2, 3];
+    const tips = cols.map((j) => bangTip(j <= 10 ? j * (360 / N) : (j - N) * (360 / N), bangY, 0.02));
+    for (let k = 0; k < cols.length - 1; k++) {
+      const a = hl[cols[k]];
+      const b = hl[cols[k + 1]];
+      F('hair', a, tips[k], tips[k + 1]);
+      F('hair', a, tips[k + 1], b);
+    }
+  } else {
+    const tCenter = bangTip(0, -0.13, 0.03);
+    F('hair', hl[19], tCenter, hl[1]);
+    const tL = bangTip(-29, -0.075, 0.022);
+    F('hair', hl[18], tL, hl[19]);
+    const tR = bangTip(29, -0.075, 0.022);
+    F('hair', hl[1], tR, hl[2]);
+  }
   // 窓の縦縁の毛束
   for (const [c0, sgn] of [[2, 1], [18, -1]]) {
     const top = ringIdx[HAIRLINE_RING][c0];
@@ -326,6 +340,15 @@ const PARTS = {
     for (const sx of [-1, 1]) {
       ball('hair', sx * 0.185, 1.105, -0.03, 0.115, 7, 5);
     }
+  },
+  // ぱっつん（前髪を横一直線に切り揃えた形）。2026-08-06 追加
+  hair_patsun() {
+    hairDome({
+      rings: BOB_RINGS, hemDrop: 0.06, lockTipY: -0.2, bangs: 'blunt',
+      // ⚠ 目にかからない高さで切る。-0.115 だと**目まで隠れた**（2026-08-06 実測）。
+      //   -0.075 は目にかかる長め、-0.055 が眉上。loyさんが -0.055 を選んだ
+      bangY: -0.055,
+    });
   },
   hair_pony() {
     bobDome();

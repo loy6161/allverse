@@ -81,5 +81,19 @@ ok('上限のとき、いちばん古いものが外れて新しいものが付�
 ok('「なし」を押すと全部外れる', toggleAccessory('halo+wing', 'none') === 'none');
 ok('知らないidを押しても壊れない', toggleAccessory('halo', 'ドラゴン') === 'halo');
 
+console.log('\n[★] 前髪メッシュは管理者・VIPだけ（2026-08-06追加）');
+{
+  const { stripStaffOnly } = await import('../src/accessory.js');
+  ok('管理者はそのまま付けられる', stripStaffOnly('mesh+halo', 'admin') === 'mesh+halo',
+    stripStaffOnly('mesh+halo', 'admin'));
+  ok('VIPも付けられる', stripStaffOnly('mesh', 'vip') === 'mesh', stripStaffOnly('mesh', 'vip'));
+  ok('★お客さんは落とされる', stripStaffOnly('mesh+halo', 'user') === 'halo',
+    stripStaffOnly('mesh+halo', 'user'));
+  ok('ゲストも落とされる', stripStaffOnly('mesh', 'guest') === '', stripStaffOnly('mesh', 'guest'));
+  ok('他のアクセは影響を受けない', stripStaffOnly('wing+halo', 'user') === 'wing+halo',
+    stripStaffOnly('wing+halo', 'user'));
+}
+
 console.log(`\n=== ${pass + fail}項目中 ${pass} PASS / ${fail} FAIL ===`);
 process.exit(fail ? 1 : 0);
+

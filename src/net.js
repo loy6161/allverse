@@ -30,6 +30,8 @@ export function configToAv(config) {
   // アクセサリーは複数（"wing+halo"）を許す（2026-08-04）。
   // 形は文字列のままなので presence の契約（v=1）は変わらない
   const ac = formatAccessories(cfg.accessory);
+  // 前髪メッシュの色（2026-08-06追加）。髪のカラーパレットの番号で送る
+  const mc = AVATAR_PARTS.hairColors.indexOf(cfg.meshColor);
   return {
     h,
     o,
@@ -41,6 +43,7 @@ export function configToAv(config) {
     pl: pl >= 0 ? pl : 0,
     ht,
     hd,
+    mc: mc >= 0 ? mc : 0,
   };
 }
 
@@ -61,6 +64,8 @@ export function avToConfig(av) {
   const height = AVATAR_PARTS.heights.includes(a.ht) ? a.ht : 'mid';
   // 未指定・知らない値は右利き（VRChat側の既定に合わせる）
   const handedness = a.hd === 'l' ? 'left' : 'right';
+  const mcIdx =
+    Number.isInteger(a.mc) && a.mc >= 0 && a.mc < AVATAR_PARTS.hairColors.length ? a.mc : 0;
   return {
     height,
     handedness,
@@ -72,6 +77,7 @@ export function avToConfig(av) {
     shirtColor: AVATAR_PARTS.shirtColors[scIdx],
     eyeColor: AVATAR_PARTS.eyeColors[ecIdx],
     penlightColor: AVATAR_PARTS.penlightColors[plIdx],
+    meshColor: AVATAR_PARTS.hairColors[mcIdx],
   };
 }
 

@@ -5,7 +5,7 @@ import { createCrowd } from './crowd.js';
 import { createClubWorld } from './world_club.js';
 import { createAvatar } from './avatar.js';
 import { preloadAvatars } from './avatar_glb.js';
-import { initJoinScreen, openCustomizer } from './join.js';
+import { initJoinScreen, openCustomizer, setKnownRole } from './join.js';
 import { openPlacePicker } from './placepick.js';
 import { saveLocalPrefs } from './prefs.js';
 import { getChatEmote } from './bubbletime.js';
@@ -710,6 +710,8 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
         if (net && !demoMode) net.sendYtEmote(getChatEmote());
         if (ytChat) ytChat.setLinkState(ytLinkState);
         myRole = role || 'user';
+        // アバター変更画面の出し分け用（管理者・VIP専用のアクセサリー）
+        setKnownRole(myRole);
         canControlVideo = canControl !== false;
         isAdminUser = isAdmin !== false;
 

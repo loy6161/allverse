@@ -5,7 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createTextSprite } from './avatar.js';
 import { playClap } from './sfx.js';
 import { bubbleMs } from './bubbletime.js';
-import { parseAccessories } from './accessory.js';
+import { parseAccessories, STAFF_ONLY_ACCESSORIES } from './accessory.js';
 
 // ------------------------------------------------------------------
 // GLBアバター（Blender製・設計メッシュ版）
@@ -20,7 +20,7 @@ import { parseAccessories } from './accessory.js';
 // ------------------------------------------------------------------
 
 // パーツ合成方式: body_<服装> + hair_<髪型> + acc_<アクセ> を実行時に組む
-export const GLB_STYLES = ['long', 'bob', 'short', 'twin', 'bun', 'pony'];
+export const GLB_STYLES = ['long', 'bob', 'short', 'twin', 'bun', 'pony', 'patsun'];
 // ※ ゲスト専用の「髪なし」は選択肢に入れない（選べてしまうと見分けにならない）
 export const GLB_OUTFITS = ['middle', 'long', 'short'];
 export const GLB_ACCESSORIES = [
@@ -89,7 +89,11 @@ function partsFor(config) {
   }
   // アクセサリーは複数付けられる（2026-08-04）。"wing+halo" のように来る。
   // 判定は accessory.js に集約してある（サーバーと同じものを読む）
-  for (const acc of parseAccessories(config.accessory)) keys.push(`acc_${acc}`);
+  for (const acc of parseAccessories(config.accessory)) {
+    // ⚠ 前髪メッシュは3Dパーツを持たない（髪の材質に描く）。読みに行くと404になる
+    if (acc === 'mesh') continue;
+    keys.push(`acc_${acc}`);
+  }
   return keys;
 }
 
@@ -97,7 +101,8 @@ export function preloadAvatars() {
   for (const o of GLB_OUTFITS) loadPart(`body_${o}`);
   for (const h of GLB_STYLES) loadPart(`hair_${h}`);
   for (const a of GLB_ACCESSORIES) {
-    if (a !== 'none') loadPart(`acc_${a}`);
+    if (a === 'none' || a === 'mesh') continue; // mesh は3Dパーツを持たない
+    loadPart(`acc_${a}`);
   }
 }
 
@@ -142,6 +147,53 @@ function toon(color, emissiveScale = 0.42) {
   return tagNoBloom(mat);
 }
 
+/**
+ * 前髪メッシュ（2026-08-06追加・loyさん要望「前髪に黒メッシュ」）。
+ *
+ * ★ 3Dパーツを足さず、**髪の材質に筋を描く**。
+ *   髪は低ポリ（369頂点）なので、頂点を塗り分けると角ばる（試して確認済み）。
+ *   材質側で「この範囲だけ別の色」にすれば、**髪型6種すべてで一発**で効き、
+ *   髪型を足したときも何もしなくてよい。
+ *
+ * ⚠ 範囲はジオメトリの**局所座標**で指定する。GLBのノードがX+90°回っているので、
+ *   局所x=左右／局所y=前後（+が前）／局所z=上下（負が上）。
+ *   下の値は画面で詰めたもの（loyさんが「1つめ」を選んだ太さ）。
+ */
+const MESH_STREAK = {
+  x: [-0.155, -0.105], // 左右の位置と太さ
+  frontY: -0.02, // これより前だけ
+  z: [-0.98, -0.66], // 上下の範囲
+};
+
+function applyHairStreak(mat, streakColor) {
+  const uniforms = {
+    uStreak: { value: new THREE.Color(streakColor) },
+    uX: { value: new THREE.Vector2(MESH_STREAK.x[0], MESH_STREAK.x[1]) },
+    uFrontY: { value: MESH_STREAK.frontY },
+    uZ: { value: new THREE.Vector2(MESH_STREAK.z[0], MESH_STREAK.z[1]) },
+  };
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, uniforms);
+    sh.vertexShader = 'varying vec3 vLocalPos;\n'
+      + sh.vertexShader.replace('#include <begin_vertex>',
+        '#include <begin_vertex>\n  vLocalPos = position;');
+    const decl = 'varying vec3 vLocalPos;\nuniform vec3 uStreak;\nuniform vec2 uX;\n'
+      + 'uniform float uFrontY;\nuniform vec2 uZ;\n'
+      + 'float streakMask(vec3 p) {\n'
+      + '  return step(uX.x, p.x) * step(p.x, uX.y) * step(uFrontY, p.y)'
+      + ' * step(uZ.x, p.z) * step(p.z, uZ.y);\n}\n';
+    sh.fragmentShader = decl + sh.fragmentShader
+      .replace('#include <color_fragment>',
+        '#include <color_fragment>\n  diffuseColor.rgb = '
+        + 'mix(diffuseColor.rgb, uStreak, streakMask(vLocalPos));')
+      // ⚠ 発光にも同じ形を掛ける。掛けないとメッシュの部分だけ髪色で浮いて見える
+      .replace('vec3 totalEmissiveRadiance = emissive;',
+        'vec3 totalEmissiveRadiance = mix(emissive, uStreak * 0.42, streakMask(vLocalPos));');
+  };
+  mat.needsUpdate = true;
+  return mat;
+}
+
 export function createGlbAvatar(config) {
   const {
     bodyColor = '#ffdbac',
@@ -149,6 +201,8 @@ export function createGlbAvatar(config) {
     shirtColor = '#f2f2f4',
     eyeColor = '',
     penlightColor = '',
+    // 前髪メッシュの色（2026-08-06追加）。髪のカラーパレットから選ぶ
+    meshColor = '',
     height = 'mid',
     name = '',
     badge = '', // '' | 'admin' | 'vip' | 'npc' … ネームプレートの見た目を変える
@@ -177,8 +231,15 @@ export function createGlbAvatar(config) {
     new THREE.Color('#ffffff'),
     0.3,
   );
+  // 前髪メッシュを付けているか（アクセサリーの一つ）
+  const hasStreak = parseAccessories((config || {}).accessory).includes('mesh');
+  const streakColor = meshColor || '#141414';
+
   const MAT_BUILDERS = {
-    MatHair: () => toon(hairColor),
+    MatHair: () => {
+      const m = toon(hairColor);
+      return hasStreak ? applyHairStreak(m, streakColor) : m;
+    },
     MatSkin: () => toon(bodyColor),
     MatCloth: () => toon(shirtColor),
     MatDark: () => toon(bottomColor, 0.35),

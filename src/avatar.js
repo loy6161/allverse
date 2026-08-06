@@ -26,12 +26,16 @@ export const AVATAR_PARTS = {
   // 未知のidを受けた側は先頭にフォールバックする（net.js）ので追加は後方互換
   // ※「long」は承認済みボブ形状の名前（旧bobをリネーム。旧ロングは廃止）
   //   「bob」はあご下丈、「short」は耳が出る短さ（2026-07-29 追加）
-  hairStyles: ['long', 'bob', 'short', 'twin', 'bun', 'pony'],
+  // 2026-08-06 追加: ぱっつん（前髪を横一直線に切り揃えた形・loyさん要望）
+  hairStyles: ['long', 'bob', 'short', 'twin', 'bun', 'pony', 'patsun'],
   outfits: ['middle', 'long', 'short'],
   // 2026-08-03 追加: しっぽ・羽・天使の輪・リボン・サングラス・メガネ
   accessories: [
     'none', 'kemo', 'ahoge',
     'tail', 'wing', 'halo', 'ribbon', 'sunglasses', 'glasses',
+    // 2026-08-06 追加: 前髪メッシュ（管理者・VIPだけが選べる）。
+    // ⚠ これだけは**3Dパーツを足さない**。髪の材質に筋を描く（avatar_glb.js の toon 参照）
+    'mesh',
   ],
   // 利き手（2026-08-04追加）。片手のエモート（手をふる／ペンライト／コブシ／乾杯）と
   // 持ち物（ペンライト・ジョッキ）がどちらの手になるか。
@@ -61,6 +65,8 @@ export function randomConfig() {
     shirtColor: pick(AVATAR_PARTS.shirtColors),
     eyeColor: pick(AVATAR_PARTS.eyeColors),
     penlightColor: pick(AVATAR_PARTS.penlightColors),
+    // 前髪メッシュの色（既定は暗い髪色。アクセサリーを付けたときだけ使う）
+    meshColor: AVATAR_PARTS.hairColors[0],
     height: 'mid',
     // ランダムにしない。VRChat側に合わせた既定（右）から始める
     handedness: 'right',
