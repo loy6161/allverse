@@ -212,8 +212,12 @@ Authorization: Bearer <スタッフ用トークン>
 > 現在のアバターはGLB製（Blender）で、**モデルそのものをVRC側へ渡す**方針に変更（loyさん指示）。
 > **詳細と素材の場所は `HANDOFF_UNITY_3_AVATAR.md` が正本。**ここは要点だけ。
 
-- 素材: `assets/avatars/*.glb`（11ファイル・計185KB）。全部自作＝購入アセットなし
-- 組み立て: `body_<o>` + `hair_<h>` + `acc_<ac>` を原点に重ねるだけ（位置合わせ不要）
+- 素材: `assets/avatars/*.glb`。全部自作＝購入アセットなし
+- 組み立て: `body_<o>` + `hair_<hl>_<hb>` + `hairx_<hs>`（結わないときは無し）+ `acc_<ac>` を
+  原点に重ねるだけ（位置合わせ不要）
+- ⚠ **2026-08-06に髪の持ち方を変えた**。それまでの `hair_<h>` は廃止し、
+  **長さ×前髪を焼いた1枚**（`hair_<長さ>_<前髪>`・12個）＋**結い方の房**（`hairx_*`・3個）になった。
+  くわしくは `HANDOFF_UNITY_10_HAIR.md`
 - 身長 **1.16m**・足元 Y=0・目の高さ 0.79m（VRChatの人型より小さいデフォルメ体型）
 - 色はGLB内のマテリアル名で塗る: `MatSkin`/`MatHair`/`MatCloth`/`MatDark`/`MatEye`/`MatEyeC`/`MatEyeGlint`/`MatCheek`
 
@@ -221,7 +225,10 @@ Authorization: Bearer <スタッフ用トークン>
 
 | キー | 型 | 内容 |
 |---|---|---|
-| `h` | 文字列 | `long` / `bob` / `short` / `twin` / `bun` / `pony` |
+| `hl` | 文字列 | **髪の長さ** `long` / `bob` / `short`（2026-08-06追加） |
+| `hs` | 文字列 | **髪型（結い方）** `none` / `twin` / `bun` / `pony`（2026-08-06追加） |
+| `hb` | 文字列 | **前髪** `std` / `patsun` / `partr` / `partl`（2026-08-06追加） |
+| `h` | 文字列 | 旧・髪型id。**互換のため残してある**（`long`/`bob`/`short`/`twin`/`bun`/`pony`/`patsun`/`partr`/`partl`）。<br>3つのうち「結い方 → 前髪 → 長さ」の順でいちばん近いものが入る。<br>⚠ ここだけ見ると**長さと前髪の組み合わせが落ちる**（例: ショート＋ぱっつん → `patsun`）。<br>新しく作るなら `hl`/`hs`/`hb` を見ること |
 | `o` | 文字列 | `middle` / `long` / `short` |
 | `ac` | 文字列 | `none` / `kemo` / `ahoge` |
 | `hc` `sc` `ec` `pl` | 0〜13 | 髪／服／瞳／ペンライト（下の14色） |

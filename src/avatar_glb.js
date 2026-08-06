@@ -6,6 +6,7 @@ import { createTextSprite } from './avatar.js';
 import { playClap } from './sfx.js';
 import { bubbleMs } from './bubbletime.js';
 import { parseAccessories, STAFF_ONLY_ACCESSORIES } from './accessory.js';
+import { normalizeHair } from './hair.js';
 
 // ------------------------------------------------------------------
 // GLBアバター（Blender製・設計メッシュ版）
@@ -20,7 +21,11 @@ import { parseAccessories, STAFF_ONLY_ACCESSORIES } from './accessory.js';
 // ------------------------------------------------------------------
 
 // パーツ合成方式: body_<服装> + hair_<髪型> + acc_<アクセ> を実行時に組む
-export const GLB_STYLES = ['long', 'bob', 'short', 'twin', 'bun', 'pony', 'patsun', 'partr', 'partl'];
+// 髪は「長さ×前髪」を焼いた1枚（hair_<長さ>_<前髪>）に、
+// 結い方の房（hairx_<髪型>）を重ねて作る。詳しくは hair.js と tools/gen_avatar_obj.mjs
+export const GLB_LENGTHS = ['long', 'bob', 'short'];
+export const GLB_BANGS = ['std', 'patsun', 'partr', 'partl'];
+export const GLB_ARRANGE = ['twin', 'bun', 'pony']; // 'none' は房を足さない
 // ※ ゲスト専用の「髪なし」は選択肢に入れない（選べてしまうと見分けにならない）
 export const GLB_OUTFITS = ['middle', 'long', 'short'];
 export const GLB_ACCESSORIES = [
@@ -83,9 +88,12 @@ function partsFor(config) {
   const keys = [`body_${outfit}`];
   // ゲストは髪なし（2026-08-02）。アクセの 'none' と同じで、単に足さないだけ。
   // 新しい3Dアセットが要らないうえ、シルエットで一目でゲストと分かる
-  if (config.hairStyle !== GUEST_HAIR) {
-    const hair = GLB_STYLES.includes(config.hairStyle) ? config.hairStyle : GLB_STYLES[0];
-    keys.push(`hair_${hair}`);
+  const hair = normalizeHair(config);
+  if (hair.hairLength !== GUEST_HAIR) {
+    keys.push(`hair_${hair.hairLength}_${hair.bangs}`);
+    // 結い方（ツインテール・お団子・ポニー）は房だけの別パーツ。
+    // 選んだときだけ描画が1回増える
+    if (GLB_ARRANGE.includes(hair.hairStyle)) keys.push(`hairx_${hair.hairStyle}`);
   }
   // アクセサリーは複数付けられる（2026-08-04）。"wing+halo" のように来る。
   // 判定は accessory.js に集約してある（サーバーと同じものを読む）
@@ -99,7 +107,8 @@ function partsFor(config) {
 
 export function preloadAvatars() {
   for (const o of GLB_OUTFITS) loadPart(`body_${o}`);
-  for (const h of GLB_STYLES) loadPart(`hair_${h}`);
+  for (const len of GLB_LENGTHS) for (const b of GLB_BANGS) loadPart(`hair_${len}_${b}`);
+  for (const a of GLB_ARRANGE) loadPart(`hairx_${a}`);
   for (const a of GLB_ACCESSORIES) {
     if (a === 'none' || a === 'mesh') continue; // mesh は3Dパーツを持たない
     loadPart(`acc_${a}`);

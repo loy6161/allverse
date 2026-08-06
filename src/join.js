@@ -3,6 +3,7 @@ import { AVATAR_PARTS, randomConfig, createAvatar } from './avatar.js';
 import { guestLookFor } from './guestlook.js';
 import { getVisitorId } from './visitorid.js';
 import { avToConfig } from './net.js';
+import { normalizeHair } from './hair.js';
 import { fetchConfig, getConfig, renderLoginButton, getIdToken, isSignedIn } from './login.js';
 import { APP_NAME, APP_TAGLINE } from './brand.js';
 import { loadLocalPrefs, saveLocalPrefs, fetchServerPrefs, shouldUseServerPrefs } from './prefs.js';
@@ -18,17 +19,25 @@ import {
 // 入場画面の「📢 お知らせ」欄に出す件数。多すぎると縦に伸びすぎるため5件に絞る
 const UPDATES_DISPLAY_COUNT = 5;
 
-const HAIR_LABELS = {
+// 髪は「長さ・髪型（結い方）・前髪」の3つを選んで組み合わせる（2026-08-06・loyさん指示）
+const HAIR_LENGTH_LABELS = {
   long: 'ロング',
   bob: 'ボブ',
   short: 'ショート',
+};
+
+const HAIR_LABELS = {
+  none: 'そのまま',
   twin: 'ツインテール',
   bun: 'お団子',
   pony: 'ポニーテール',
+};
+
+const BANGS_LABELS = {
+  std: '標準',
   patsun: 'ぱっつん',
   partr: '右分け',
   partl: '左分け',
-  hat: 'ぼうし',
 };
 
 const OUTFIT_LABELS = {
@@ -483,8 +492,16 @@ function buildCustomizeScreen({
           </div>
           <div class="join-customize">
             <div class="customize-row">
+              <div class="customize-label">髪の長さ</div>
+              <div class="hairstyle-buttons" id="hairlength-buttons"></div>
+            </div>
+            <div class="customize-row">
               <div class="customize-label">髪型</div>
               <div class="hairstyle-buttons" id="hairstyle-buttons"></div>
+            </div>
+            <div class="customize-row">
+              <div class="customize-label">前髪</div>
+              <div class="hairstyle-buttons" id="bangs-buttons"></div>
             </div>
             <div class="customize-row">
               <div class="customize-label">服装</div>
@@ -583,7 +600,8 @@ function buildCustomizeScreen({
 
   const config = { ...initialConfig };
   // 旧保存configとの互換: 新フィールドが無ければ既定を補い、廃止した髪型はフォールバック
-  if (!AVATAR_PARTS.hairStyles.includes(config.hairStyle)) config.hairStyle = AVATAR_PARTS.hairStyles[0];
+  // 髪は3つ（長さ・髪型・前髪）。古い1つだけの保存データはここで読み替わる
+  Object.assign(config, normalizeHair(config));
   if (!AVATAR_PARTS.outfits.includes(config.outfit)) config.outfit = AVATAR_PARTS.outfits[0];
   // アクセサリーは複数付けになった（"wing+halo"）。ここで正規化すれば、
   // 古い保存データ（1つだけ）も新しいデータも同じ形になる
@@ -738,7 +756,9 @@ function buildCustomizeScreen({
     el.appendChild(hint);
   }
 
+  buildButtonRow('hairlength-buttons', AVATAR_PARTS.hairLengths, HAIR_LENGTH_LABELS, 'hairLength');
   buildButtonRow('hairstyle-buttons', AVATAR_PARTS.hairStyles, HAIR_LABELS, 'hairStyle');
+  buildButtonRow('bangs-buttons', AVATAR_PARTS.bangs, BANGS_LABELS, 'bangs');
   buildButtonRow('outfit-buttons', AVATAR_PARTS.outfits, OUTFIT_LABELS, 'outfit');
   buildAccessoryRow();
   buildButtonRow('height-buttons', AVATAR_PARTS.heights, HEIGHT_LABELS, 'height');
@@ -802,7 +822,9 @@ function buildCustomizeScreen({
       rebuildPreviewAvatar();
     }
     const rows = [
+      'hairlength-buttons',
       'hairstyle-buttons',
+      'bangs-buttons',
       'outfit-buttons',
       'accessory-buttons',
       'height-buttons',

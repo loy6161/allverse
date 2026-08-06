@@ -421,7 +421,11 @@ export async function loadProfile(email) {
     // ⚠ 既に混ざってしまった記録の後始末。
     //   保存側は塞いだが、それ以前に書かれた「髪なし」がDBに残っている人がいる。
     //   読むときに落としておけば、次に入ったとき既定の髪型に戻る（2026-08-03）
-    if (av && av.h === GUEST_HAIR) delete av.h;
+    if (av && av.h === GUEST_HAIR) {
+      delete av.h;
+      // 髪は3分割になった（2026-08-06）。新しい形の「髪なし」は hl 側に入る
+      delete av.hl;
+    }
     // いつ保存したか。ブラウザ側の保存とどちらが新しいかを比べるのに使う
     // （2026-08-04 loyさん「ログインでアバター違うのになる」→ 古い記録が
     //   その端末の新しい姿を上書きしていた）
@@ -439,7 +443,7 @@ export async function saveProfile(email, name, av) {
   //   混ざると「一度ゲストで入ったら、次にログインしても髪なしのまま」になる
   //   （2026-08-03 loyさん指摘）。ゲストの姿はサーバーが毎回 visitor から作るので、
   //   保存しなくても何も失われない
-  if (av && av.h === GUEST_HAIR) {
+  if (av && (av.h === GUEST_HAIR || av.hl === GUEST_HAIR)) {
     return false;
   }
   try {

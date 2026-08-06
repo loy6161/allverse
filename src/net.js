@@ -1,12 +1,13 @@
 import { AVATAR_PARTS } from './avatar.js';
 import { getVisitorId } from './visitorid.js';
-import { GUEST_HAIR } from './guestlook.js';
 import { formatAccessories } from './accessory.js';
+import { normalizeHair, legacyHairId } from './hair.js';
 
 // ------------------------------------------------------------------
 // アバターconfig（hex色形式） ⇔ av（プリセット番号形式）の相互変換
 // PROTOCOL.md / PRESENCE_SPEC.md 付録A と同一の対応表（avatar.js の AVATAR_PARTS）
-//   av.h  = 髪型id（文字列。AVATAR_PARTS.hairStyles の値そのもの）
+//   av.hl = 髪の長さ / av.hs = 髪型（結い方）/ av.hb = 前髪（2026-08-06に3分割）
+//   av.h  = 旧・髪型id（互換用。VRChat側と古いクライアントはこれだけを見る）
 //   av.hc = 髪色プリセット番号（AVATAR_PARTS.hairColors のindex）
 //   av.sc = 服色プリセット番号（AVATAR_PARTS.shirtColors のindex）
 //   av.bc = 肌色プリセット番号（AVATAR_PARTS.bodyColors のindex）
@@ -19,7 +20,11 @@ export function configToAv(config) {
   const bc = AVATAR_PARTS.bodyColors.indexOf(cfg.bodyColor);
   const ec = AVATAR_PARTS.eyeColors.indexOf(cfg.eyeColor);
   const pl = AVATAR_PARTS.penlightColors.indexOf(cfg.penlightColor);
-  const h = AVATAR_PARTS.hairStyles.includes(cfg.hairStyle) ? cfg.hairStyle : AVATAR_PARTS.hairStyles[0];
+  // 髪は3つ（長さ・髪型・前髪）で持つ（2026-08-06）。
+  // ⚠ av.h は**残す**。VRChat側と古いクライアントは今も h しか見ないので、
+  //   いちばん近い古いidを載せる（hair.js の legacyHairId）
+  const hair = normalizeHair(cfg);
+  const h = legacyHairId(hair);
   // 身長（2026-08-03追加）。未指定は 'mid'（従来と同じ背丈）なので、
   // 古いクライアント・古い保存データでも見た目は変わらない
   const ht = AVATAR_PARTS.heights.includes(cfg.height) ? cfg.height : 'mid';
@@ -34,6 +39,9 @@ export function configToAv(config) {
   const mc = AVATAR_PARTS.hairColors.indexOf(cfg.meshColor);
   return {
     h,
+    hl: hair.hairLength,
+    hs: hair.hairStyle,
+    hb: hair.bangs,
     o,
     ac,
     hc: hc >= 0 ? hc : 0,
@@ -55,9 +63,11 @@ export function avToConfig(av) {
   const ecIdx = Number.isInteger(a.ec) && a.ec >= 0 && a.ec < AVATAR_PARTS.eyeColors.length ? a.ec : 0;
   const plIdx =
     Number.isInteger(a.pl) && a.pl >= 0 && a.pl < AVATAR_PARTS.penlightColors.length ? a.pl : 0;
-  // ゲストの「髪なし」は選択肢に無い値なので、ここで潰さないよう明示的に通す
-  const hairStyle =
-    a.h === GUEST_HAIR || AVATAR_PARTS.hairStyles.includes(a.h) ? a.h : AVATAR_PARTS.hairStyles[0];
+  // 髪（2026-08-06から3つ）。新しい hl/hs/hb があればそれを使い、
+  // 無ければ古い h から読み替える。ゲストの「髪なし」もここで通る
+  const hair = normalizeHair(
+    a.hl != null ? { hairLength: a.hl, hairStyle: a.hs, bangs: a.hb } : { hairStyle: a.h },
+  );
   const outfit = AVATAR_PARTS.outfits.includes(a.o) ? a.o : AVATAR_PARTS.outfits[0];
   const accessory = formatAccessories(a.ac);
   // 知らない値・未指定はすべて 'mid' に倒す（受け取り側の後方互換）
@@ -70,7 +80,7 @@ export function avToConfig(av) {
     height,
     handedness,
     bodyColor: AVATAR_PARTS.bodyColors[bcIdx],
-    hairStyle,
+    ...hair,
     outfit,
     accessory,
     hairColor: AVATAR_PARTS.hairColors[hcIdx],

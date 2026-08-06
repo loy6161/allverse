@@ -10,8 +10,8 @@
 //
 // 座標系: OBJ標準 (Y=上, キャラは +Z を向く)。単位 m。身長 ≈ 1.21m
 // 使い方: node tools/gen_avatar_obj.mjs <part>
-//   part: hair_long | hair_short | hair_twin | hair_bun | hair_pony | hair_patsun
-//       | hair_partr | hair_partl
+//   part: hair_<長さ>_<前髪>  長さ=long|bob|short × 前髪=std|patsun|partr|partl（12通り）
+//       | hairx_twin | hairx_bun | hairx_pony（髪型＝結い方。ドームに重ねる房だけ）
 //       | body_long | body_middle | body_short
 //       | acc_kemo | acc_ahoge | acc_tail | acc_wing | acc_halo | acc_ribbon
 //       | acc_glasses | acc_sunglasses
@@ -325,60 +325,39 @@ function ahoge() {
 // ---------------------------------------------------------------
 const BOB_RINGS = RINGS_ALL.slice(0, 5); // R5まで（あご下で切り揃え）＝ボブ
 const SHORT_RINGS = RINGS_ALL.slice(0, 4); // R4まで（耳が出る短さ）＝ショート
-const bobDome = () => hairDome({ rings: BOB_RINGS, hemDrop: 0.06, lockTipY: -0.2 });
+
+// ---------------------------------------------------------------
+// 髪は「長さ × 前髪」で1枚のGLBに焼き、「髪型（結い方）」だけ後付けパーツにする。
+// （2026-08-06 loyさん指示「髪の長さ・髪型・前髪の3つの組み合わせ」）
+//
+// なぜ全部（3×4×4=48通り）を焼かないか:
+//   髪型（ツイン・お団子・ポニー）は**ドームに房を足すだけ**なので、
+//   別パーツにすれば 12＋3=15個で48通りを表せる。48個ぜんぶ焼くと
+//   読み込みが4倍になるうえ、前髪を1つ足すたびに12個増える。
+//
+// なぜ前髪は別パーツにしないか:
+//   前髪はドームの生え際と**縫い合わせて**作っている（同じ頂点を共有する）。
+//   切り離すと隙間が見えるので、長さと一緒に焼くのが正しい。
+// ---------------------------------------------------------------
+const LENGTHS = {
+  long: { rings: RINGS_ALL, hemDrop: 0.075, lockTipY: -0.24 },
+  bob: { rings: BOB_RINGS, hemDrop: 0.06, lockTipY: -0.2 },
+  short: { rings: SHORT_RINGS, hemDrop: 0.05, lockTipY: -0.16 },
+};
+const BANGS = {
+  // 標準（中央V字＋左右の房）。2026-07-29 承認の形
+  std: {},
+  // ぱっつん: 横一直線に切り揃える。
+  // ⚠ -0.115 だと**目まで隠れた**（2026-08-06 実測）。-0.055 が眉上で、loyさんの選択
+  patsun: { bangs: 'blunt', bangY: -0.055 },
+  // 右分け・左分け: 同じ「横に切る」作りだが、高さを列ごとに変えて**斜めに流す**。
+  // 分け目側は生え際すれすれ、反対側は目の高さまで下りる。最後の列だけ少し上げて耳にかける。
+  // ⚠ 並びは向かって左(列17)→右(列3)。「右分け」は**本人から見て右**＝向かって左に分け目
+  partr: { bangs: 'blunt', bangYs: [-0.015, -0.02, -0.045, -0.07, -0.09, -0.105, -0.085] },
+  partl: { bangs: 'blunt', bangYs: [-0.085, -0.105, -0.09, -0.07, -0.045, -0.02, -0.015] },
+};
+
 const PARTS = {
-  hair_long() {
-    hairDome({});
-  },
-  hair_bob() {
-    bobDome();
-  },
-  hair_short() {
-    hairDome({ rings: SHORT_RINGS, hemDrop: 0.05, lockTipY: -0.16 });
-  },
-  hair_twin() {
-    bobDome();
-    for (const sx of [-1, 1]) {
-      ball('hair', sx * 0.27, 1.0, -0.06, 0.055, 6, 4);
-      cone3('hair', [sx * 0.29, 0.98, -0.07], [sx * 0.38, 0.44, -0.05], 0.075);
-    }
-  },
-  hair_bun() {
-    bobDome();
-    for (const sx of [-1, 1]) {
-      ball('hair', sx * 0.185, 1.105, -0.03, 0.115, 7, 5);
-    }
-  },
-  // ぱっつん（前髪を横一直線に切り揃えた形）。2026-08-06 追加
-  hair_patsun() {
-    hairDome({
-      rings: BOB_RINGS, hemDrop: 0.06, lockTipY: -0.2, bangs: 'blunt',
-      // ⚠ 目にかからない高さで切る。-0.115 だと**目まで隠れた**（2026-08-06 実測）。
-      //   -0.075 は目にかかる長め、-0.055 が眉上。loyさんが -0.055 を選んだ
-      bangY: -0.055,
-    });
-  },
-  // 右分け・左分け（2026-08-06 追加）。ぱっつんと同じ「横に切る」作りだが、
-  // 高さを列ごとに変えて**斜めに流す**。分け目側は生え際すれすれで浅く、
-  // 反対側へ向かって下がっていく。最後の列だけ少し上げて、耳にかける形にする。
-  // ⚠ 並びは向かって左(列17)→右(列3)。「右分け」は**本人から見て右**＝向かって左に分け目。
-  hair_partr() {
-    hairDome({
-      rings: BOB_RINGS, hemDrop: 0.06, lockTipY: -0.2, bangs: 'blunt',
-      bangYs: [-0.015, -0.02, -0.045, -0.07, -0.09, -0.105, -0.085],
-    });
-  },
-  hair_partl() {
-    hairDome({
-      rings: BOB_RINGS, hemDrop: 0.06, lockTipY: -0.2, bangs: 'blunt',
-      bangYs: [-0.085, -0.105, -0.09, -0.07, -0.045, -0.02, -0.015],
-    });
-  },
-  hair_pony() {
-    bobDome();
-    ball('hair', 0, 0.99, -0.28, 0.07, 6, 4);
-    cone3('hair', [0, 0.96, -0.31], [0, 0.38, -0.4], 0.11);
-  },
   body_long() {
     headSkin();
     face();
@@ -472,6 +451,33 @@ const PARTS = {
     quad('dark', [-0.025, 0.804, 0.246], [0.025, 0.804, 0.246], [0.025, 0.79, 0.246], [-0.025, 0.79, 0.246]);
   },
 };
+
+// 長さ × 前髪 = hair_<長さ>_<前髪>（12個）
+for (const [len, lp] of Object.entries(LENGTHS)) {
+  for (const [bang, bp] of Object.entries(BANGS)) {
+    PARTS[`hair_${len}_${bang}`] = () => hairDome({ ...lp, ...bp });
+  }
+}
+
+// 髪型（結い方）= hairx_<髪型>。ドームは含まず、**足す房だけ**を出す。
+// どの長さ・どの前髪の上にも同じものを重ねられる
+Object.assign(PARTS, {
+  hairx_twin() {
+    for (const sx of [-1, 1]) {
+      ball('hair', sx * 0.27, 1.0, -0.06, 0.055, 6, 4);
+      cone3('hair', [sx * 0.29, 0.98, -0.07], [sx * 0.38, 0.44, -0.05], 0.075);
+    }
+  },
+  hairx_bun() {
+    for (const sx of [-1, 1]) {
+      ball('hair', sx * 0.185, 1.105, -0.03, 0.115, 7, 5);
+    }
+  },
+  hairx_pony() {
+    ball('hair', 0, 0.99, -0.28, 0.07, 6, 4);
+    cone3('hair', [0, 0.96, -0.31], [0, 0.38, -0.4], 0.11);
+  },
+});
 
 if (!PARTS[PART]) {
   console.error(`unknown part: ${PART}. available: ${Object.keys(PARTS).join(', ')}`);

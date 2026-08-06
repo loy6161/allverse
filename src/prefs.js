@@ -51,7 +51,9 @@ export function loadLocalPrefs() {
   //   これはサーバーがゲストに割り当てる姿であって、本人が選んだものではない。
   //   残っていると「一度ゲストで入ったら、ログインしても髪なしのまま」になる
   //   （2026-08-03 loyさん指摘）。選択肢に無い値なので、消せば既定の髪型に戻る
+  //   髪は3分割になったので（2026-08-06）、長さ側も見る
   if (config.hairStyle === GUEST_HAIR) delete config.hairStyle;
+  if (config.hairLength === GUEST_HAIR) delete config.hairLength;
   return { config, savedAt };
 }
 
@@ -62,6 +64,7 @@ export function saveLocalPrefs({ config }) {
   // ここを通してしまうと、次にログインしたときまで引き継がれる
   const clean = { ...config };
   if (clean.hairStyle === GUEST_HAIR) delete clean.hairStyle;
+  if (clean.hairLength === GUEST_HAIR) delete clean.hairLength;
   safeWrite({ config: clean, savedAt: Date.now() });
 }
 

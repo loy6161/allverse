@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createGlbAvatar } from './avatar_glb.js';
+import { HAIR_LENGTHS, HAIR_ARRANGES, BANGS } from './hair.js';
 
 // ------------------------------------------------------------------
 // プリセット式・デフォルメちびキャラアバター
@@ -24,10 +25,16 @@ export const AVATAR_PARTS = {
   ],
   // GLBアバター（Blender製）のパーツ一覧。wireには文字列がそのまま乗り、
   // 未知のidを受けた側は先頭にフォールバックする（net.js）ので追加は後方互換
+  //
+  // ★ 髪は「長さ × 髪型（結い方） × 前髪」の3つの組み合わせで決める（2026-08-06・loyさん指示）。
+  //   それまでは1つのidに全部入っていた（'twin' がボブ＋ツインテールを指す等）。
+  //   古いidは net.js / prefs.js が自動で3つに読み替える（LEGACY_HAIR）
   // ※「long」は承認済みボブ形状の名前（旧bobをリネーム。旧ロングは廃止）
   //   「bob」はあご下丈、「short」は耳が出る短さ（2026-07-29 追加）
-  // 2026-08-06 追加: ぱっつん（前髪を横一直線に切り揃えた形・loyさん要望）
-  hairStyles: ['long', 'bob', 'short', 'twin', 'bun', 'pony', 'patsun', 'partr', 'partl'],
+  //   一覧の原本は hair.js（サーバー側のテストから読めるように three と切り離してある）
+  hairLengths: HAIR_LENGTHS,
+  hairStyles: HAIR_ARRANGES,
+  bangs: BANGS,
   outfits: ['middle', 'long', 'short'],
   // 2026-08-03 追加: しっぽ・羽・天使の輪・リボン・サングラス・メガネ
   accessories: [
@@ -58,7 +65,9 @@ function pick(arr) {
 export function randomConfig() {
   return {
     bodyColor: pick(AVATAR_PARTS.bodyColors),
+    hairLength: pick(AVATAR_PARTS.hairLengths),
     hairStyle: pick(AVATAR_PARTS.hairStyles),
+    bangs: pick(AVATAR_PARTS.bangs),
     outfit: pick(AVATAR_PARTS.outfits),
     accessory: pick(AVATAR_PARTS.accessories),
     hairColor: pick(AVATAR_PARTS.hairColors),
