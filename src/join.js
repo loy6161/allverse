@@ -98,6 +98,10 @@ function injectStyle() {
 
 .join-panel {
   width: min(860px, 92vw);
+  /* ⚠ 高さは「中身なり」ではなく先に決める（2026-08-07）。
+     中身なりにすると、右カラム（お知らせ＋なまえ＋ボタン＝約340px）で高さが決まり、
+     左の項目が3行ぶんしか見えなくなる。スクショで確認して直した */
+  height: min(780px, 92vh);
   max-height: 92vh;
   /* ⚠ パネル全体はスクロールさせない（2026-08-07・loyさん指摘
      「右のスクロールバーは要らなくて、項目のところだけスクロールでいい」）。
@@ -511,9 +515,12 @@ function injectStyle() {
 }
 
 @media (max-width: 640px) {
-  .join-panel { padding: 20px; overflow-y: auto; }
-  /* スマホは今まで通り縦1カラム。お知らせは「なまえ」の上に来る（DOM順のまま） */
-  .join-body { flex-direction: column; flex-wrap: wrap; }
+  /* ⚠ 高さを決め打ちしない。スマホは縦に積むので、パネルごとスクロールさせる */
+  .join-panel { padding: 20px; height: auto; overflow-y: auto; }
+  /* スマホは今まで通り縦1カラム。お知らせは「なまえ」の上に来る（DOM順のまま）。
+     ⚠ flex-wrap は **nowrap**。縦積み＋wrap＋高さ制限だと、入りきらない列が
+     **横に折り返して画面の外へ出る**（2026-08-07 幅375pxで実測して発見） */
+  .join-body { flex-direction: column; flex-wrap: nowrap; }
   .join-col-left, .join-col-right { width: 100%; }
   .join-preview {
     width: 100%;
@@ -881,6 +888,10 @@ function buildCustomizeScreen({
     document.querySelectorAll('.customize-row[data-tab]').forEach((el) => {
       el.classList.toggle('tab-hidden', el.dataset.tab !== tab);
     });
+    // ⚠ スクロール位置を戻す。戻さないと、前のタブで下まで送った位置のまま
+    //   次のタブが開き、先頭の項目が隠れて見える（2026-08-07 レビューで発見）
+    const box = document.querySelector('.join-customize');
+    if (box) box.scrollTop = 0;
     document.querySelectorAll('.ctab').forEach((b) => {
       b.classList.toggle('selected', b.dataset.tab === tab);
     });
