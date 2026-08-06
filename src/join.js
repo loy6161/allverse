@@ -152,7 +152,11 @@ function injectStyle() {
   width: 300px;
   height: 300px;
   border-radius: 14px;
-  background: radial-gradient(circle at 50% 30%, rgba(0, 255, 234, 0.12), rgba(6, 6, 16, 0.6) 75%);
+  /* ⚠ 透けさせない（2026-08-07・loyさん指摘「スクロールでプレビューの裏に透けると
+     分け分からんくなる」）。貼り付けた枠なので、下を流れる項目が見えると読めなくなる。
+     不透明な下地を敷いた上に、今までの光の表現を重ねる */
+  background-color: #0a0a16;
+  background-image: radial-gradient(circle at 50% 30%, rgba(0, 255, 234, 0.12), rgba(6, 6, 16, 0.6) 75%);
   border: 1px solid rgba(0, 255, 234, 0.25);
   overflow: hidden;
   position: relative;
@@ -436,7 +440,9 @@ function injectStyle() {
   display: flex;
   gap: 6px;
   padding: 8px 0 10px;
-  background: linear-gradient(180deg, rgba(12, 12, 28, 0.96) 70%, rgba(12, 12, 28, 0));
+  /* タブも同じ理由で透けさせない（下端だけ少しぼかして境目を柔らかくする） */
+  background-color: #0d0d1e;
+  box-shadow: 0 6px 8px -6px rgba(0, 0, 0, 0.9);
 }
 
 .ctab {
