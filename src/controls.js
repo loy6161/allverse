@@ -9,7 +9,7 @@ export function initControls(
   camera,
   avatar,
   domElement,
-  { bounds, onJump, screen, stage, groundYAt: worldGroundYAt } = {},
+  { bounds, onJump, screen, stage, groundYAt: worldGroundYAt, canStandAt: worldCanStandAt } = {},
 ) {
   const keys = new Set();
 
@@ -52,8 +52,11 @@ export function initControls(
    *   持っていないワールド用に、矩形＋天面の近似を残してある。
    */
   function groundYAt(x, z) {
-    if (!stageAllowed) return 0; // 登壇していない人は常に床。無駄なレイも撃たない
+    // ⚠ 2026-08-06 まで「登壇できない人は常に床(0)」で早々に返していたが、
+    //   入り口側に**下りの階段**ができたので、そこでは誰でも高さを拾う必要がある。
+    //   ワールド側が平らな客席ではレイを撃たずに 0 を返すので、値段は変わらない
     if (worldGroundYAt) return worldGroundYAt(x, z);
+    if (!stageAllowed) return 0;
     return onStage(x, z) ? STAGE.topY : 0;
   }
 
@@ -75,6 +78,25 @@ export function initControls(
     const minZ = inStageX ? Math.min(bounds.minZ, STAGE.minZ) : bounds.minZ;
     const cz = THREE.MathUtils.clamp(z, minZ, bounds.maxZ);
     return { x: cx, z: cz };
+  }
+
+  /**
+   * 移動先へ実際に足を出す（2026-08-06追加）。
+   *
+   * 入り口側は縁が斜めで矩形にならないので、矩形に丸めたうえで
+   * **そこに床があるか**をワールドに聞く。無ければその一歩を無かったことにする。
+   * こうしないと、広げた矩形の角から床の無い所へ出て宙に浮く。
+   */
+  function stepTo(x, z, prevX, prevZ) {
+    const c = clampToArea(x, z);
+    if (worldCanStandAt && !worldCanStandAt(c.x, c.z)) {
+      // 斜めに進んでいるときに完全に止まると引っかかるので、
+      // x だけ・z だけの動きに分けて、通れる方だけ通す
+      if (worldCanStandAt(c.x, prevZ)) return { x: c.x, z: prevZ };
+      if (worldCanStandAt(prevX, c.z)) return { x: prevX, z: c.z };
+      return { x: prevX, z: prevZ };
+    }
+    return c;
   }
   let yaw = 0; // カメラの水平角（0 = ステージ(-z)方向を向く）
   // 見下ろし角。0.35 だと視線が下を向きすぎて、スクリーンの上側が画面外へ切れていた
@@ -203,7 +225,8 @@ export function initControls(
 
   // 一人称のカメラ。目の位置に置いて、三人称と同じ yaw / pitch の向きへ向ける
   function applyFirstPersonCamera() {
-    camera.position.set(avatar.position.x, avatar.position.y + EYE_Y, avatar.position.z);
+    // viewHeight ぶん目線を上げる（アバターが小さいので、見やすい高さに調整できる）
+    camera.position.set(avatar.position.x, avatar.position.y + EYE_Y + viewHeight, avatar.position.z);
     const cp = Math.cos(pitch);
     camera.lookAt(
       camera.position.x - Math.sin(yaw) * cp,
@@ -276,23 +299,71 @@ export function initControls(
     dist = THREE.MathUtils.clamp(dist + delta, DIST_MIN, DIST_MAX);
   }
 
+  // ---- 視点の高さ（2026-08-06追加）----
+  //
+  // loyさん「中ボタンドラッグで視点の高さかえれるといいかも。
+  //          アバターみんなちっちゃいから視点だけあげたりできるとべんり。」
+  //
+  // アバターの背丈は変えず、**カメラの高さだけ**を上下する。
+  // 中ボタンを押したまま上下にドラッグ、押しただけ（動かさない）で元に戻す。
+  let viewHeight = 0;
+  const VIEW_H_MIN = -0.6; // 少し下げて見上げるのも許す
+  const VIEW_H_MAX = 4.0; // 大人の目線〜少し見下ろすくらいまで
+  /** ドラッグとみなす移動量（これ未満は「押しただけ」＝リセット） */
+  const VIEW_H_CLICK_PX = 4;
+
+  function setViewHeight(v) {
+    viewHeight = THREE.MathUtils.clamp(v, VIEW_H_MIN, VIEW_H_MAX);
+    return viewHeight;
+  }
+
   // ドラッグ視点（ポインタIDを追跡し、ジョイスティック等の別指と混線しないようにする）
   let dragPointerId = null;
   let lastX = 0;
   let lastY = 0;
+  // 中ボタンでの高さ調整。上のドラッグ視点とは別に持つ（同時に起きてよい）
+  let heightPointerId = null;
+  let heightLastY = 0;
+  let heightMoved = 0;
+
   domElement.addEventListener('pointerdown', (e) => {
+    // 中ボタン（button===1）は視点の高さ。ブラウザの自動スクロールも止める
+    if (e.button === 1) {
+      e.preventDefault();
+      heightPointerId = e.pointerId;
+      heightLastY = e.clientY;
+      heightMoved = 0;
+      return;
+    }
     if (dragPointerId !== null) return;
     dragPointerId = e.pointerId;
     lastX = e.clientX;
     lastY = e.clientY;
   });
+  // 中クリックの既定動作（自動スクロール）を殺す。押した瞬間にも出るので両方で止める
+  domElement.addEventListener('auxclick', (e) => {
+    if (e.button === 1) e.preventDefault();
+  });
   window.addEventListener('pointermove', (e) => {
+    if (e.pointerId === heightPointerId) {
+      const dy = e.clientY - heightLastY;
+      heightLastY = e.clientY;
+      heightMoved += Math.abs(dy);
+      // 上へドラッグ＝視点が上がる（画面の動きと手の動きを合わせる）
+      setViewHeight(viewHeight - dy * 0.012);
+      return;
+    }
     if (e.pointerId !== dragPointerId) return;
     orbit(e.clientX - lastX, e.clientY - lastY);
     lastX = e.clientX;
     lastY = e.clientY;
   });
   const endDrag = (e) => {
+    if (e.pointerId === heightPointerId) {
+      heightPointerId = null;
+      // 動かさずに押しただけなら元の高さへ戻す（迷子になったときの逃げ道）
+      if (heightMoved < VIEW_H_CLICK_PX) setViewHeight(0);
+    }
     if (e.pointerId === dragPointerId) dragPointerId = null;
   };
   // ダブルクリックした床の位置まで歩く。
@@ -353,9 +424,11 @@ export function initControls(
       } else {
         autoMoving = true;
         const step = Math.min(SPEED * dt, dist2); // 行き過ぎて往復しないよう残り距離で頭打ち
+        const prevX = avatar.position.x;
+        const prevZ = avatar.position.z;
         avatar.position.x += (dx / dist2) * step;
         avatar.position.z += (dz / dist2) * step;
-        const c = clampToArea(avatar.position.x, avatar.position.z);
+        const c = stepTo(avatar.position.x, avatar.position.z, prevX, prevZ);
         avatar.position.x = c.x;
         avatar.position.z = c.z;
         if (!firstPerson) turnTowards(Math.atan2(dx, dz), dt);
@@ -375,8 +448,10 @@ export function initControls(
       const right = new THREE.Vector3(-forward.z, 0, forward.x);
       move.copy(forward).multiplyScalar(fw).addScaledVector(right, side).normalize();
 
+      const prevX = avatar.position.x;
+      const prevZ = avatar.position.z;
       avatar.position.addScaledVector(move, SPEED * dt);
-      const c = clampToArea(avatar.position.x, avatar.position.z);
+      const c = stepTo(avatar.position.x, avatar.position.z, prevX, prevZ);
       avatar.position.x = c.x;
       avatar.position.z = c.z;
 
@@ -424,7 +499,12 @@ export function initControls(
     }
 
     // カメラ追従
-    const target = new THREE.Vector3(avatar.position.x, avatar.position.y + 1.4, avatar.position.z);
+    // 1.4 = 見る点のふだんの高さ。viewHeight で本人が上下できる（2026-08-06追加）
+    const target = new THREE.Vector3(
+      avatar.position.x,
+      avatar.position.y + 1.4 + viewHeight,
+      avatar.position.z,
+    );
     const offset = new THREE.Vector3(
       Math.sin(yaw) * Math.cos(pitch),
       Math.sin(pitch),
@@ -455,6 +535,9 @@ export function initControls(
     isOnStage: () => onStage(avatar.position.x, avatar.position.z),
     setFirstPerson,
     isFirstPerson: () => firstPerson,
+    /** 視点の高さ（中ボタンドラッグ）。0が既定の高さ */
+    setViewHeight,
+    getViewHeight: () => viewHeight,
     // バーチャルジョイスティック等からのアナログ入力（-1〜1）
     setAnalog(fw, side) {
       analog.fw = THREE.MathUtils.clamp(fw, -1, 1);

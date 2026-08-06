@@ -1166,10 +1166,16 @@ async function handleScreen(client, msg) {
     send(client.ws, { t: 'denied', reason: 'not-your-event' });
     return;
   }
-  if (typeof msg.v !== 'string' || !VIDEO_ID_RE.test(msg.v)) return;
+  // ⚠ 空文字は「動画を消す」（2026-08-06 loyさん「一度入れた動画を消す方法」）。
+  //   消すと各自の画面でスクリーンの面ごと消える（screen.js の clearVideo）
+  if (typeof msg.v !== 'string') return;
+  if (msg.v !== '' && !VIDEO_ID_RE.test(msg.v)) return;
 
   ev.videoId = msg.v;
-  ev.playback = { playing: true, pos: 0, at: Date.now() }; // 動画が変われば先頭から
+  // 動画が変われば先頭から。消したときは「止まっている」状態にしておく
+  ev.playback = msg.v
+    ? { playing: true, pos: 0, at: Date.now() }
+    : { playing: false, pos: 0, at: Date.now() };
 
   broadcastToEvent(client.eventId, { t: 'screen', v: msg.v, by: client.n });
   // 権限ごとに中身が違う（管理者には合言葉が入る）ので、配り分けを持つ共通関数を使う。

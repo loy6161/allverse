@@ -120,6 +120,7 @@ function renderUsage(body) {
       items: [
         '移動: <span class="vc-help-key">WASD</span> または <span class="vc-help-key">矢印キー</span>／ジャンプ: <span class="vc-help-key">Space</span>',
         '視点: ドラッグで回せます／ズーム: ホイール（スマホはピンチ）',
+        '視点の高さ: <b>マウスの中ボタンを押したまま上下</b>にドラッグ（押しただけで元の高さに戻ります）。アバターが小さくて見づらいときに使えます',
         '一人称視点: ホイールを、これ以上寄れない所からさらに内側へ回すと切り替わります（引くと三人称に戻ります）',
       ],
     },

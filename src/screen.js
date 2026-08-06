@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
 
-// デモ用の埋め込み動画ID（24時間ライブ配信・埋め込み許可されているもの）
-// 本番ではイベント配信のIDに差し替える（将来はサーバーから配信IDを受け取る）
-const VIDEO_ID = 'unrobrGhlv0'; // clubVERSE関連動画（loyさん指定）
-// 本番はイベントのYouTube生配信のIDに差し替える。ライブでも仕組みは同一
+// デモ用の埋め込み動画ID（24時間ライブ配信・埋め込み許可されているもの）。
+// ⚠ 既定値としては**使わない**。サーバーに繋がらないときのデモ表示で
+//   main.js が明示的に渡すためだけに残してある
+//   （2026-08-06: 動画が入っていない会場ではスクリーンごと出さない方針にした）
+export const DEMO_VIDEO_ID = 'unrobrGhlv0'; // clubVERSE関連動画（loyさん指定）
 
 // ステージのLEDスクリーン位置に合わせたYouTube埋め込みレイヤー（CSS3D方式）
 // - 入場前: 空（背後のWebGL製「VERSE CITY」スクリーンが見える）
@@ -65,7 +66,10 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
   cssScene.add(cssObj);
 
   let started = false;
-  let currentVideoId = VIDEO_ID;
+  // ⚠ 最初は**空**。動画が指定されていない会場ではスクリーンを出さない
+  //   （2026-08-06 loyさん「動画のURL入ってない時はスクリーン非表示」）。
+  //   デモ用のIDは、サーバーに繋がらないときだけ main.js から明示的に渡される
+  let currentVideoId = '';
   let iframe = null;
   let interactive = false;
 
@@ -90,6 +94,15 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
         if (!screenMeshes.includes(o)) screenMeshes.push(o);
       }
     });
+  }
+
+  /**
+   * スクリーンの面そのものを出す/消す（2026-08-06追加）。
+   * 動画が入っていない会場では、置き看板だけの黒い板を出したままにしない。
+   */
+  function setScreenVisible(on) {
+    findScreenMeshes();
+    for (const mesh of screenMeshes) mesh.visible = on;
   }
 
   function setOccluder(on) {
@@ -207,9 +220,31 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     if (videoId) currentVideoId = videoId;
     if (started) return;
     started = true;
+    // 動画が無い会場では何も出さない（あとで setVideo が来たら、そこで出す）
+    if (!currentVideoId) {
+      setScreenVisible(false);
+      return;
+    }
     holder.style.background = '#000';
     setOccluder(true); // スクリーン面に穴を開けて、後ろのiframeを見せる
     mountIframe(currentVideoId);
+  }
+
+  /**
+   * 動画を消す（2026-08-06追加・loyさん「一度入れた動画を消す方法」
+   * 「消したらスクリーンもOFF」）。
+   * iframeを外し、穴も閉じ、スクリーンの面ごと消す。
+   */
+  function clearVideo() {
+    currentVideoId = '';
+    if (iframe) {
+      iframe.remove();
+      iframe = null;
+    }
+    hasState = false;
+    holder.style.background = 'transparent';
+    setOccluder(false); // 穴を閉じる（閉じないと会場に抜けた穴が残る）
+    setScreenVisible(false);
   }
 
   // プレイヤーを直接操作したいとき（一時停止・音量）だけ、一時的に前面へ出す。
@@ -388,9 +423,20 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
 
   // 会場の共有スクリーンを別の動画に差し替える（サーバー経由で全員に届く）
   function setVideo(videoId) {
-    if (!videoId || videoId === currentVideoId) return;
-    currentVideoId = videoId;
-    if (started) mountIframe(currentVideoId);
+    const id = String(videoId || '').trim();
+    if (id === currentVideoId) return;
+    // 空＝動画を消す（スクリーンも消える）
+    if (!id) {
+      clearVideo();
+      return;
+    }
+    currentVideoId = id;
+    setScreenVisible(true);
+    if (started) {
+      holder.style.background = '#000';
+      setOccluder(true); // 消したあとに入れ直した場合、穴を開け直す必要がある
+      mountIframe(currentVideoId);
+    }
   }
 
   /**
@@ -416,5 +462,11 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     cssRenderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  return { play, setVideo, getVideo, reload, update, setInteractive, toggleInteractive, player };
+  // 会場ができた直後は動画が分からない。分かるまでスクリーンは出さない
+  setScreenVisible(false);
+
+  return {
+    play, setVideo, getVideo, clearVideo, reload, update,
+    setInteractive, toggleInteractive, player,
+  };
 }

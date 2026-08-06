@@ -41,7 +41,19 @@ export const CLUB_SCREEN = {
 // 歩ける範囲。床の高さを 2m 格子で実測し、天面が一様に平ら（GLB内 y=1.4）な
 // 範囲だけを囲っている。当たり判定はまだ入れていないので矩形のまま。
 //   除外したもの: ステージ(z<-17)／西側の一段高い台(x<-13)／東と南の階段(z>5, x>25)
-const BOUNDS = { minX: -13, maxX: 25, minZ: -16.5, maxZ: 5 };
+// ⚠ 入り口側（+Z）は 2026-08-06 に 5 → 22 まで広げた
+//   （loyさん「コライダーだけど、入り口（画面下方向）の方はもっと行けていいよ」）。
+//   実測すると、z=5 のあたりから**下りの階段**になっていて、
+//   0.01 → -0.27 → -0.55 → -0.8 と下がり、z≒23 で床が終わる。
+//   ただし縁が斜めで矩形にならない（西側は z=13 あたりで床が切れる）ので、
+//   はみ出しの判定は canStandAt（下）が実際のモデルを見て行う。
+const BOUNDS = { minX: -13, maxX: 25, minZ: -16.5, maxZ: 22 };
+
+/**
+ * 入り口側の下り階段の範囲（2026-08-06 実測）。
+ * ここでは**床より低い足場**を認める。ここを認めないと階段の上に浮いてしまう。
+ */
+const ENTRANCE = { fromZ: 4, minY: -1.2 };
 
 /** 入場位置。ステージ正面の少し手前（ステージ前端は z=-18） */
 const SPAWN = new THREE.Vector3(CLUB_SCREEN.x, 0, -6);
@@ -769,8 +781,9 @@ export function createClubWorld(scene, { renderer } = {}) {
   const _down = new THREE.Vector3(0, -1, 0);
   // 撃ち始めの高さ。ステージ天面(1.38)より少し上。ここを上げると上空の物を拾い始める
   const RAY_FROM_Y = STAGE.topY + 0.9;
-  // 撃つ長さ。床(0)まで届けばよい。長くすると床下の造形を拾う
-  const RAY_LEN = RAY_FROM_Y + 0.4;
+  // 撃つ長さ。入り口の階段は床より下（-0.8まで）へ降りるので、そこまで届かせる。
+  // これ以上長くすると床下の造形を拾う
+  const RAY_LEN = RAY_FROM_Y + 1.6;
   /**
    * 立てる面として認める高さの上限。
    * ⚠ 天面(1.38)ちょうどで切らないこと。実測すると**段や縁で 1.49 まで出る**ので、
@@ -782,19 +795,50 @@ export function createClubWorld(scene, { renderer } = {}) {
    * その位置の「立てる面」の高さ。ステージの矩形の外、または未読み込みなら 0（床）。
    * @returns {number} 足元のy
    */
-  function groundYAt(x, z) {
-    if (!loaded || !model) return 0;
-    if (x < STAGE.minX || x > STAGE.maxX || z < STAGE.minZ || z > STAGE.maxZ) return 0;
+  /** ステージの矩形の中か（レイを撃つ場所を絞るための粗い判定） */
+  const inStageRect = (x, z) =>
+    x >= STAGE.minX && x <= STAGE.maxX && z >= STAGE.minZ && z <= STAGE.maxZ;
+  /** 入り口の階段の側か */
+  const inEntrance = (z) => z > ENTRANCE.fromZ;
+
+  /** その場所の面を1回だけ拾う。無ければ null */
+  function raycastFloor(x, z) {
     _from.set(x, RAY_FROM_Y, z);
     _ray.set(_from, _down);
     _ray.far = RAY_LEN;
     const hits = _ray.intersectObject(model, true);
-    if (!hits.length) return 0;
-    const y = hits[0].point.y;
+    return hits.length ? hits[0].point.y : null;
+  }
+
+  function groundYAt(x, z) {
+    if (!loaded || !model) return 0;
+    // 平らな客席では撃たない（毎フレームのことなので、要る所だけに絞る）
+    const entrance = inEntrance(z);
+    if (!entrance && !inStageRect(x, z)) return 0;
+    const y = raycastFloor(x, z);
+    if (y === null) return 0;
     // 想定外の高さを拾ったら床に落とす保険（VRChat側と同じ考え方）。
-    // 0未満（床下）や、立てる面としてあり得ない高さのものは信用しない
-    if (!Number.isFinite(y) || y < 0 || y > STANDABLE_MAX_Y) return 0;
+    // 入り口側だけは**床より低い足場**（下り階段）を認める
+    const minY = entrance ? ENTRANCE.minY : 0;
+    if (!Number.isFinite(y) || y < minY || y > STANDABLE_MAX_Y) return 0;
     return y;
+  }
+
+  /**
+   * そこに立てるか（2026-08-06追加）。
+   *
+   * 入り口側は縁が斜めで、歩ける範囲を矩形で表せない
+   * （西は z=13 あたりで床が切れ、東は z=23 まである）。
+   * 矩形を広げただけだと**床の無い所へ出て宙に浮く**ので、
+   * 実際のモデルに床があるかどうかで判断する。
+   * 平らな客席（z <= 4）は常に true（レイを撃たない）。
+   */
+  function canStandAt(x, z) {
+    if (!loaded || !model) return true;
+    if (!inEntrance(z)) return true;
+    const y = raycastFloor(x, z);
+    if (y === null) return false; // 床が無い＝出られない
+    return y >= ENTRANCE.minY - 0.4 && y <= STANDABLE_MAX_Y;
   }
 
   return {
@@ -806,6 +850,8 @@ export function createClubWorld(scene, { renderer } = {}) {
     stage: STAGE,
     /** その位置の足元の高さ。ステージの実形状をレイで拾う（矩形の近似ではない） */
     groundYAt,
+    /** そこに立てるか。入り口側の斜めの縁で「床の無い所へ出る」のを防ぐ */
+    canStandAt,
     /** 会場の明るさを変える（'normal' / 'dim' / 'bright' / 'brightest' / 'brightest+'）。運営が決めて全員に効く */
     setBrightness,
     /** 床の反射（アバターとエモートは映さない）。負荷が上がるので端末ごとに選ぶ */

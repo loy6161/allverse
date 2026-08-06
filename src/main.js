@@ -525,6 +525,8 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
     stage: world.stage,
     // 足元の高さ。clubVERSE は実際のモデルにレイを撃って拾う（矩形の近似ではない）
     groundYAt: world.groundYAt,
+    // 入り口側は縁が斜めなので、床があるかをワールドに聞いてから足を出す
+    canStandAt: world.canStandAt,
     // シアター表示でカメラを寄せる先。ワールドごとにスクリーンの位置が違う
     screen: world.screen,
     // 自分は物理でジャンプするが、高さは誰にも送っていない（presence も x/z/向き だけ）。
@@ -616,10 +618,12 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         // 定員・NPC上限・チャットの形・運営メッセージをまとめて反映する
         applyEventSettings(event);
         if (peopleUI) peopleUI.refresh();
-        // 途中入場でも、その部屋で今流れている動画と再生位置に合わせる
-        if (screen) {
-          liveScreen.setVideo(screen);
-          if (screenUI) screenUI.setCurrent(screen);
+        // 途中入場でも、その部屋で今流れている動画と再生位置に合わせる。
+        // ⚠ 空のときも通す。動画が入っていない会場ではスクリーンを消すため
+        //   （2026-08-06 loyさん「動画のURL入ってない時はスクリーン非表示」）
+        {
+          liveScreen.setVideo(screen || '');
+          if (screenUI) screenUI.setCurrent(screen || '');
           // YouTubeチャットは動画ごとに別物なので、ここでも貼り直す。
           // これが無いと、イベントを移動したときにチャットだけ前の動画のまま残り、
           // 「このライブストリームではチャットは無効です」と出る
@@ -637,9 +641,9 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         updateHeader(room);
         lastServerCount = count;
         applyEventSettings(event || currentEvent);
-        if (screen) {
-          liveScreen.setVideo(screen);
-          if (screenUI) screenUI.setCurrent(screen);
+        {
+          liveScreen.setVideo(screen || ''); // 空なら消す（上と同じ理由）
+          if (screenUI) screenUI.setCurrent(screen || '');
           // YouTubeチャットは動画ごとに別物なので、ここでも貼り直す。
           // これが無いと、イベントを移動したときにチャットだけ前の動画のまま残り、
           // 「このライブストリームではチャットは無効です」と出る
@@ -839,11 +843,15 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         remote.emote(m.id, m.e, m.n || 1);
       },
       onScreen: ({ v, by }) => {
-        liveScreen.setVideo(v);
-        if (screenUI) screenUI.setCurrent(v);
+        liveScreen.setVideo(v || '');
+        if (screenUI) screenUI.setCurrent(v || '');
         // YouTubeチャットは動画ごとに別物なので、差し替わったら貼り直す
         if (ytChat) ytChat.refresh();
-        chat.addMessage('', `${by} がスクリーンを変更しました`, { system: true });
+        chat.addMessage(
+          '',
+          v ? `${by} がスクリーンを変更しました` : `${by} がスクリーンの動画を消しました`,
+          { system: true },
+        );
       },
       // 他の人の再生/一時停止/シークを自分の映像にも反映する
       onPlayback: (pb) => liveScreen.player.applySync(pb),

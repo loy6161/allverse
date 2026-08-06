@@ -107,6 +107,21 @@ function injectStyle() {
       box-shadow: 0 0 10px rgba(0, 255, 234, 0.4);
     }
 
+    .vc-screen-clear {
+      width: 100%;
+      margin-top: 8px;
+      border: 1px solid rgba(255, 140, 160, 0.5);
+      background: rgba(255, 140, 160, 0.12);
+      color: rgba(255, 200, 210, 0.95);
+      font-size: 12px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .vc-screen-clear:hover:not(:disabled) {
+      background: rgba(255, 140, 160, 0.22);
+    }
+
     .vc-screen-apply {
       flex-shrink: 0;
       border: 1px solid rgba(255, 0, 229, 0.5);
@@ -226,12 +241,20 @@ export function initScreenUI({ onChange, slot }) {
   row.appendChild(input);
   row.appendChild(applyBtn);
 
+  // 動画を消す（2026-08-06追加・loyさん「一度入れた動画を消す方法」）。
+  // 消すとスクリーンの面ごと消える（screen.js の clearVideo）
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'vc-screen-clear';
+  clearBtn.textContent = '動画を消す（スクリーンも消える）';
+
   const error = document.createElement('div');
   error.className = 'vc-screen-error';
 
   panel.appendChild(current);
   panel.appendChild(desc);
   panel.appendChild(row);
+  panel.appendChild(clearBtn);
   panel.appendChild(error);
 
   (slot || document.body).appendChild(btn);
@@ -267,6 +290,15 @@ export function initScreenUI({ onChange, slot }) {
     closePanel();
   }
 
+  // 会場全員の画面から映像が消えるので、押し間違いを防ぐために一度聞く
+  clearBtn.addEventListener('click', () => {
+    if (!window.confirm('スクリーンの動画を消します。会場にいる全員の画面から映像とスクリーンが消えます。よろしいですか？')) return;
+    error.textContent = '';
+    input.value = '';
+    onChange('');
+    closePanel();
+  });
+
   btn.addEventListener('click', togglePanel);
   applyBtn.addEventListener('click', applyInput);
   input.addEventListener('keydown', (e) => {
@@ -283,7 +315,11 @@ export function initScreenUI({ onChange, slot }) {
   });
 
   function setCurrent(videoId) {
-    currentId.textContent = videoId || '-';
+    currentId.textContent = videoId || '（動画なし・スクリーン非表示）';
+    // 消すものが無いときは押せないようにする
+    clearBtn.disabled = !videoId;
+    clearBtn.style.opacity = videoId ? '' : '0.45';
+    clearBtn.style.cursor = videoId ? '' : 'not-allowed';
   }
 
   /** 動画の差し替えは管理者だけなので、権限が無い人にはボタンごと出さない */
