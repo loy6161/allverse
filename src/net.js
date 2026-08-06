@@ -364,6 +364,10 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
         case 'screen':
           if (h.onScreen) h.onScreen({ v: msg.v, by: msg.by });
           break;
+        // 負荷の測定の結果（管理者が始めたときだけ、その人へ1秒ごとに届く）
+        case 'loadsim':
+          if (h.onLoadSim) h.onLoadSim(msg);
+          break;
         case 'playback':
           if (h.onPlayback) h.onPlayback({ st: msg.st, pos: msg.pos });
           break;
@@ -527,6 +531,16 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     send({ t: 'emote', e: id });
   }
 
+  /**
+   * 負荷の測定（管理者のみ・2026-08-06追加）。
+   * n人ぶんの仮想ユーザーをサーバーの中に作って、本物と同じ配信処理を回してもらう。
+   * 結果は onLoadSim で1秒ごとに返ってくる。
+   */
+  function sendLoadSim(opts) {
+    if (!joined) return;
+    send({ t: 'loadsim', ...opts });
+  }
+
   function sendScreen(videoId) {
     if (!joined) return;
     send({ t: 'screen', v: videoId });
@@ -644,6 +658,7 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     sendUpdate,
     sendEmote,
     sendScreen,
+    sendLoadSim,
     sendPlayback,
     sendMove,
     sendEventCreate,

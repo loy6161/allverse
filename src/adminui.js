@@ -43,6 +43,7 @@ function injectStyle() {
 .vc-adm-sec:first-child { border-top: none; margin-top: 0; padding-top: 0; }
 .vc-adm-row { display: flex; gap: 6px; align-items: center; margin: 5px 0; }
 .vc-adm-row input[type=text],
+.vc-adm-row input[type=number],
 .vc-adm-row select {
   flex: 1 1 auto; min-width: 0;
   background: rgba(6,5,16,0.9);
@@ -87,6 +88,7 @@ export function initAdminUI({
   onSaveStaff,
   onDeleteStaff,
   onRefresh,
+  onLoadSim,
 }) {
   injectStyle();
 
@@ -344,7 +346,95 @@ export function initAdminUI({
     sec2.appendChild(note3);
 
     body.appendChild(sec2);
+
+    // ---------------- 負荷の測定（2026-08-06追加） ----------------
+    //
+    // loyさん「管理者用にNPCとは別に、測定できるものを付けておいて。
+    //          10000人くらいまではかってみたい。」
+    //
+    // ⚠ NPCとは別物。NPCは自分の画面の飾りで通信は起きない。
+    //   こちらは**サーバーの中に仮想のユーザーを作り、本物と同じ配信処理を回す**。
+    //   実ユーザーには1通も届かないが、サーバーのCPUは本当に使う。
+    const sec3 = document.createElement('div');
+    sec3.className = 'vc-adm-sec';
+    const h3 = document.createElement('div');
+    h3.className = 'vc-help-h';
+    h3.textContent = '負荷の測定（何人まで耐えられるか）';
+    sec3.appendChild(h3);
+    const note4 = document.createElement('div');
+    note4.className = 'vc-adm-note';
+    note4.textContent =
+      'サーバーの中に仮想のユーザーを作って、本物と同じ「位置を配る処理」を回します。'
+      + 'お客さんの画面には何も起きません（1通も届きません）が、サーバーのCPUは本当に使うので、'
+      + '本番中に大きな人数で回すと本物の動きが遅れます。3分で自動的に止まります。'
+      + ' ⚠ ここで測れるのは「配る内容を組み立てるまで」です。実際はこれに通信の書き出しが乗ります。'
+      + '実際に接続して測った限界は約13万通/秒だったので、その数字と見比べてください。';
+    sec3.appendChild(note4);
+
+    const simRow = document.createElement('div');
+    simRow.className = 'vc-adm-row';
+    const nIn = document.createElement('input');
+    nIn.type = 'number';
+    nIn.min = '0';
+    nIn.max = '20000';
+    nIn.step = '100';
+    nIn.value = String(simState.n || 1000);
+    nIn.className = 'vc-adm-input';
+    nIn.style.maxWidth = '110px';
+    const perIn = document.createElement('input');
+    perIn.type = 'number';
+    perIn.min = '1';
+    perIn.max = '60';
+    perIn.value = String(simState.perRoom || 15);
+    perIn.className = 'vc-adm-input';
+    perIn.style.maxWidth = '90px';
+    const startBtn = document.createElement('button');
+    startBtn.type = 'button';
+    startBtn.className = 'vc-adm-btn';
+    startBtn.textContent = simState.running ? '測定を止める' : '測定を始める';
+    simBtnEl = startBtn;
+    startBtn.addEventListener('click', () => {
+      if (!onLoadSim) return;
+      if (simState.running) {
+        onLoadSim({ stop: true });
+      } else {
+        simState.n = Math.max(0, Number(nIn.value) || 0);
+        simState.perRoom = Math.max(1, Number(perIn.value) || 15);
+        onLoadSim({ n: simState.n, perRoom: simState.perRoom });
+      }
+    });
+    const lab = (t) => {
+      const e = document.createElement('span');
+      e.className = 'vc-adm-note';
+      e.style.margin = '0 4px';
+      e.textContent = t;
+      return e;
+    };
+    simRow.append(lab('人数'), nIn, lab('1ルーム'), perIn, startBtn);
+    sec3.appendChild(simRow);
+
+    const out = document.createElement('div');
+    out.className = 'vc-adm-note';
+    out.style.whiteSpace = 'pre';
+    out.style.fontFamily = 'ui-monospace, Consolas, monospace';
+    out.textContent = simState.text || '（まだ測っていません）';
+    simOutEl = out;
+    sec3.appendChild(out);
+
+    const note5 = document.createElement('div');
+    note5.className = 'vc-adm-note';
+    note5.textContent =
+      '見るのは「遅れ」です。10msを超え始めたら、サーバーが追いつけていません'
+      + '（本物のユーザーの位置も遅れ始めます）。1ルームの人数を減らすと軽くなります。';
+    sec3.appendChild(note5);
+
+    body.appendChild(sec3);
   }
+
+  /** 測定の状態（画面を描き直しても残す） */
+  const simState = { running: false, n: 1000, perRoom: 15, text: '' };
+  let simOutEl = null;
+  let simBtnEl = null; // 走っている間は「止める」に変える（描き直さずに文字だけ差し替える）
 
   return {
     /** ⚙設定パネルの中へ描く */
@@ -355,6 +445,39 @@ export function initAdminUI({
     /** サーバーから新しい一覧が届いたら描き直す */
     refresh(body) {
       if (body) render(body);
+    },
+    /** 測定の結果が届いた（1秒ごと） */
+    setLoadSim(r) {
+      simState.running = Boolean(r.running);
+      if (!r.running) {
+        simState.text = r.reason ? `停止しました（${r.reason}）` : '停止しました';
+      } else if (r.msgsPerSec !== undefined) {
+        // 判定は2つ見る:
+        //   ① 遅れ（このサーバーが実際に詰まっているか）
+        //   ② 通数（実接続で測った限界 13万通/秒 に対してどうか）
+        const REAL_LIMIT = 130000;
+        const judge = r.lagAvgMs > 30 || r.msgsPerSec > REAL_LIMIT * 1.2
+          ? '✕ 実接続なら破綻する規模'
+          : r.lagAvgMs > 10 || r.msgsPerSec > REAL_LIMIT * 0.7
+            ? '△ そろそろ限界'
+            : '◎ 余裕あり';
+        simState.text =
+          `${judge}
+`
+          + `仮想ユーザー ${r.users}人（${r.perRoom}人 × ${r.rooms}ルーム）
+`
+          + `遅れ 平均${r.lagAvgMs}ms／最大${r.lagWorstMs}ms
+`
+          + `配信 ${r.msgsPerSec.toLocaleString()}通/秒（${r.mbPerSec}MB/秒）／実接続の限界は約130,000通/秒
+`
+          + `処理に使った時間 ${r.busyMsPerSec}ms/秒（1000で限界）
+`
+          + `メモリ ${r.memMB}MB／経過 ${r.elapsedSec}秒`;
+      } else {
+        simState.text = `測定を始めました（${r.users}人 / ${r.perRoom}人ずつ）…`;
+      }
+      if (simOutEl) simOutEl.textContent = simState.text;
+      if (simBtnEl) simBtnEl.textContent = simState.running ? '測定を止める' : '測定を始める';
     },
   };
 }

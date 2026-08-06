@@ -57,6 +57,8 @@ import {
   saveStaff,
   deleteStaff,
 } from './store.js';
+// 負荷の測定（管理者専用・2026-08-06追加）
+import { createLoadSim, MAX_VIRTUAL } from './loadsim.js';
 import { summarize, gridSeries, autoStepMs, visitsCsv, seriesCsv, chatCsv } from './stats.js';
 // YouTubeのライブチャットを読んで、本人のアバターに吹き出しを出す（2026-08-03追加）
 import { LiveChatReader, isYouTubeReadEnabled, getYouTubeReadStatus } from './ytread.js';
@@ -2120,8 +2122,50 @@ async function handleYtUnlink(client, _msg) {
   send(client.ws, { t: 'yt-linked', ok: false, removed: n });
 }
 
+// ------------------------------------------------------------
+// 負荷の測定（管理者専用・2026-08-06追加）
+//
+// loyさん「管理者用にNPCとは別に、測定できるものを付けておいて。
+//          10000人くらいまではかってみたい。」
+//
+// ⚠ 仮想ユーザーは**実ユーザーには1通も届かない**（loadsim.js の中で完結する）。
+//   ただしサーバーのCPUは本当に使うので、本番中に走らせると本物の配信が遅れる。
+//   そのため 管理者のみ・3分で自動停止・結果はその人にだけ返す、にしてある。
+// ------------------------------------------------------------
+
+/** いま測定を見ている管理者（結果を返す相手） */
+let loadSimWatcher = null;
+
+const loadSim = createLoadSim({
+  onReport: (payload) => {
+    if (loadSimWatcher && loadSimWatcher.ws.readyState === loadSimWatcher.ws.OPEN) {
+      send(loadSimWatcher.ws, { t: 'loadsim', ...payload });
+    }
+  },
+});
+
+/** loadsim: 負荷の測定を始める/止める（管理者だけ） */
+function handleLoadSim(client, msg) {
+  if (!client.joined) return;
+  if (!canControlVideo(client.role)) {
+    send(client.ws, { t: 'denied', reason: 'admin-only' });
+    return;
+  }
+  if (msg.stop) {
+    loadSim.stop('手で停止');
+    loadSimWatcher = null;
+    send(client.ws, { t: 'loadsim', running: false, users: 0 });
+    return;
+  }
+  loadSimWatcher = client;
+  const started = loadSim.start(msg.n, msg.perRoom);
+  console.log(`[loadsim] 開始: ${started.users}人 / ${started.rooms}ルーム（${started.perRoom}人ずつ） by ${client.n}`);
+  send(client.ws, { t: 'loadsim', running: true, ...started, max: MAX_VIRTUAL });
+}
+
 const HANDLERS = {
   join: handleJoin,
+  loadsim: handleLoadSim,
   'yt-code': handleYtCode,
   'call-list-save': handleCallListSave,
   'call-list-delete': handleCallListDelete,

@@ -894,6 +894,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
         }
         remote.emote(m.id, m.e, m.n || 1);
       },
+      // 負荷の測定の結果（管理者が始めたときだけ1秒ごとに届く）
+      onLoadSim: (r) => {
+        if (adminUI && adminUI.setLoadSim) adminUI.setLoadSim(r);
+      },
       onScreen: ({ v, by }) => {
         liveScreen.setVideo(v || '');
         if (screenUI) screenUI.setCurrent(v || '');
@@ -1121,6 +1125,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode }) {
   // ヘルプ（読むところ）と設定（変えるところ）を分けるため
   // 管理タブ（コールのワード・運営メンバー）。2026-08-03追加
   adminUI = initAdminUI({
+    // 負荷の測定（2026-08-06追加）。サーバーの中に仮想ユーザーを作って測る
+    onLoadSim: (opts) => {
+      if (net && !demoMode) net.sendLoadSim(opts);
+    },
     getLists: () => callLists,
     getStaff: () => staffList,
     getRole: () => staffRole(),
