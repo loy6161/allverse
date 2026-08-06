@@ -59,6 +59,13 @@ const HAND_LABELS = {
   left: '左利き',
 };
 
+/**
+ * 「髪」タブに出すアクセサリー（2026-08-07・loyさん指示）。
+ * ⚠ 選べるものが増えるわけではない。**置き場所を分けているだけ**で、
+ *   中身は他のアクセサリーと同じ config.accessory（上限3つも共通）。
+ */
+const HAIR_ACCESSORIES = ['ahoge', 'mesh'];
+
 const ACCESSORY_LABELS = {
   none: 'なし',
   kemo: 'けもみみ',
@@ -92,7 +99,13 @@ function injectStyle() {
 .join-panel {
   width: min(860px, 92vw);
   max-height: 92vh;
-  overflow-y: auto;
+  /* ⚠ パネル全体はスクロールさせない（2026-08-07・loyさん指摘
+     「右のスクロールバーは要らなくて、項目のところだけスクロールでいい」）。
+     全体が動くと、プレビューもタイトルも一緒に流れていく。
+     縦に伸びるのは項目の列だけなので、そこだけに overflow を持たせる */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: linear-gradient(160deg, rgba(12, 12, 28, 0.92), rgba(18, 8, 30, 0.92));
   border: 1px solid rgba(0, 255, 234, 0.35);
   border-radius: 18px;
@@ -124,7 +137,13 @@ function injectStyle() {
 .join-body {
   display: flex;
   gap: 26px;
-  flex-wrap: wrap;
+  /* ⚠ 折り返し（wrap）にすると、列の高さが**中身の高さのまま**になり、
+     縮まずにパネルからはみ出す。横に2つ並べるあいだは nowrap にすること。
+     スマホは下の @media で縦1カラムに切り替えるので折り返しは要らない */
+  flex-wrap: nowrap;
+  /* 中の列がはみ出したぶんを、パネルではなく列側で吸収させる */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* PC（幅広いとき）は左＝プレビュー＋設定、右＝お知らせ・なまえ・次へ の2カラム。
@@ -138,6 +157,7 @@ function injectStyle() {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-height: 0; /* これが無いと、中身の高さぶんだけ列が伸びてスクロールが効かない */
 }
 
 .join-col-right {
@@ -145,12 +165,15 @@ function injectStyle() {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-height: 0;
+  overflow-y: auto; /* 念のため。下の max-height でお知らせを畳んでいるので普段は出ない */
 }
 
 .join-preview {
   flex: 0 0 auto;
   width: 300px;
-  height: 300px;
+  /* 画面が低いときは縮める。ここが固定だと、項目のスクロール枠が数行ぶんしか残らない */
+  height: clamp(180px, 30vh, 300px);
   border-radius: 14px;
   /* ⚠ 透けさせない（2026-08-07・loyさん指摘「スクロールでプレビューの裏に透けると
      分け分からんくなる」）。貼り付けた枠なので、下を流れる項目が見えると読めなくなる。
@@ -169,14 +192,22 @@ function injectStyle() {
 }
 
 .join-customize {
-  flex: 0 0 auto;
+  /* ★ ここだけがスクロールする */
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow-y: auto;
+  padding-right: 6px;
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 
-/* お知らせ欄。本文より控えめ（小さく・薄く）に見せる */
+/* お知らせ欄。本文より控えめ（小さく・薄く）に見せる。
+   ⚠ 高さを止めておく。ここが伸びると「なまえ」と「次へ」が下へ押し出される */
 .join-updates {
+  max-height: 150px;
+  overflow-y: auto;
+  flex: 0 0 auto;
   border: 1px solid rgba(0, 255, 234, 0.15);
   border-radius: 10px;
   padding: 10px 12px;
@@ -408,11 +439,8 @@ function injectStyle() {
    項目が増えて、下の方を選ぶころにはアバターが画面の外に出ていた。
    スクロールするのは .join-panel なので、その中で sticky にすれば
    どこまで下がってもアバターが見える */
-.join-preview {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-}
+/* プレビューとタブはスクロールの外に出たので、貼り付け（sticky）は不要になった。
+   ただしスマホは1カラムでパネルごと縦に伸びるため、下の @media で貼り付ける */
 
 /* プレビューの操作説明。触ると消える（邪魔なので） */
 .preview-hint {
@@ -434,8 +462,7 @@ function injectStyle() {
 
 /* ---- 項目のタブ（2026-08-07）---- */
 .customize-tabs {
-  position: sticky;
-  top: 300px; /* プレビューの高さぶん下。プレビューと一緒に貼り付く */
+  flex: 0 0 auto;
   z-index: 2;
   display: flex;
   gap: 6px;
@@ -481,13 +508,22 @@ function injectStyle() {
 }
 
 @media (max-width: 640px) {
-  .join-panel { padding: 20px; }
+  .join-panel { padding: 20px; overflow-y: auto; }
   /* スマホは今まで通り縦1カラム。お知らせは「なまえ」の上に来る（DOM順のまま） */
-  .join-body { flex-direction: column; }
+  .join-body { flex-direction: column; flex-wrap: wrap; }
   .join-col-left, .join-col-right { width: 100%; }
-  .join-preview { width: 100%; height: 200px; }
-  /* スマホでもプレビューは上に貼り付く。タブはその直下 */
-  .customize-tabs { top: 200px; }
+  .join-preview {
+    width: 100%;
+    height: 200px;
+    /* 幅が狭いと2カラムに割れないので、パネルごと縦に長くなる。
+       ここだけは貼り付けてアバターを見えたままにする */
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+  .customize-tabs { position: sticky; top: 200px; }
+  /* スマホでは項目側のスクロールを使わない（画面が狭く、二重スクロールになるため） */
+  .join-customize { overflow: visible; flex: 0 0 auto; }
   .ctab { font-size: 12px; padding: 7px 2px; }
 }
 `;
@@ -600,6 +636,12 @@ function buildCustomizeScreen({
             <div class="customize-row" data-tab="hair">
               <div class="customize-label">髪色</div>
               <div class="swatch-row" id="haircolor-swatches"></div>
+            </div>
+            <!-- 髪につけるアクセサリー（2026-08-07・loyさん「前髪メッシュとアホ毛は髪のカテゴリー」）。
+                 中身は「体」タブのアクセサリー行と同じ config を触る -->
+            <div class="customize-row" data-tab="hair">
+              <div class="customize-label">髪につけるもの</div>
+              <div class="hairstyle-buttons" id="hairacc-buttons"></div>
             </div>
             <div class="customize-row staff-only" data-tab="hair" id="hairgrad-row" style="display:none">
               <div class="customize-label">毛先の色（グラデ）<span class="staff-tag">運営</span></div>
@@ -770,7 +812,19 @@ function buildCustomizeScreen({
 
   const previewRenderer = new THREE.WebGLRenderer({ canvas: previewCanvas, antialias: true, alpha: true });
   previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  previewRenderer.setSize(300, 300, false);
+  /**
+   * 枠の実寸に合わせる（2026-08-07）。
+   * 高さを画面に合わせて縮めるようにしたので、300x300 固定だと縦横比がずれて
+   * アバターが太って見える。CSSが決めた大きさを見て合わせる
+   */
+  function resizePreview() {
+    const w = previewCanvas.clientWidth || 300;
+    const h = previewCanvas.clientHeight || 300;
+    previewRenderer.setSize(w, h, false);
+    previewCamera.aspect = w / h;
+    previewCamera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resizePreview);
 
   // 明るくフラットに見せる（暗い色付きライトだと造形が沈む）
   const ambient = new THREE.AmbientLight(0xffffff, 1.35);
@@ -862,6 +916,7 @@ function buildCustomizeScreen({
     }
     previewRenderer.render(previewScene, previewCamera);
   }
+  resizePreview();
   renderPreviewLoop();
 
   // ドラッグで回す。マウスと指を同じ扱いにしたいので pointer イベントを使う
@@ -949,40 +1004,56 @@ function buildCustomizeScreen({
    *   押しても何も起きない方が「壊れている」と思われやすい。
    */
   function buildAccessoryRow() {
-    const el = document.getElementById('accessory-buttons');
-    if (!el) return;
-    el.innerHTML = ''; // 権限が分かったあとに作り直せるようにする
+    // 2か所に分けて出す（2026-08-07・loyさん「前髪メッシュとアホ毛は髪のカテゴリー」）。
+    // ただし**中身は同じ config.accessory** で、上限3つも共通。
+    // ⚠ 選択の見た目を塗り直すときは両方の行を回すこと（片方だけだと押した印が残る）
+    const rows = [
+      { el: document.getElementById('hairacc-buttons'), ids: HAIR_ACCESSORIES, none: false },
+      {
+        el: document.getElementById('accessory-buttons'),
+        ids: AVATAR_PARTS.accessories.filter((a) => !HAIR_ACCESSORIES.includes(a)),
+        none: true,
+      },
+    ].filter((r) => r.el);
+    if (!rows.length) return;
     const paint = () => {
       const on = parseAccessories(config.accessory);
       // 条件つきの行（メッシュの色・形）の出し入れは applyOptionRows に集約してある
       applyOptionRows();
-      el.querySelectorAll('.hair-btn').forEach((b) => {
-        const v = b.dataset.value;
-        const sel = v === 'none' ? on.length === 0 : on.includes(v);
-        b.classList.toggle('selected', sel);
-      });
+      for (const row of rows) {
+        row.el.querySelectorAll('.hair-btn').forEach((b) => {
+          const v = b.dataset.value;
+          const sel = v === 'none' ? on.length === 0 : on.includes(v);
+          b.classList.toggle('selected', sel);
+        });
+      }
     };
-    for (const value of AVATAR_PARTS.accessories) {
-      // ⚠ 管理者・VIP専用のもの（前髪メッシュ）は、権限が無い人には出さない。
-      //   隠すだけでは細工で付けられるので、サーバー側でも同じ判定をしている
-      if (STAFF_ONLY_ACCESSORIES.has(value) && !isStaff()) continue;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.dataset.value = value;
-      btn.className = 'hair-btn';
-      btn.textContent = ACCESSORY_LABELS[value] || value;
-      btn.addEventListener('click', () => {
-        config.accessory = value === 'none' ? 'none' : toggleAccessory(config.accessory, value);
-        paint();
-        rebuildPreviewAvatar();
-      });
-      el.appendChild(btn);
+    for (const row of rows) {
+      row.el.innerHTML = ''; // 権限が分かったあとに作り直せるようにする
+      for (const value of row.ids) {
+        // ⚠ 管理者・VIP専用のもの（前髪メッシュ）は、権限が無い人には出さない。
+        //   隠すだけでは細工で付けられるので、サーバー側でも同じ判定をしている
+        if (STAFF_ONLY_ACCESSORIES.has(value) && !isStaff()) continue;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.dataset.value = value;
+        btn.className = 'hair-btn';
+        btn.textContent = ACCESSORY_LABELS[value] || value;
+        btn.addEventListener('click', () => {
+          config.accessory = value === 'none' ? 'none' : toggleAccessory(config.accessory, value);
+          paint();
+          rebuildPreviewAvatar();
+        });
+        row.el.appendChild(btn);
+      }
+      const hint = document.createElement('div');
+      hint.className = 'customize-hint';
+      hint.textContent = row.none
+        ? `${MAX_ACCESSORIES}つまで同時に付けられます（もう一度押すと外れます）。「なし」で全部外れます`
+        : '髪につくもの。数は下の「体」タブと合わせて3つまで';
+      row.el.appendChild(hint);
     }
     paint();
-    const hint = document.createElement('div');
-    hint.className = 'customize-hint';
-    hint.textContent = `${MAX_ACCESSORIES}つまで同時に付けられます（もう一度押すと外れます）`;
-    el.appendChild(hint);
   }
 
   buildButtonRow('hairlength-buttons', AVATAR_PARTS.hairLengths, HAIR_LENGTH_LABELS, 'hairLength');

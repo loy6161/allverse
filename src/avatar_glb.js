@@ -238,10 +238,15 @@ float streakMask(vec3 p) {
 float tipAmount(vec3 p) {
   return uGradOn * clamp((p.z + 0.95) / 0.35, 0.0, 1.0);
 }
-// インナーカラー: 裾の帯だけをはっきり別の色にする。
-// （裏面だけを塗る作り方も試したが、髪は閉じた形なので**外から見えなかった**）
+// インナーカラー: **内側だけ**を塗る（2026-08-07・loyさん「インナーだけってできない？」）。
+// 最初は裾の帯をぐるっと塗っていたが、それでは前から見て「毛先の色」に見えてしまい、
+// グラデと区別がつかなかった。内側と呼べるのは次の2つ:
+//   ・後ろ側の下half（うなじ側。後ろや横から覗くと見える）
+//   ・実際に裏面が見えているところ（前髪の房の裏など。材質は両面描画なので出る）
 float innerAmount(vec3 p) {
-  return uInnerOn * step(-0.72, p.z);
+  float underneath = step(-0.75, p.z) * step(p.y, 0.0);
+  float backface = gl_FrontFacing ? 0.0 : 1.0;
+  return uInnerOn * max(underneath, backface);
 }
 `;
     // 色を差し替える行。diffuse と emissive の**両方**に同じ形を掛ける。
