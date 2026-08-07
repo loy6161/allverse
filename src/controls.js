@@ -549,6 +549,8 @@ export function initControls(
     setBounds(b) {
       if (b) bounds = b;
     },
+    /** いま歩ける範囲（動作確認用。街に出られるかを外から測れるようにしてある） */
+    getBounds: () => bounds,
     /** 視点の高さ（中ボタンドラッグ）。0が既定の高さ */
     setViewHeight,
     getViewHeight: () => viewHeight,

@@ -102,7 +102,10 @@ function ensureCity() {
 /** 街を出す/しまう（イベント設定の「ワールド」で切り替わる） */
 function applyWorldKind(kind) {
   if (kind === 'city') {
-    ensureCity();
+    // ⚠ ensureCity は「もう街がある」と何もせずに返す。
+    //   そのとき歩ける範囲が会場のままだと**外に出られない**ので、ここで必ず入れ直す
+    const c = ensureCity();
+    if (controls && c) controls.setBounds(c.bounds);
   } else if (city) {
     // 街をやめたら会場の範囲に戻す（造形は残るが、外へは歩けなくなる）
     if (controls) controls.setBounds(world.bounds);
@@ -675,6 +678,13 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       if (net && !demoMode) net.sendEmote('hop');
     },
   });
+
+  // ⚠ **街に出られるようにする**（2026-08-08・loyさん「そもそも外に出れない ゲートがふさがってる」）。
+  //   controls は city より**後**に作られるので、ensureCity() の中の
+  //   `if (controls) controls.setBounds(...)` は入場時には効かない（controls がまだ無い）。
+  //   ここで入れ直さないと、CITYのイベントでも歩ける範囲が
+  //   clubVERSE の箱（x -13..25 / z -16.5..22）のままになり、会場から一歩も出られない。
+  if (city) controls.setBounds(city.bounds);
 
   chat = initChat({
     onSend: (text) => {
