@@ -14,23 +14,34 @@ import * as THREE from 'three';
 //   21km²の街は自動生成で見分けがつかないので、出てすぐ目に入る位置に置くこと。
 // ============================================================
 
-/** 建物の定義。id は shopui.js の kind と揃える */
+/**
+ * 建物の定義。id は shopui.js の kind と揃える。
+ *
+ * ⚠ 置き場所は**会場の西側**。理由（2026-08-07 実測）:
+ *   clubVERSE の床は南（z>22）には無く、**南からは会場の外に出られない**。
+ *   会場の敷地（x -45..55 / z -50..40）の中では床のある所にしか立てないので、
+ *   最初に南（z=46）へ置いた建物は**扉の前に立てなかった**（loyさん「いけない」）。
+ *   西は x=-45 より外に出ればどこでも立てるので、そちら側に置く。
+ *   会場から西へ歩くと出られる（loyさん「clubVERSEの西の門からCITYにでれるように」）。
+ */
 export const SHOP_BUILDINGS = [
   {
     id: 'shop',
     label: 'VERSE SHOP',
     color: 0x1b3a55,
     neon: 0x00ffea,
-    pos: [-14, 0, 46], // 会場を出てすぐ左（南西）
+    pos: [-72, 0, -18], // 会場の西・少し奥
     size: [16, 9, 14],
+    doorFace: 'east', // 扉は会場側（+X）を向く
   },
   {
     id: 'casino',
     label: 'VERSE CASINO',
     color: 0x3a1b45,
     neon: 0xff00e5,
-    pos: [22, 0, 46], // 会場を出てすぐ右（南東）
+    pos: [-72, 0, 14], // 会場の西・少し手前
     size: [16, 11, 14],
+    doorFace: 'east',
   },
 ];
 
@@ -83,23 +94,33 @@ export function createShopBuildings(scene) {
     root.add(body);
     disposables.push(body);
 
-    // 扉（手前＝会場側＝ -Z 面）。光らせて「ここが入口」と分かるようにする
+    // 扉。光らせて「ここが入口」と分かるようにする。
+    // doorFace で向きを変える（'east' なら +X 面、既定は会場側＝ -Z 面）
     const door = new THREE.Mesh(
       new THREE.PlaneGeometry(3.2, 4.4),
       new THREE.MeshBasicMaterial({ color: b.neon, fog: true }),
     );
-    const doorZ = z - d / 2 - 0.05;
-    door.position.set(x, 2.2, doorZ);
+    const east = b.doorFace === 'east';
+    const doorX = east ? x + w / 2 + 0.05 : x;
+    const doorZ = east ? z : z - d / 2 - 0.05;
+    door.position.set(doorX, 2.2, doorZ);
+    if (east) door.rotation.y = Math.PI / 2;
     root.add(door);
     disposables.push(door);
 
     // 看板（建物の上）
     const sign = label(b.label, b.neon);
-    sign.position.set(x, y + h + 2.2, doorZ);
+    sign.position.set(doorX + (east ? 1.5 : 0), y + h + 2.2, doorZ + (east ? 0 : 0));
     root.add(sign);
     disposables.push(sign);
 
-    doors.push({ id: b.id, label: b.label, x, z: doorZ - 1.5 });
+    // 立ち位置は扉の少し手前（外側）
+    doors.push({
+      id: b.id,
+      label: b.label,
+      x: doorX + (east ? 2 : 0),
+      z: doorZ - (east ? 0 : 2),
+    });
   }
 
   return {
