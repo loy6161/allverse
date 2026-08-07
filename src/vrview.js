@@ -100,6 +100,8 @@ export function createVrView({
   stereo.eyeSep = EYE_SEP;
 
   let on = false;
+  /** 起動の手続き中（許可ダイアログを待っている間の二重押しを止める） */
+  let starting = false;
   let wakeLock = null;
   /** ジャイロから作った姿勢 */
   const orient = new THREE.Quaternion();
@@ -287,14 +289,31 @@ export function createVrView({
   }
 
   async function start() {
-    if (on) return;
+    // ⚠ 許可ダイアログを待っている間に**もう一度押される**ことがある（iOSは待ちが長い）。
+    //   `on` を立てるのは待ちのあとなので、ここで別の目印を使って二重起動を止める
+    //   （2026-08-08 レビュー指摘）。止めないと wakeLock を取りっぱなしにする等の副作用が出る
+    if (on || starting) return;
+    starting = true;
     injectStyle();
-    const ok = await askGyro();
+    let ok = false;
+    try {
+      ok = await askGyro();
+    } finally {
+      starting = false;
+    }
     if (!ok) {
       onMessage('首振りの許可が取れなかったので、VR表示は使えません（設定 → Safari → モーションとカメラのアクセス）');
       return;
     }
     on = true;
+
+    // ★ 抜け道を**いちばん先に**登録する（2026-08-08 レビュー指摘）。
+    //   この下でUIを全部隠すので、途中で何かが失敗して登録前に抜けると
+    //   **ゴーグルに入れたまま、タブを閉じる以外に戻れなくなる**
+    window.addEventListener('pointerdown', onPressStart);
+    window.addEventListener('pointerup', onPressEnd);
+    window.addEventListener('pointercancel', onPressEnd);
+
     // 二眼にした瞬間の向きを覚えておく（ジャイロをここへ合わせ込む）
     gyroReady = false;
     baseYaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
@@ -306,24 +325,30 @@ export function createVrView({
     window.addEventListener('deviceorientation', onDeviceOrientation);
     window.addEventListener('orientationchange', onScreenOrientation);
     window.addEventListener('resize', onScreenOrientation);
-    // 全画面（できる端末だけ）。iOS Safari は全画面にできないので、そのまま続ける
+    onChange(true);
+    showHint();
     try {
-      if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+      keepAwake();
+      // スクリーンの映像を右目にも出す（DOMは1つしか置けないので、もう1枚 iframe を足す）
+      if (screen && screen.setStereo) screen.setStereo(true);
+    } catch { /* 映像が出なくても、会場は見られる */ }
+
+    // ⚠ 全画面と向きの固定は**待たない**（2026-08-08 実測して修正）。
+    //   環境によっては要求が解決も失敗もせず宙に浮き、await すると
+    //   **この下の処理が永久に走らない**（右目の映像がいつまでも作られなかった）。
+    //   どちらも「できたら嬉しい」程度のものなので、投げっぱなしにする
+    try {
+      if (document.documentElement.requestFullscreen) {
+        const p = document.documentElement.requestFullscreen();
+        if (p && p.catch) p.catch(() => {});
+      }
     } catch { /* 全画面にならなくても見られる */ }
     try {
       if (window.screen && window.screen.orientation && window.screen.orientation.lock) {
-        await window.screen.orientation.lock('landscape');
+        const p = window.screen.orientation.lock('landscape');
+        if (p && p.catch) p.catch(() => {});
       }
     } catch { /* iOS など。横向きは本人に回してもらう */ }
-    keepAwake();
-    // スクリーンの映像を右目にも出す（DOMは1つしか置けないので、もう1枚 iframe を足す）
-    if (screen && screen.setStereo) screen.setStereo(true);
-    showHint();
-    // ⚠ 抜け道を必ず残す。ここを塞ぐと**ゴーグルに入れたまま戻れない**
-    window.addEventListener('pointerdown', onPressStart);
-    window.addEventListener('pointerup', onPressEnd);
-    window.addEventListener('pointercancel', onPressEnd);
-    onChange(true);
   }
 
   function stop() {
@@ -347,6 +372,14 @@ export function createVrView({
     try {
       if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
     } catch { /* 抜けられなくても操作はできる */ }
+    // ⚠ 横向きに固定していたら必ず外す（2026-08-08 レビュー指摘）。
+    //   全画面を抜けると自動で外れる端末が多いが、外れない実装だと
+    //   「二眼をやめたのに横向きのまま」になる
+    try {
+      if (window.screen && window.screen.orientation && window.screen.orientation.unlock) {
+        window.screen.orientation.unlock();
+      }
+    } catch { /* 外せなくても操作はできる */ }
     // 画面いっぱいに戻す（分割と、回して出すために変えた大きさを元へ）
     renderer.setScissorTest(false);
     renderer.setSize(window.innerWidth, window.innerHeight);

@@ -243,6 +243,7 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
       iframe.remove();
       iframe = null;
     }
+    syncRightEye(); // 二眼の右目も消す（残すと消したはずの動画が鳴り続ける）
     hasState = false;
     holder.style.background = 'transparent';
     setOccluder(false); // 穴を閉じる（閉じないと会場に抜けた穴が残る）
@@ -438,6 +439,7 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
       holder.style.background = '#000';
       setOccluder(true); // 消したあとに入れ直した場合、穴を開け直す必要がある
       mountIframe(currentVideoId);
+      syncRightEye(); // 二眼で見ている人の右目も入れ替える
     }
   }
 
@@ -450,6 +452,7 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     if (!started || !currentVideoId) return;
     hasState = false;
     mountIframe(currentVideoId);
+    syncRightEye();
   }
 
   function getVideo() {
@@ -537,6 +540,22 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
       stage.remove();
       stage = null;
     }
+  }
+
+  /**
+   * 右目の映像を、いまの動画に合わせ直す（2026-08-08 レビュー指摘）。
+   * ⚠ これを呼ばないと、**二眼で見ている間に動画が切り替わっても右目だけ古いまま**になる。
+   *   動画の切り替えは他の人の操作でも起きる（サーバーから降ってくる）ので、
+   *   二眼中に画面を触っていなくても発生する
+   */
+  function syncRightEye() {
+    if (!stereoOn) return;
+    if (!currentVideoId) {
+      if (iframeR && holderR) holderR.removeChild(iframeR);
+      iframeR = null;
+      return;
+    }
+    mountRightIframe();
   }
 
   /** 二眼モードの入り／切り。呼ぶのは vrview 側 */

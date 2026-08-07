@@ -2239,6 +2239,8 @@ window.__vc = {
   camera,
   renderer,
   world,
+  // スクリーン（動画）の覗き口。二眼の右目に映像が渡っているかを外から確かめる用
+  liveScreen,
   get controls() { return controls; },
   get player() { return player; },
   // 自分の姿の小窓（2026-08-04追加）。描画が止まる環境でも
