@@ -1,4 +1,7 @@
-import { getWallet, onWalletChange } from './wallet.js';
+import {
+  getWallet, onWalletChange, claimTestTopup, TEST_TOPUP_AMOUNT, getLoginStat,
+  grantAchievementReward,
+} from './wallet.js';
 import { itemById } from './catalog.js';
 import { parseAccessories, toggleAccessory } from './accessory.js';
 import {
@@ -8,7 +11,7 @@ import {
 import { getHouse, onHouseChange, rentRoom, placeItem, removeLast, clearItems, placeableItems, RENT } from './housing.js';
 import {
   renderAlbum, addPhoto, removePhoto, renderAchievements, unlock,
-  renderRanking, renderNavi, renderWeather,
+  renderRanking, renderWeather, ACHIEVEMENTS,
 } from './phoneextra.js';
 import { getFriends, onFriendsChange, isFriend, acceptRequest, declineRequest, removeFriend } from './friends.js';
 
@@ -53,6 +56,13 @@ function injectStyle() {
   box-shadow: 0 0 14px rgba(0,255,234,0.25);
 }
 .vc-phone-btn:hover { border-color: #00ffea; }
+/* 📱本体のバッジ（未読の合計。2026-08-08）。開いていなくても気づけるように */
+.vc-phone-outer-badge {
+  display: none; position: absolute; top: -4px; right: -4px; min-width: 17px; height: 17px;
+  padding: 0 3px; border-radius: 9px; background: #ff4fd8; color: #fff; font-size: 10px;
+  font-weight: 700; align-items: center; justify-content: center; line-height: 1;
+  box-shadow: 0 0 6px rgba(255,79,216,0.85); border: 1px solid rgba(255,255,255,0.5);
+}
 
 /* 筐体（loyさん「スマホの筐体作る」） */
 .vc-phone {
@@ -108,10 +118,18 @@ function injectStyle() {
   background: none; border: none; color: #eaf6ff; cursor: pointer; padding: 0;
 }
 .vc-app-ico {
+  position: relative;
   width: 54px; height: 54px; border-radius: 15px; font-size: 25px;
   display: flex; align-items: center; justify-content: center;
   background: linear-gradient(160deg, rgba(0,255,234,0.22), rgba(255,0,229,0.18));
   border: 1px solid rgba(255,255,255,0.18);
+}
+/* アプリごとの未読バッジ（📇連絡帳・💬メッセージ・📹通話。2026-08-08・見たら消える） */
+.vc-app-badge {
+  position: absolute; top: -5px; right: -5px; min-width: 17px; height: 17px; padding: 0 3px;
+  border-radius: 9px; background: #ff4fd8; color: #fff; font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; line-height: 1;
+  box-shadow: 0 0 5px rgba(255,79,216,0.8); border: 1px solid rgba(255,255,255,0.5);
 }
 .vc-app:hover .vc-app-ico { border-color: #00ffea; }
 .vc-app-name { font-size: 10px; color: rgba(220,235,255,0.8); }
@@ -190,9 +208,10 @@ export function initPhone(opts = {}) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'vc-phone-btn';
-  btn.textContent = '📱';
+  btn.innerHTML = '📱<span class="vc-phone-outer-badge" id="vc-phone-outer-badge"></span>';
   btn.title = 'スマホ（設定・持ち物・アプリ）';
   document.body.appendChild(btn);
+  const outerBadgeEl = btn.querySelector('#vc-phone-outer-badge');
 
   const phone = document.createElement('div');
   phone.className = 'vc-phone';
@@ -219,6 +238,10 @@ export function initPhone(opts = {}) {
   let view = 'home';
   /** 地図の描き直しを止めるための後始末 */
   let stopMap = null;
+  /** カメラのライブプレビュー（drawImageの間引き）を止めるための後始末 */
+  let stopCamera = null;
+  /** 文字入力中か（input/textareaにフォーカスがあるあいだ）。歩行の可否に使う */
+  let typing = false;
   /** SNSの投稿（サーバーから届いたもの。新しい順） */
   let posts = [];
   /** SNS・DMで断られた理由（1回だけ出す） */
@@ -244,19 +267,46 @@ export function initPhone(opts = {}) {
     if (open && view === 'house') paint();
   });
   onFriendsChange(() => {
-    if (open && (view === 'friends' || view === 'dm' || view === 'pay')) paint();
+    // home も含める：ホーム画面の📇バッジ（届いている申請数）をその場で更新するため
+    if (open && (view === 'friends' || view === 'dm' || view === 'pay' || view === 'home')) paint();
+    updateOuterBadge();
   });
+
+  /** 未読メッセージの合計（📇連絡帳・💬メッセージ・📹通話のバッジに使う内部計算） */
+  function unreadDmCount() {
+    let n = 0;
+    for (const id of Object.keys(threads)) n += threads[id].filter((m) => !m.mine && !m.read).length;
+    return n;
+  }
+
+  /**
+   * 📱本体（開閉ボタン）のバッジ。開いていなくても「何か来てる」と分かるように、
+   * 合計件数だけを常時ここに出す（2026-08-08・loyさん「通知が欲しい」）。
+   */
+  function updateOuterBadge() {
+    const n = getFriends().requests.length + unreadDmCount() + (callState === 'incoming' ? 1 : 0);
+    outerBadgeEl.textContent = n > 9 ? '9+' : String(n);
+    outerBadgeEl.style.display = n > 0 ? 'flex' : 'none';
+  }
 
   // ---- ホーム ----
   function renderHome() {
     const grid = document.createElement('div');
     grid.className = 'vc-phone-apps';
+    // アプリごとのバッジ数（見たら消える・2026-08-08）
+    const badges = {
+      friends: getFriends().requests.length,
+      dm: unreadDmCount(),
+      call: callState === 'incoming' ? 1 : 0,
+    };
     for (const app of opts.apps || []) {
       if (app.show && !app.show()) continue;
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'vc-app';
-      b.innerHTML = `<div class="vc-app-ico">${app.icon}</div><div class="vc-app-name">${app.name}</div>`;
+      const n = badges[app.id] || 0;
+      const badgeHtml = n ? `<span class="vc-app-badge">${n > 9 ? '9+' : n}</span>` : '';
+      b.innerHTML = `<div class="vc-app-ico">${app.icon}${badgeHtml}</div><div class="vc-app-name">${app.name}</div>`;
       b.addEventListener('click', () => {
         if (app.inside) {
           view = app.id;
@@ -351,7 +401,9 @@ export function initPhone(opts = {}) {
     }
     const note = document.createElement('p');
     note.className = 'vc-phone-note';
-    note.textContent = '「着ける」を押すとその場で見た目に反映されます。';
+    // 2026-08-08・loyさん「飲み物のめない」の修正。バーの建物まで行かなくても
+    // ここから飲めるようにした（アクセサリーは今までどおり「着ける」）
+    note.textContent = '「着ける」を押すとその場で見た目に反映されます。飲み物は「飲む」で1つ減り、お腹が回復します。';
     bodyEl.appendChild(note);
 
     const worn = opts.getConfig ? parseAccessories(opts.getConfig().accessory) : [];
@@ -376,6 +428,17 @@ export function initPhone(opts = {}) {
           paint();
         });
         card.appendChild(b);
+      } else if (it.cat === 'drink' && opts.onDrink) {
+        // ⚠ バー（shopui.js）と同じ道を通す。ここだけ別の減らし方をすると
+        //   個数がズレる（addItemを2か所で別々に書かない）
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = '飲む';
+        b.addEventListener('click', () => {
+          opts.onDrink(it);
+          paint();
+        });
+        card.appendChild(b);
       }
       list.appendChild(card);
     }
@@ -395,6 +458,36 @@ export function initPhone(opts = {}) {
     note.className = 'vc-phone-note';
     note.textContent = '⚠ いまはこの端末の中だけの残高です（VRChat側とはまだ繋がっていません）。';
     bodyEl.appendChild(note);
+
+    // VCの稼ぎ方の案内（2026-08-08・loyさん「VCを稼ぐ方法がないと詰むね」）
+    const how = document.createElement('p');
+    how.className = 'vc-phone-note';
+    how.innerHTML = '<b>VCの稼ぎ方</b><br>'
+      + '・🏆実績を達成する（初回だけ報酬あり）<br>'
+      + '・街に落ちているコインを拾う（歩いていると見つかります）<br>'
+      + '・街を歩き回っていると数分おきに滞在ボーナス<br>'
+      + '・フレンドになる（お互いに1回ずつ）<br>'
+      + '・毎日1回のログインボーナス／イベント参加ボーナス';
+    bodyEl.appendChild(how);
+
+    // ⚠⚠ テスト用の即席チャージ。**モック期間だけ**のボタン（本番には持ち込まない）
+    const testRow = document.createElement('div');
+    testRow.style.cssText = 'margin-bottom:10px;';
+    const testNote = document.createElement('p');
+    testNote.className = 'vc-phone-note';
+    testNote.textContent = '⚠ 下のボタンはテスト用（モック限定）。本番には無くなります。';
+    testRow.appendChild(testNote);
+    const testBtn = document.createElement('button');
+    testBtn.type = 'button';
+    testBtn.textContent = `テスト用: ${TEST_TOPUP_AMOUNT.toLocaleString()} VC 追加`;
+    testBtn.style.cssText = 'width:100%;padding:8px;font-size:12px;border-radius:8px;cursor:pointer;'
+      + 'color:#eaf6ff;background:rgba(255,209,71,0.14);border:1px solid rgba(255,209,71,0.6);';
+    testBtn.addEventListener('click', () => {
+      claimTestTopup();
+      paint();
+    });
+    testRow.appendChild(testBtn);
+    bodyEl.appendChild(testRow);
 
     if (!w.log.length) return;
     for (const row of w.log.slice(0, 20)) {
@@ -425,12 +518,27 @@ export function initPhone(opts = {}) {
       stopMap();
       stopMap = null;
     }
+    if (stopCamera) {
+      stopCamera();
+      stopCamera = null;
+    }
     syncMovable();
     if (view === 'bag') renderBag();
     else if (view === 'wallet') renderWallet();
     else if (view === 'map') {
       header('マップ');
-      stopMap = renderMap(bodyEl, opts.map || {});
+      // ⚠ ナビ（行き先）は独立アプリ🧭を廃止し、マップの中に統合した
+      //   （2026-08-08 loyさん「ナビはマップの中にあった方がいいね」）。
+      //   選択肢の描画・距離計算は phoneextra.js の renderNavi をそのまま呼び直している
+      //   （作り直すと距離計算の細かい挙動を写し損ねるため）
+      stopMap = renderMap(bodyEl, {
+        ...(opts.map || {}),
+        naviCurrent: opts.getNavi ? opts.getNavi() : null,
+        onNaviSet: (spot) => {
+          if (opts.onNavi) opts.onNavi(spot);
+          paint();
+        },
+      });
     } else if (view === 'sns') {
       header('SNS');
       renderSns(bodyEl, {
@@ -461,7 +569,7 @@ export function initPhone(opts = {}) {
           acceptRequest(name);
           // 相手にも「受けたよ」を伝える（いま会場に居れば届く）
           const person = (opts.getPeople ? opts.getPeople() : []).find((x) => x.name === name);
-          if (person && opts.onFriendOk) opts.onFriendOk(person.id);
+          if (person && opts.onFriendOk) opts.onFriendOk(person.id, person.name);
           paint();
         },
         onDecline: (name) => {
@@ -540,18 +648,7 @@ export function initPhone(opts = {}) {
       renderAchievements(bodyEl);
     } else if (view === 'rank') {
       header('ランキング');
-      renderRanking(bodyEl, { posts });
-    } else if (view === 'navi') {
-      header('ナビ');
-      const p = opts.map && opts.map.getPlayer ? opts.map.getPlayer() : null;
-      renderNavi(bodyEl, {
-        current: opts.getNavi ? opts.getNavi() : null,
-        playerPos: p ? { x: p.position.x, z: p.position.z } : { x: 0, z: 0 },
-        onSet: (spot) => {
-          if (opts.onNavi) opts.onNavi(spot);
-          paint();
-        },
-      });
+      renderRanking(bodyEl, { posts, balance: getWallet().balance, loginStat: getLoginStat() });
     } else if (view === 'weather') {
       header('天気');
       renderWeather(bodyEl, {
@@ -636,7 +733,7 @@ export function initPhone(opts = {}) {
       });
     } else if (view === 'camera') {
       header('カメラ');
-      renderCamera(bodyEl, {
+      stopCamera = renderCamera(bodyEl, {
         shoot: () => {
           const img = opts.shoot ? opts.shoot() : '';
           if (img) {
@@ -658,22 +755,53 @@ export function initPhone(opts = {}) {
 
   /**
    * 歩けるかを決めて外へ伝える。
-   * ⚠ カメラのときは**歩けないと撮影にならない**（2026-08-08 loyさん
-   *   「カメラ出した状態で歩けないと撮影むづかしいね」）。カメラだけ例外にする
+   * ⚠ 2026-08-08 loyさん「スマホは出しっぱなしでも歩けた方がいいかも。」
+   *   → 開いていても常に歩ける。**文字入力中（input/textareaにフォーカス）だけ止める**
+   *   （WASDが打てなくなるため）。カメラは元から歩けたので、いまは全画面が同じ扱いになった
    */
   function syncMovable() {
-    const canWalk = !open || view === 'camera';
+    const canWalk = !typing;
     phone.classList.toggle('vc-phone-cam', open && view === 'camera');
     if (opts.onOpenChange) opts.onOpenChange(!canWalk);
   }
 
+  // input/textarea にフォーカスが入っている間だけ歩行を止める。
+  // ⚠ focusout は「別の入力欄へ移った」直後にも一瞬発生するので、次のフォーカス先を
+  //   確かめてから判定する（setTimeoutで1tick待つ）
+  phone.addEventListener('focusin', (e) => {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+      typing = true;
+      syncMovable();
+    }
+  });
+  phone.addEventListener('focusout', () => {
+    setTimeout(() => {
+      const wasTyping = typing;
+      const el = document.activeElement;
+      typing = Boolean(
+        el && phone.contains(el)
+        && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable),
+      );
+      syncMovable();
+      // 入力を終えた瞬間に描き直す。入力中は setPosts/addDm 側で描画を止めているので、
+      // その間に届いていた更新（他人の投稿・メッセージ）をここで反映する
+      if (wasTyping && !typing && open && (view === 'sns' || view === 'dm')) paint();
+    }, 0);
+  });
+
   function setOpen(next) {
     if (!next) {
       releaseHosted(); // 閉じる前に借りている画面を返す
+      typing = false; // 閉じたら入力中フラグも必ず戻す（入れっぱなしで歩けなくなるのを防ぐ）
       // ⚠ マップは0.5秒ごとに描き直している。閉じたまま回り続けないよう止める
       if (stopMap) {
         stopMap();
         stopMap = null;
+      }
+      if (stopCamera) {
+        stopCamera();
+        stopCamera = null;
       }
     }
     open = next;
@@ -706,19 +834,28 @@ export function initPhone(opts = {}) {
     }
   });
 
+  updateOuterBadge(); // 初期表示（既に届いている申請等があれば最初から出す）
+
   return {
     isOpen: () => open,
-    /** SNSの一覧が届いた */
+    /**
+     * SNSの一覧が届いた。
+     * ⚠ **文字入力中は再描画しない**（2026-08-08・ブラウザでの実機検証で発覚した不具合）。
+     *   paint() は bodyEl.innerHTML='' で中身を作り直すため、他人の投稿が届くたびに
+     *   自分が書きかけの入力欄が消え、フォーカスも外れて「歩けない」が解除されてしまう
+     *   （文字入力中だけ歩行を止める仕組みが、外からの通信で無効化される）。
+     *   入力し終えて欄を離れれば、次の描き直しで普通に反映される
+     */
     setPosts(list) {
       posts = Array.isArray(list) ? list : [];
-      if (open && view === 'sns') paint();
+      if (open && view === 'sns' && !typing) paint();
     },
     /** 新しい投稿が1件届いた */
     addPost(post) {
       if (!post) return;
       posts.unshift(post);
       posts = posts.slice(0, 50);
-      if (open && view === 'sns') paint();
+      if (open && view === 'sns' && !typing) paint();
     },
     /** いいねの数が変わった */
     updateLikes(pid, count) {
@@ -726,19 +863,20 @@ export function initPhone(opts = {}) {
       if (!p) return;
       // 数だけ届くので、自分が押したかどうかは配列の長さで持ち直す
       p.likes = new Array(count).fill('?');
-      if (open && view === 'sns') paint();
+      if (open && view === 'sns' && !typing) paint();
     },
     /** 断られた理由（投稿できない等） */
     setDenied(why) {
       denied = why || '';
-      if (open && view === 'sns') paint();
+      if (open && view === 'sns' && !typing) paint();
     },
-    /** 1対1のメッセージが届いた／送った */
+    /** 1対1のメッセージが届いた／送った。⚠ 理由は setPosts と同じ（文字入力中は描き直さない） */
     addDm(msg) {
       const other = msg.mine ? msg.to : msg.from;
       if (!threads[other]) threads[other] = [];
       threads[other].push({ txt: msg.txt, mine: Boolean(msg.mine), at: msg.at, read: Boolean(msg.mine) });
-      if (open && view === 'dm') paint();
+      if (open && view === 'dm' && !typing) paint();
+      updateOuterBadge();
       return other;
     },
     /**
@@ -752,12 +890,14 @@ export function initPhone(opts = {}) {
         setOpen(true);
         view = 'call';
         paint();
+        updateOuterBadge();
         return;
       }
       if (kind === 'accept') {
         callState = 'live';
         if (opts.onCallLive) opts.onCallLive(id);
         if (open && view === 'call') paint();
+        updateOuterBadge();
         return;
       }
       // end
@@ -765,10 +905,14 @@ export function initPhone(opts = {}) {
       callPeer = null;
       if (opts.onCallLive) opts.onCallLive(null);
       if (open && view === 'call') paint();
+      updateOuterBadge();
     },
-    /** 実績を解除する（外の出来事から呼ぶ） */
+    /** 実績を解除する（外の出来事から呼ぶ）。初回だけVCの報酬が付く（2026-08-08） */
     unlockAchievement(id, label) {
-      if (unlock(id) && opts.onAchievement) opts.onAchievement(label);
+      if (!unlock(id)) return;
+      const def = ACHIEVEMENTS.find((a) => a.id === id);
+      if (def && def.reward) grantAchievementReward(def.reward, label);
+      if (opts.onAchievement) opts.onAchievement(label, def ? def.reward : 0);
     },
     /** 送金の結果を出す */
     setPayMessage(text) {
@@ -782,18 +926,31 @@ export function initPhone(opts = {}) {
       paint();
     },
     /** 未読の合計（バッジ用） */
-    unreadCount() {
-      let n = 0;
-      for (const id of Object.keys(threads)) {
-        n += threads[id].filter((m) => !m.mine && !m.read).length;
-      }
-      return n;
-    },
+    unreadCount: unreadDmCount,
     setOpen,
     /** 持ち物をすぐ開く（他から呼べるように） */
     openBag() {
       setOpen(true);
       view = 'bag';
+      paint();
+    },
+    /** ウォレットをすぐ開く（送金の通知トーストから飛べるように・2026-08-08） */
+    openWallet() {
+      setOpen(true);
+      view = 'wallet';
+      paint();
+    },
+    /** 指定の相手とのメッセージ画面をすぐ開く（通知トーストから飛べるように・2026-08-08） */
+    openDm(id) {
+      setOpen(true);
+      dmWith = id;
+      view = 'dm';
+      paint();
+    },
+    /** 通話画面をすぐ開く（着信の通知トーストから飛べるように・2026-08-08） */
+    openCall() {
+      setOpen(true);
+      view = 'call';
       paint();
     },
     setVisible(on) {

@@ -26,6 +26,21 @@ export const ROOM_ORIGIN = { x: -72, z: 44 };
 const HALF_X = 7;
 const HALF_Z = 6;
 const WALL_H = 3.6;
+/** 部屋の半径（外から判定に使うため公開） */
+export const ROOM_HALF = { x: HALF_X, z: HALF_Z };
+/** 入口の位置（東側）。近づいたときの案内表示に使う */
+export const DOOR_POS = { x: ROOM_ORIGIN.x + HALF_X, z: ROOM_ORIGIN.z };
+
+/**
+ * その座標が部屋の中か（2026-08-08・loyさん「マイルームは購入しないと入れないようにして」）。
+ * ⚠ 借りていない人が壁抜けで入れてしまわないよう、main.js の canStandAt で
+ *   「部屋の中 かつ 借りていない」なら false を返す、という使い方をする
+ */
+export function insideRoom(x, z) {
+  const dx = x - ROOM_ORIGIN.x;
+  const dz = z - ROOM_ORIGIN.z;
+  return Math.abs(dx) <= HALF_X && Math.abs(dz) <= HALF_Z;
+}
 
 const listeners = new Set();
 

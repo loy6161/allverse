@@ -9,15 +9,21 @@ import { initJoinScreen, openCustomizer, setKnownRole } from './join.js';
 import { createShopBuildings, nearestSpot } from './shops3d.js';
 import { createCars, nearestCar, CAR_SPEED } from './car.js';
 import { createCallView } from './callview.js';
-import { createRoom, ROOM_ORIGIN } from './housing.js';
+import { createVoice } from './voice.js';
+import { createBar } from './bar3d.js';
+import { createRoom, ROOM_ORIGIN, getHouse, insideRoom, DOOR_POS, RENT as ROOM_RENT } from './housing.js';
+import { createCityCoins } from './citycoins.js';
 import { WEATHERS } from './phoneextra.js';
 import { initPhone } from './phone.js';
+import { initPhoneNotify } from './phonenotify.js';
 import { addRequest, addFriend } from './friends.js';
 import { updateHunger, speedFactor, eat, getHunger, hungerLabel, onHungerChange } from './hunger.js';
 import { openShop, closeShop, isShopOpen } from './shopui.js';
 import {
   getWallet, onWalletChange, claimDailyBonus, claimEventBonus,
   spend as spendPoints, grant as grantPoints,
+  recordLoginDay, grantCityCoin, grantStayBonus, claimFriendBonus,
+  addItem as addWalletItem, hasItem as hasWalletItem,
 } from './wallet.js';
 import { openPlacePicker } from './placepick.js';
 import { saveLocalPrefs } from './prefs.js';
@@ -56,7 +62,11 @@ preloadAvatars(); // GLBアバターを先読み（入場前にロードを済�
 const canvas = document.getElementById('scene');
 // alpha:true = キャンバスを透過可能にする。スクリーン面に開けた「穴」から
 // 背後のYouTube iframeを見せ、手前のアバターはキャンバス側に描くため（screen.js参照）
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+// preserveDrawingBuffer:true = 📷カメラのライブファインダー（phoneapps.js renderCamera）が
+//   setInterval で本編キャンバスを drawImage するために必要（2026-08-08）。
+//   ⚠ これが無いと、描いた直後にブラウザがバッファを破棄することがあり、
+//   render()の外から読むと真っ黒になる（shoot() は render() 直後に同期で読むので影響しない）
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
 renderer.setClearColor(0x000000, 0);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -106,6 +116,8 @@ let cars = null;
 let nearCarSpot = null;
 /** 前のフレームで乗っていた車（案内を出し直す判定に使う） */
 let lastRiding = '';
+/** マイルームの入口に近づいているか（前フレーム。案内の出し直し判定に使う） */
+let lastNearHouseDoor = false;
 function ensureCity() {
   if (city || WORLD_KIND !== 'club') return city;
   city = createCityLayer(scene, { hole: { minIx: 0, maxIx: 0, minIz: 0, maxIz: 0 } });
@@ -116,6 +128,8 @@ function ensureCity() {
   if (!cars) cars = createCars(scene);
   // マイルーム（2026-08-08）。借りると家具を置ける
   if (!house) house = createRoom(scene);
+  // 街のコイン拾い（2026-08-08）。歩く理由を作る稼ぎ方の1つ
+  if (!cityCoins) cityCoins = createCityCoins(scene);
   if (controls) controls.setBounds(city.bounds);
   return city;
 }
@@ -238,10 +252,42 @@ let helpUI = null;
 let selfView = null;
 /** スマホ（2026-08-08）。設定・持ち物・アプリの入口 */
 let phoneUI = null;
+/** スマホの通知トースト（送金・フレンド申請・メッセージ・着信。2026-08-08） */
+let notifyUI = null;
 /** ビデオ通話の映像（相手のアバターの顔を小さく描く） */
 let callView = null;
+/** ビデオ通話の声（WebRTC。声はサーバーを通らず本人同士で流れる。2026-08-08） */
+let voice = null;
+/** 会場の中のバーカウンター（2026-08-08・loyさん指定の位置） */
+let clubBar = null;
+
+/**
+ * 通話の声を要るときだけ用意する（2026-08-08）。
+ * ⚠ マイクの許可は voice.js が通話のたびに聞く。断られても通話は切らない（顔は見えている）
+ */
+function ensureVoice() {
+  if (voice) return voice;
+  voice = createVoice({
+    send: (m) => {
+      if (net && !demoMode) net.sendRtc(m);
+    },
+    onState: (state) => {
+      if (!chat) return;
+      if (state === 'nomic') {
+        chat.addMessage('', '🎤 マイクが使えないので、声なしの通話になります', { system: true });
+      } else if (state === 'live') {
+        chat.addMessage('', '🎤 声がつながりました', { system: true });
+      } else if (state === 'failed') {
+        chat.addMessage('', '🎤 声はつながりませんでした（回線の種類によっては繋がりません）', { system: true });
+      }
+    },
+  });
+  return voice;
+}
 /** マイルーム（ハウジング） */
 let house = null;
+/** 街のコイン拾い（2026-08-08・稼ぐ手段） */
+let cityCoins = null;
 /** ナビの行き先（null なら案内しない） */
 let naviSpot = null;
 /** 天気（自分の画面だけ） */
@@ -696,8 +742,14 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
     // ⚠ 会場の敷地の中だけモデルに聞く。街は平らなので0でよい（2026-08-06）
     groundYAt: (x, z) => (inClubArea(x, z) ? world.groundYAt(x, z) : 0),
     // 入り口側は縁が斜めなので、床があるかをワールドに聞いてから足を出す。
-    // 街に出たあとはどこでも立てる
-    canStandAt: (x, z) => (inClubArea(x, z) ? world.canStandAt(x, z) : true),
+    // 街に出たあとはどこでも立てる。
+    // ⚠ マイルームだけは例外（2026-08-08・loyさん「マイルームは購入しないと
+    //   入れないようにして」）。借りていない人は壁の内側へ座標だけ丸めても
+    //   実際には立てない扱いにする（stepTo が押し戻す）
+    canStandAt: (x, z) => {
+      if (insideRoom(x, z) && !getHouse().rented) return false;
+      return inClubArea(x, z) ? world.canStandAt(x, z) : true;
+    },
     // シアター表示でカメラを寄せる先。ワールドごとにスクリーンの位置が違う
     screen: world.screen,
     // 自分は物理でジャンプするが、高さは誰にも送っていない（presence も x/z/向き だけ）。
@@ -715,6 +767,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
   //   ここで入れ直さないと、CITYのイベントでも歩ける範囲が
   //   clubVERSE の箱（x -13..25 / z -16.5..22）のままになり、会場から一歩も出られない。
   if (city) controls.setBounds(city.bounds);
+
+  // 会場の中のバーカウンター（2026-08-08・loyさん「スクショ2の位置にバーカウンターを置いて」）。
+  // ⚠ clubVERSE のときだけ。ラウンジなど別のワールドには置かない
+  if (world.kind === 'club' && !clubBar) clubBar = createBar(scene);
 
   chat = initChat({
     onSend: (text) => {
@@ -994,29 +1050,70 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
         phoneUI.onCallSignal({ kind, id, name });
         if (kind === 'ring' && chat) {
           chat.addMessage('', `${name} から通話がかかってきました`, { system: true });
+          // ⚠ 着信時はスマホが自動で通話画面を開く（onCallSignal側）ので、
+          //   このトーストは「歩いていて画面を見ていなかった」ときの気付き用
+          if (notifyUI) {
+            notifyUI.push({
+              icon: '📹', title: '着信', text: `${name} から`,
+              onClick: () => phoneUI.openCall(),
+            });
+          }
         }
+        // 声をつなぐ（2026-08-08）。**掛けた側だけが offer を作る**。
+        // 相手が出た合図（accept）が届くのは掛けた側だけなので、ここが起点でちょうどよい
+        if (kind === 'accept') ensureVoice().call(id);
+        if (kind === 'end' && voice) {
+          voice.stop();
+          voice = null;
+        }
+      },
+      /** 通話の声のつなぎ役が届いた（offer / answer / ice）。中身は voice.js が解く */
+      onRtc: (msg) => {
+        ensureVoice().onSignal(msg);
       },
       onFriendReq: ({ name }) => {
         if (addRequest(name) && chat) {
           chat.addMessage('', `${name} からフレンド申請が届きました（📱→連絡帳）`, { system: true });
+          if (notifyUI) {
+            notifyUI.push({
+              icon: '📇', title: 'フレンド申請', text: `${name} から`,
+              onClick: () => phoneUI && phoneUI.openFriends(),
+            });
+          }
         }
       },
       onFriendOk: ({ name }) => {
         addFriend(name);
         if (phoneUI) phoneUI.unlockAchievement('first_friend', 'ともだち');
-        if (chat) chat.addMessage('', `${name} とフレンドになりました`, { system: true });
+        // フレンドになったボーナス（2026-08-08・「他の人と関わると得なもの」）。
+        // 相手ごとに1回だけ（wallet.js が名前で重複を防ぐ）
+        const bonus = claimFriendBonus(name);
+        if (bonus && chat) chat.addMessage('', `${name} とフレンドになりました（+${bonus} VC）`, { system: true });
+        else if (chat) chat.addMessage('', `${name} とフレンドになりました`, { system: true });
       },
       onPay: ({ fromName, amount }) => {
         grantPoints(amount, `${fromName} からの送金`);
         if (chat) chat.addMessage('', `${fromName} から ${amount} VC を受け取りました`, { system: true });
+        if (notifyUI) {
+          notifyUI.push({
+            icon: '💸', title: '送金を受け取りました', text: `${fromName} から ${amount} VC`,
+            onClick: () => phoneUI && phoneUI.openWallet(),
+          });
+        }
       },
       onPayOk: () => {},
       onDm: (msg) => {
         if (!phoneUI) return;
-        phoneUI.addDm(msg);
+        const other = phoneUI.addDm(msg);
         // 受け取ったことに気づけるように、チャット欄にも1行出す
         if (!msg.mine && chat) {
           chat.addMessage('', `${msg.fromName} からメッセージが届きました（📱→メッセージ）`, { system: true });
+          if (notifyUI) {
+            notifyUI.push({
+              icon: '💬', title: msg.fromName || 'メッセージ', text: msg.txt,
+              onClick: () => phoneUI.openDm(other),
+            });
+          }
         }
       },
       onChat: (m) => {
@@ -1141,6 +1238,8 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
   if (daily) chat.addMessage('', `ログインボーナス ${daily} VC を受け取りました`, { system: true });
   const evb = claimEventBonus(eventId || '');
   if (evb) chat.addMessage('', `イベント参加ボーナス ${evb} VC を受け取りました`, { system: true });
+  // ログイン日数を記録する（2026-08-08・ランキングの「VC・ログイン日数」表示用）
+  recordLoginDay();
   chatRoot.classList.remove('hidden');
   avatarBtn.classList.remove('hidden');
 
@@ -1209,6 +1308,8 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
 
   // 運営メッセージの固定枠（チャットに流すと見逃されるので別枠に出す）
   noticeBar = initNoticeBar();
+  // スマホの通知トースト（送金・フレンド申請・メッセージ・着信。2026-08-08）
+  notifyUI = initPhoneNotify();
   // YouTubeのライブチャット。連動イベントのときだけ出す
   ytChat = initYouTubeChat({
     getVideoId: () => liveScreen.getVideo(),
@@ -1446,7 +1547,9 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       ray.setFromCamera(ndc, camera);
-      const targets = shopBuildings.pickables.concat(cars ? cars.pickables : []);
+      const targets = shopBuildings.pickables
+        .concat(cars ? cars.pickables : [])
+        .concat(clubBar ? clubBar.pickables : []);
       const hit = ray.intersectObjects(targets, false)[0];
       // 車をクリックしたら乗る（近いときだけ）
       const carSpot = hit && hit.object.userData.car;
@@ -1546,7 +1649,8 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
         { id: 'album', name: 'アルバム', icon: '📸', inside: true, run: () => {} },
         { id: 'ach', name: '実績', icon: '🏆', inside: true, run: () => {} },
         { id: 'rank', name: 'ランキング', icon: '📈', inside: true, run: () => {} },
-        { id: 'navi', name: 'ナビ', icon: '🧭', inside: true, run: () => {} },
+        // ⚠ 🧭ナビは独立アプリを廃止し、🗺マップの中に統合した
+        //   （2026-08-08 loyさん「ナビはマップの中にあった方がいいね」）
         { id: 'weather', name: '天気', icon: '☀', inside: true, run: () => {} },
         { id: 'pay', name: '送金', icon: '💸', inside: true, run: () => {} },
         { id: 'camera', name: 'カメラ', icon: '📷', inside: true, run: () => {} },
@@ -1559,6 +1663,19 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       onWear: (config) => {
         session.config = { ...config };
         applyMyLook(session.config);
+      },
+      // 📱持ち物からも飲める（2026-08-08・loyさん「飲み物のめない」の修正）。
+      // ⚠ バー（shopui.js）は買った直後にその場で飲む作りなので、そちらは
+      //   買う→飲むを1画面で完結させている。ここは**バーの建物まで行かなくても
+      //   持ち物に入っていれば飲める**別経路なので、減らす所からここで行う
+      onDrink: (item) => {
+        if (!item || !hasWalletItem(item.id)) return;
+        addWalletItem(item.id, -1);
+        if (player && player.userData.playEmote) player.userData.playEmote('cheers');
+        if (net && !demoMode) net.sendEmote('cheers');
+        if (phoneUI) phoneUI.unlockAchievement('first_drink', '乾杯');
+        const after = eat(item.id === 9 ? 30 : 20);
+        if (chat) chat.addMessage('', `${item.name} を飲みました（お腹 ${Math.round(after)}%）`, { system: true });
       },
       // 開いている間は歩かせない（画面の裏で移動して迷子になるため）
       onOpenChange: (isOpen) => {
@@ -1601,6 +1718,13 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
             },
           },
         );
+        // 声（2026-08-08・loyさん「ビデオ通話は音声は使える？」）。
+        // ⚠ 掛けた側だけが offer を作る（相手が出たと分かる onCall の accept で起動する）。
+        //   ここは「通話が終わったら必ずマイクを離す」ためだけに見る
+        if (!peerId && voice) {
+          voice.stop();
+          voice = null;
+        }
       },
       /** 通話の映像（キャンバス）を渡す */
       callView: () => {
@@ -1613,9 +1737,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
         if (ok && phoneUI) phoneUI.unlockAchievement('first_room', '我が家');
         return ok;
       },
-      /** 実績が取れたときの知らせ */
-      onAchievement: (label) => {
-        if (chat) chat.addMessage('', `🏆 実績「${label}」を達成しました`, { system: true });
+      /** 実績が取れたときの知らせ（初回はVCの報酬つき・2026-08-08） */
+      onAchievement: (label, reward) => {
+        const bonus = reward ? `（+${reward} VC）` : '';
+        if (chat) chat.addMessage('', `🏆 実績「${label}」を達成しました${bonus}`, { system: true });
       },
       /** ナビ（行き先） */
       getNavi: () => (naviSpot ? naviSpot.id : null),
@@ -1762,6 +1887,38 @@ function updateHungerState(dt) {
   if (controls && controls.setSpeedScale) controls.setSpeedScale(speedFactor() * carBoost);
 }
 
+// 街での滞在ボーナス（2026-08-08）。一定時間ごとに少額を配る「稼ぐ手段」の1つ
+const STAY_BONUS_INTERVAL = 5 * 60; // 5分ごと
+const STAY_BONUS_AMOUNT = 100;
+let stayBonusTimer = 0;
+
+/**
+ * VCを稼ぐ手段（2026-08-08・loyさん「VCを稼ぐ方法がないと詰むね」）。
+ * ・街のコイン拾い（歩く理由になるもの）
+ * ・滞在ボーナス（歩き回っているだけで少しずつ貯まる）
+ * ⚠ どちらも**会場の外に居る間だけ**動く。空腹と同じ理由（ライブに支障を出さない）
+ */
+function updateEarnings(dt) {
+  if (!player) return;
+  const outside = !inClubArea(player.position.x, player.position.z);
+  if (!outside) {
+    stayBonusTimer = 0; // 会場に戻っている間は滞在として数えない
+    return;
+  }
+  if (cityCoins) {
+    cityCoins.update(player.position.x, player.position.z, (amount) => {
+      grantCityCoin(amount);
+      if (chat) chat.addMessage('', `💰 街のコインを拾いました（+${amount} VC）`, { system: true });
+    });
+  }
+  stayBonusTimer += dt;
+  if (stayBonusTimer >= STAY_BONUS_INTERVAL) {
+    stayBonusTimer = 0;
+    grantStayBonus(STAY_BONUS_AMOUNT);
+    if (chat) chat.addMessage('', `🌆 街を歩いていたのでボーナス（+${STAY_BONUS_AMOUNT} VC）`, { system: true });
+  }
+}
+
 /**
  * お店の中の台（カウンター・ガチャ台・スロット台）の前に立っているかを見て案内を出す。
  * ⚠ 毎フレーム走るので、**中身は距離を測るだけ**にしてある（DOM は変わったときだけ触る）
@@ -1769,7 +1926,10 @@ function updateHungerState(dt) {
 function updateShopDoors() {
   if (!shopBuildings) return;
   shopBuildings.update(player.position.x, player.position.z);
-  const near = nearestSpot(shopBuildings.spots, player.position.x, player.position.z);
+  if (clubBar) clubBar.update(player.position.x, player.position.z);
+  // 会場の中のバーも同じ仕組みで拾う（近づくと案内が出て、クリック / E で開く）
+  const allSpots = clubBar ? shopBuildings.spots.concat(clubBar.spot) : shopBuildings.spots;
+  const near = nearestSpot(allSpots, player.position.x, player.position.z);
   const car = cars ? nearestCar(cars.spots, player.position.x, player.position.z) : null;
   if (cars) cars.update(player);
   if (house) house.update(player.position.x, player.position.z);
@@ -1777,10 +1937,20 @@ function updateShopDoors() {
   // ⚠ 乗り降りでも案内を出し直す。ここを見ていないと、乗ったのに
   //   「E で乗る」のままになる（2026-08-08 実測して気づいた）
   const riding = cars ? cars.ridingId() : '';
-  if (near === nearSpot && car === nearCarSpot && riding === lastRiding) return;
+  // マイルームの入口に近いか（借りていないときだけ「借りると入れます」を出す。
+  // 2026-08-08・loyさん「マイルームは購入しないと入れないようにして」）
+  const houseDist = Math.hypot(DOOR_POS.x - player.position.x, DOOR_POS.z - player.position.z);
+  const nearHouseDoor = !getHouse().rented && houseDist < 2.8;
+  if (
+    near === nearSpot
+    && car === nearCarSpot
+    && riding === lastRiding
+    && nearHouseDoor === lastNearHouseDoor
+  ) return;
   nearSpot = near;
   nearCarSpot = car;
   lastRiding = riding;
+  lastNearHouseDoor = nearHouseDoor;
   const hint = document.getElementById('vc-door-hint');
   if (!hint) return;
   if (cars && cars.ridingId()) {
@@ -1791,6 +1961,9 @@ function updateShopDoors() {
     hint.classList.remove('hidden');
   } else if (car) {
     hint.textContent = '車 — クリック / E で乗る';
+    hint.classList.remove('hidden');
+  } else if (nearHouseDoor) {
+    hint.textContent = `マイルーム — 借りると入れます（${ROOM_RENT} VC・📱スマホの「マイルーム」）`;
     hint.classList.remove('hidden');
   } else {
     hint.textContent = '';
@@ -1963,6 +2136,7 @@ function loop() {
     controls.update(dt);
     updateVenue(dt);
     updateHungerState(dt);
+    updateEarnings(dt);
     if (player.userData.update) player.userData.update(dt);
     if (sim) sim.update(dt);
     if (crowd) crowd.update(t); // 人影（手前のぶんだけ軽く揺れる）

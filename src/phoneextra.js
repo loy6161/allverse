@@ -85,17 +85,19 @@ export function renderAlbum(host, { onPost, onDelete }) {
 
 // ---------------- 実績 ----------------
 
+// reward: 達成したときに配るVC（2026-08-08・loyさん「VCを稼ぐ方法がないと詰むね」への回答の1つ）。
+// ⚠ **初回だけ**（unlock() が二度目以降 false を返すので、呼び出し側で二重に配らない）
 export const ACHIEVEMENTS = [
-  { id: 'first_post', icon: '🐦', name: 'はじめてのつぶやき', how: 'SNSに投稿する' },
-  { id: 'first_photo', icon: '📷', name: 'カメラマン', how: '写真を撮る' },
-  { id: 'first_gacha', icon: '🎁', name: '運試し', how: 'ガチャを回す' },
-  { id: 'first_slot', icon: '🎰', name: 'ギャンブラー', how: 'スロットを回す' },
-  { id: 'first_drink', icon: '🍺', name: '乾杯', how: 'バーで飲む' },
-  { id: 'first_drive', icon: '🚗', name: 'ドライブ', how: '車に乗る' },
-  { id: 'first_friend', icon: '📇', name: 'ともだち', how: 'フレンドができる' },
-  { id: 'first_call', icon: '📹', name: 'もしもし', how: 'ビデオ通話をする' },
-  { id: 'first_room', icon: '🏠', name: '我が家', how: '部屋を借りる' },
-  { id: 'rich', icon: '💰', name: '小金持ち', how: '5,000 VC 貯める' },
+  { id: 'first_post', icon: '🐦', name: 'はじめてのつぶやき', how: 'SNSに投稿する', reward: 100 },
+  { id: 'first_photo', icon: '📷', name: 'カメラマン', how: '写真を撮る', reward: 100 },
+  { id: 'first_gacha', icon: '🎁', name: '運試し', how: 'ガチャを回す', reward: 100 },
+  { id: 'first_slot', icon: '🎰', name: 'ギャンブラー', how: 'スロットを回す', reward: 100 },
+  { id: 'first_drink', icon: '🍺', name: '乾杯', how: 'バーで飲む', reward: 100 },
+  { id: 'first_drive', icon: '🚗', name: 'ドライブ', how: '車に乗る', reward: 150 },
+  { id: 'first_friend', icon: '📇', name: 'ともだち', how: 'フレンドができる', reward: 150 },
+  { id: 'first_call', icon: '📹', name: 'もしもし', how: 'ビデオ通話をする', reward: 150 },
+  { id: 'first_room', icon: '🏠', name: '我が家', how: '部屋を借りる', reward: 300 },
+  { id: 'rich', icon: '💰', name: '小金持ち', how: '5,000 VC 貯める', reward: 300 },
 ];
 
 export function getAchievements() {
@@ -142,15 +144,35 @@ export function renderAchievements(host) {
 // ---------------- ランキング ----------------
 
 /**
- * SNSのいいね数で並べる。
- * ⚠ 所持ポイントの順位は作らない。**いまは残高が各端末にある**ので、
- *   自己申告の数字を並べることになり、順位として意味を持たない
+ * VC・ログイン日数・SNSのいいね数。
+ *
+ * 2026-08-08・loyさん「ランキングはVC、ログイン日数、とかがいいかもね」。
+ * ★ 自分の数字（VC・連続ログイン日数・累計ログイン日数）は必ず出す。
+ * ⚠ **他の人の数字は出さない**。残高もログイン日数も各端末にあるだけの自己申告なので、
+ *   サーバーが預かるようになるまでは「みんなの順位」を名乗れない
+ *   （なりすまし放題の順位表を出すと、後で信用を失う）。
  */
-export function renderRanking(host, { posts }) {
+export function renderRanking(host, { posts, balance, loginStat }) {
+  const mine = document.createElement('div');
+  mine.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;';
+  const tile = (label, value) => {
+    const d = document.createElement('div');
+    d.style.cssText = 'flex:1;padding:10px 6px;border-radius:10px;text-align:center;'
+      + 'background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.14);';
+    d.innerHTML = `<div style="font-size:16px;font-weight:700;color:#ffd86b;">${value}</div>`
+      + `<div style="font-size:10px;color:rgba(220,235,255,0.6);margin-top:2px;">${label}</div>`;
+    return d;
+  };
+  mine.appendChild(tile('自分の所持VC', (balance || 0).toLocaleString()));
+  mine.appendChild(tile('連続ログイン', `${(loginStat && loginStat.streak) || 0}日`));
+  mine.appendChild(tile('累計ログイン', `${(loginStat && loginStat.total) || 0}日`));
+  host.appendChild(mine);
+
   const note = document.createElement('p');
   note.className = 'vc-phone-note';
-  note.textContent = 'いま会場で話題の投稿（いいねの多い順）。'
-    + '⚠ 所持ポイントの順位は、残高が各端末にあるあいだは出しません（自己申告になるため）。';
+  note.textContent = '⚠ いまは自分の記録だけです。みんなの順位は、ポイントをサーバーで預かる'
+    + 'ようになってから出します（各端末の自己申告のままでは出せません）。'
+    + '下は会場で話題の投稿（いいねの多い順）。';
   host.appendChild(note);
 
   const sorted = [...posts].sort((a, b) => (b.likes || []).length - (a.likes || []).length).slice(0, 10);

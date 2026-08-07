@@ -12,14 +12,21 @@
 //   残す設計は通報や削除の話とセットなので、モックの段階では持たない。
 // ============================================================
 
+import { renderNavi, NAVI_SPOTS } from './phoneextra.js';
+
 const MAP_SIZE = 300; // 地図の1辺（px）
 
 /**
  * マップ（全体図と現在地）。
  * ⚠ 街は 4600m 四方あるので、そのまま描くと自分が点にもならない。
  *   **全体図**と**周辺（200m四方）**を切り替えられるようにする
+ *
+ * ナビ（行き先）は2026-08-08に独立アプリ🧭からここへ統合した
+ * （loyさん「ナビはマップの中にあった方がいいね」）。距離計算・選択肢の描画は
+ * phoneextra.js の renderNavi をそのまま呼び直している（作り直すと計算を写し損ねるため）。
+ * naviCurrent/onNaviSet を渡さない呼び出し元（いまは無い）では従来どおりマップだけになる。
  */
-export function renderMap(host, { getPlayer, getShops, getVenue }) {
+export function renderMap(host, { getPlayer, getShops, getVenue, naviCurrent, onNaviSet }) {
   const wrap = document.createElement('div');
   const cv = document.createElement('canvas');
   cv.width = MAP_SIZE;
@@ -30,6 +37,9 @@ export function renderMap(host, { getPlayer, getShops, getVenue }) {
   const row = document.createElement('div');
   row.style.cssText = 'display:flex;gap:6px;margin-top:8px;';
   let zoomed = true; // 既定は周辺（そちらの方が役に立つ）
+  // 選んだ行き先（マップ統合ぶん）。行き先ボタンを押した直後に draw() 側から見に行けるよう、
+  // 引数の naviCurrent とは別に持ち直す（マップだけ描き直したいときに呼び出し元へ戻さないため）
+  let curNavi = naviCurrent || null;
   const mkBtn = (label, on) => {
     const b = document.createElement('button');
     b.type = 'button';
@@ -111,6 +121,28 @@ export function renderMap(host, { getPlayer, getShops, getVenue }) {
       ctx.fillText(s.label, x + 7, y + 3);
     }
 
+    // 行き先の目印（2026-08-08・ナビをマップに統合）。
+    // ⚠ 軽い描画のまま：ただの旗印1つを塗るだけで、アニメーションはさせない
+    if (curNavi) {
+      const spot = NAVI_SPOTS.find((s) => s.id === curNavi);
+      if (spot) {
+        const sx = toX(spot.x);
+        const sy = toY(spot.z);
+        ctx.fillStyle = '#ffd86b';
+        ctx.strokeStyle = '#06121a';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy - 9);
+        ctx.lineTo(sx, sy + 2);
+        ctx.moveTo(sx, sy - 9);
+        ctx.lineTo(sx + 7, sy - 6);
+        ctx.lineTo(sx, sy - 3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
     // 現在地（向きつき）
     const x = toX(px);
     const y = toY(pz);
@@ -142,6 +174,34 @@ export function renderMap(host, { getPlayer, getShops, getVenue }) {
   near.onclick = () => { zoomed = true; paintBtns(); draw(); };
   all.onclick = () => { zoomed = false; paintBtns(); draw(); };
   paintBtns();
+
+  // 行き先の選択（2026-08-08・独立アプリ🧭から統合）。
+  // ⚠ onNaviSet を渡さない呼び出し元は無いはずだが、念のため防御しておく
+  if (onNaviSet) {
+    const naviTitle = document.createElement('div');
+    naviTitle.style.cssText = 'font-size:11px;letter-spacing:1px;color:rgba(0,255,234,0.8);margin:12px 0 6px;';
+    naviTitle.textContent = '行き先';
+    host.appendChild(naviTitle);
+    const naviHost = document.createElement('div');
+    host.appendChild(naviHost);
+    const paintNavi = () => {
+      naviHost.innerHTML = '';
+      renderNavi(naviHost, {
+        current: curNavi,
+        playerPos: (() => {
+          const p = getPlayer ? getPlayer() : null;
+          return p ? { x: p.position.x, z: p.position.z } : { x: 0, z: 0 };
+        })(),
+        onSet: (spot) => {
+          curNavi = spot ? spot.id : null;
+          onNaviSet(spot);
+          paintNavi(); // 選択の見た目（ハイライト）を更新
+          draw(); // 地図上の目印を更新
+        },
+      });
+    };
+    paintNavi();
+  }
 
   draw();
   const timer = setInterval(draw, 500); // 歩くと動くので定期的に描き直す
@@ -594,18 +654,49 @@ export function renderCall(host, { state, friends, peer, view, onCall, onAccept,
   host.appendChild(row);
 }
 
+/** ライブのファインダーを10〜15fpsに間引く間隔（ms）。本編を重くしないため */
+const FINDER_INTERVAL_MS = 90;
+
 /**
  * カメラ（こちらの判断で追加・2026-08-08）。
  * GTAの「スナップマティック」に当たるもの。いまの画面を撮って、保存かSNS投稿ができる。
  * ⚠ 撮るのは3Dの画面だけ。**YouTubeの映像は写らない**
  *   （動画はブラウザが別に合成しているので、canvas には入っていない）
+ *
+ * ライブのファインダー（2026-08-08・loyさん「プレビューが動かないから画角調整できなくて使いにくい」）
+ * ⚠ **新しく three のレンダラーは作らない**（GPU無し環境で本編がさらに重くなるため）。
+ *   本編は毎フレーム #scene に描かれ続けているので、それを canvas.drawImage で
+ *   小さく縮小コピーするだけにする。更新は requestAnimationFrame ではなく
+ *   10〜15fps 程度に間引く（callview.js と同じ考え方）。閉じたら必ず止める。
+ * @returns {() => void} 呼び出し元がビューを離れるときに呼ぶ後始末（間引きタイマーを止める）
  */
 export function renderCamera(host, { shoot, onPostPhoto }) {
   const note = document.createElement('p');
   note.className = 'vc-phone-note';
-  note.textContent = 'いまの画面を撮ります。⚠ 3Dの絵だけで、YouTubeの映像は写りません（別々に描かれているため）。';
+  note.textContent = '画角を見ながら撮れます。⚠ 3Dの絵だけで、YouTubeの映像は写りません（別々に描かれているため）。';
   host.appendChild(note);
 
+  // ---- ライブのファインダー ----
+  const finder = document.createElement('canvas');
+  finder.width = 320;
+  finder.height = 190;
+  finder.style.cssText = 'width:100%;border-radius:10px;display:block;margin-bottom:8px;'
+    + 'background:#05070f;border:1px solid rgba(255,255,255,0.18);';
+  host.appendChild(finder);
+  const fctx = finder.getContext('2d');
+  const source = document.getElementById('scene'); // 本編のレンダリング先キャンバス
+  function drawFinder() {
+    if (!source) return;
+    try {
+      fctx.drawImage(source, 0, 0, finder.width, finder.height);
+    } catch {
+      // 描画のたびに中身が入れ替わるだけなので、たまたま失敗しても次のコマで直る
+    }
+  }
+  drawFinder();
+  const finderTimer = setInterval(drawFinder, FINDER_INTERVAL_MS);
+
+  // ---- 撮った写真（静止画） ----
   const preview = document.createElement('img');
   preview.style.cssText = 'width:100%;border-radius:10px;display:none;margin-bottom:8px;'
     + 'border:1px solid rgba(255,255,255,0.18);';
@@ -654,6 +745,9 @@ export function renderCamera(host, { shoot, onPostPhoto }) {
     //   **横360pxのJPEGに縮めてから**送る（30KB前後）。モックなのでこれで十分
     shrink(dataUrl, 360).then((small) => onPostPhoto(small));
   });
+
+  // 呼び出し元（phone.js）がビューを離れるときにファインダーの間引きタイマーを止める
+  return () => clearInterval(finderTimer);
 }
 
 /** 画像を横幅 maxW まで縮めた JPEG のデータURLにする */

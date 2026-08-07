@@ -427,6 +427,11 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
         case 'call-end':
           if (h.onCall) h.onCall({ id: msg.from, name: msg.fromName, kind: 'end', why: msg.why || '' });
           break;
+        // 通話の声のつなぎ（2026-08-08）。中身は voice.js が解く。
+        // ⚠ 声そのものは通らない。ここを流れるのは繋ぎ役の合図だけ
+        case 'rtc':
+          if (h.onRtc) h.onRtc({ from: msg.from, kind: msg.kind, data: msg.data });
+          break;
         case 'pay':
           if (h.onPay) h.onPay({ from: msg.from, fromName: msg.fromName, amount: msg.amount });
           break;
@@ -673,6 +678,10 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
   function sendCall(to) { if (joined && to) send({ t: 'call', to }); }
   function sendCallAccept(to) { if (joined && to) send({ t: 'call-accept', to }); }
   function sendCallEnd(to) { if (joined && to) send({ t: 'call-end', to }); }
+  /** 通話の声のつなぎ役（offer / answer / ice）。中身は voice.js が作る */
+  function sendRtc({ to, kind, data }) {
+    if (joined && to) send({ t: 'rtc', to, kind, data });
+  }
   /** ポイントを渡す（相手の端末で足される。モック） */
   function sendPay(to, amount) {
     if (joined && to && amount > 0) send({ t: 'pay', to, amount });
@@ -819,6 +828,7 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     sendCall,
     sendCallAccept,
     sendCallEnd,
+    sendRtc,
     sendDm,
     sendScreen,
     sendLoadSim,

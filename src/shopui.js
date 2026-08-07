@@ -130,6 +130,17 @@ export function isShopOpen() {
  * @param {{ getConfig:()=>object, onWear:(cfg:object)=>void }} hooks
  *   買った飾りをその場で着けるために、いまの見た目と反映先をもらう
  */
+/**
+ * 見出し（どの施設から開いたか）。
+ * ⚠ clubbar は**会場の中のバーカウンター**（2026-08-08・loyさん指定でスクショの位置に置いた）。
+ *   中身は街のカジノ内のバーと同じ商品。売り場を増やしただけで、飲み物は増やしていない
+ */
+const SHOP_TITLES = {
+  casino: 'VERSE CASINO',
+  shop: 'VERSE SHOP',
+  clubbar: 'clubVERSE BAR',
+};
+
 export function openShop(kind, hooks = {}) {
   // どのタブから開くか（店の中の台ごとに違う。2026-08-08）
   const startTab = hooks.tab || null;
@@ -152,7 +163,7 @@ export function openShop(kind, hooks = {}) {
   panel.className = 'vc-shop-panel';
   panel.innerHTML = `
     <div class="vc-shop-head">
-      <div class="vc-shop-title">${kind === 'casino' ? 'VERSE CASINO' : 'VERSE SHOP'}</div>
+      <div class="vc-shop-title">${SHOP_TITLES[kind] || 'VERSE SHOP'}</div>
       <div class="vc-shop-mock">モック</div>
       <div class="vc-shop-balance" id="vc-balance"></div>
       <button type="button" class="vc-shop-close" id="vc-shop-close">✕</button>
@@ -175,9 +186,12 @@ export function openShop(kind, hooks = {}) {
   const off = onWalletChange(paintBalance);
   paintBalance();
 
-  const TABS = kind === 'casino'
-    ? [['slot', 'スロット'], ['bar', 'バー'], ['gacha', 'ガチャ'], ['bag', '持ち物']]
-    : [['shop', 'お店'], ['gacha', 'ガチャ'], ['bag', '持ち物']];
+  // ⚠ 会場の中のバーは**バーと持ち物だけ**。ライブの最中にガチャやスロットへ
+  //   逸れられるようにはしない（2026-08-08）
+  const TABS = {
+    casino: [['slot', 'スロット'], ['bar', 'バー'], ['gacha', 'ガチャ'], ['bag', '持ち物']],
+    clubbar: [['bar', 'バー'], ['bag', '持ち物']],
+  }[kind] || [['shop', 'お店'], ['gacha', 'ガチャ'], ['bag', '持ち物']];
 
   let current = TABS.some(([id]) => id === startTab) ? startTab : TABS[0][0];
 
@@ -297,7 +311,7 @@ export function openShop(kind, hooks = {}) {
     const note = document.createElement('p');
     note.className = 'vc-shop-note';
     note.textContent = ids.length
-      ? '「着ける」を押すと、その場で見た目に反映されます（もう一度押すと外れます）。'
+      ? '「着ける」を押すと、その場で見た目に反映されます（もう一度押すと外れます）。飲み物は「飲む」で減ります。'
       : (kind === 'casino'
         ? 'まだ何も持っていません。ガチャで手に入ります。'
         : 'まだ何も持っていません。お店かガチャで手に入ります。');
@@ -329,6 +343,23 @@ export function openShop(kind, hooks = {}) {
           wear(it);
           flash = on ? `${it.name} を外しました` : `${it.name} を着けました`;
           paintBody();
+        });
+        card.appendChild(btn);
+      } else if (it.cat === 'drink' && hooks.onDrink) {
+        // 2026-08-08・loyさん「飲み物のめない」の修正。持ち物タブからも飲めるように
+        // （バーの台まで戻らなくてよい）。減らし方はバーの「飲む」と同じ addItem(-1)
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'vc-shop-buy';
+        btn.style.marginTop = '8px';
+        btn.textContent = '飲む';
+        btn.addEventListener('click', () => {
+          if ((getWallet().items[id] || 0) <= 0) return;
+          addItem(id, -1);
+          hooks.onDrink(it);
+          flash = `${it.name} を飲みました`;
+          paintBody();
+          peek(2400);
         });
         card.appendChild(btn);
       }

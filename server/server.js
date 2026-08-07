@@ -2364,6 +2364,31 @@ function handleCall(client, msg) {
   send(target.ws, { t: kind, from: client.id, fromName: client.n });
 }
 
+/**
+ * 通話の声のつなぎ（2026-08-08・loyさん「ビデオ通話は音声は使える？」）。
+ *
+ * ⚠ ここを通るのは**繋ぎ役の合図（offer / answer / ice）だけ**。
+ *   声そのものはブラウザ同士が直接やりとりするので、サーバーには流れない
+ *   （無料枠の通信量を音で食い潰さないための作り。src/voice.js に理由を書いてある）。
+ * ⚠ 中身は見ずにそのまま渡すが、**大きすぎるものは捨てる**（合図は普通は数KB）。
+ */
+function handleRtc(client, msg) {
+  const to = String(msg.to || '');
+  const kind = String(msg.kind || '');
+  if (!['offer', 'answer', 'ice'].includes(kind)) return;
+  let data = msg.data;
+  if (typeof data !== 'object' || data === null) return;
+  if (JSON.stringify(data).length > 20000) return;
+  let target = null;
+  for (const members of rooms.values()) {
+    for (const c of members.values()) {
+      if (c.id === to && c.eventId === client.eventId) target = c;
+    }
+  }
+  if (!target || isBlockedBetween(client, target)) return;
+  send(target.ws, { t: 'rtc', from: client.id, kind, data });
+}
+
 function handleFriendReq(client, msg) {
   relayToPeer(client, msg, 'friend-req');
 }
@@ -2433,6 +2458,7 @@ const HANDLERS = {
   call: handleCall,
   'call-accept': handleCall,
   'call-end': handleCall,
+  rtc: handleRtc,
   'friend-req': handleFriendReq,
   'friend-ok': handleFriendOk,
   'sns-list': handleSnsList,

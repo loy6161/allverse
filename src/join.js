@@ -17,6 +17,8 @@ import {
   MAX_ACCESSORIES,
   STAFF_ONLY_ACCESSORIES,
 } from './accessory.js';
+import { hasItem } from './wallet.js';
+import { CATALOG } from './catalog.js';
 
 // 入場画面の「📢 お知らせ」欄に出す件数。多すぎると縦に伸びすぎるため5件に絞る
 const UPDATES_DISPLAY_COUNT = 5;
@@ -66,6 +68,16 @@ const HAND_LABELS = {
  *   中身は他のアクセサリーと同じ config.accessory（上限3つも共通）。
  */
 const HAIR_ACCESSORIES = ['ahoge', 'mesh'];
+
+/**
+ * アクセサリーの id → SHOP商品（2026-08-08・loyさん「アクセサリーはSHOPで購入した
+ * ものだけ選択できるようにしてもいいかもね。デフォルトでは選べない」）。
+ * ⚠ 対応が無い（SHOPに並んでいない）アクセサリーがここで見つかった場合は、
+ *   catalog.js 側に商品を足すこと（既存idの意味は変えず、末尾に追加）
+ */
+const ACCESSORY_ITEM = new Map(
+  CATALOG.filter((it) => it.kind === 'wear' && it.accessory).map((it) => [it.accessory, it]),
+);
 
 const ACCESSORY_LABELS = {
   none: 'なし',
@@ -1048,15 +1060,37 @@ function buildCustomizeScreen({
       },
     ].filter((r) => r.el);
     if (!rows.length) return;
+    /**
+     * SHOPで買っていないアクセサリーは選べない（2026-08-08・loyさん
+     * 「アクセサリーはSHOPで購入したものだけ選択できるようにしてもいいかもね。
+     * デフォルトでは選べない」）。
+     * ⚠ 例外2つ:
+     *   ・管理者・VIP専用（前髪メッシュ）は**別枠**。SHOP購入の対象にしない
+     *     （staffonly.js の権限判定だけで決まる。ここでは何もしない）
+     *   ・**既に着けている人がいる**。持っていなくても、いま付いているものは
+     *     勝手に外さない（外すと今の見た目が変わってしまうため）
+     */
+    function isLocked(value) {
+      if (value === 'none' || STAFF_ONLY_ACCESSORIES.has(value)) return false;
+      const item = ACCESSORY_ITEM.get(value);
+      if (!item) return false; // SHOPに対応商品が無ければ制限しない（データ不備で詰ませない）
+      if (hasItem(item.id)) return false;
+      if (parseAccessories(config.accessory).includes(value)) return false; // 既に着けている
+      return true;
+    }
     const paint = () => {
       const on = parseAccessories(config.accessory);
       // 条件つきの行（メッシュの色・形）の出し入れは applyOptionRows に集約してある
       applyOptionRows();
       for (const row of rows) {
-        row.el.querySelectorAll('.hair-btn').forEach((b) => {
+        row.el.querySelectorAll('.hair-btn[data-value]').forEach((b) => {
           const v = b.dataset.value;
           const sel = v === 'none' ? on.length === 0 : on.includes(v);
           b.classList.toggle('selected', sel);
+          const locked = isLocked(v);
+          b.classList.toggle('locked', locked);
+          const item = ACCESSORY_ITEM.get(v);
+          b.textContent = (ACCESSORY_LABELS[v] || v) + (locked && item ? `（SHOPで購入・${item.price}VC）` : '');
         });
       }
     };
@@ -1072,6 +1106,10 @@ function buildCustomizeScreen({
         btn.className = 'hair-btn';
         btn.textContent = ACCESSORY_LABELS[value] || value;
         btn.addEventListener('click', () => {
+          // 持っていないもの（かつ、いま着けてもいない）は選ばせない。
+          // ⚠ 画面で止めるだけでは足りないが、ここは見た目の一覧なので、
+          //   実際の可否はいずれサーバー側（購入記録の突合）でも見る必要がある
+          if (isLocked(value)) return;
           config.accessory = value === 'none' ? 'none' : toggleAccessory(config.accessory, value);
           paint();
           rebuildPreviewAvatar();
@@ -1081,7 +1119,8 @@ function buildCustomizeScreen({
       const hint = document.createElement('div');
       hint.className = 'customize-hint';
       hint.textContent = row.none
-        ? `${MAX_ACCESSORIES}つまで同時に付けられます（もう一度押すと外れます）。「なし」で全部外れます`
+        ? `${MAX_ACCESSORIES}つまで同時に付けられます（もう一度押すと外れます）。「なし」で全部外れます。`
+          + '灰色はまだ持っていないもの（SHOPで購入すると選べます）'
         : '髪につくもの。数は下の「体」タブと合わせて3つまで';
       row.el.appendChild(hint);
     }

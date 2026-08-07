@@ -55,6 +55,45 @@ const BOUNDS = { minX: -13, maxX: 25, minZ: -16.5, maxZ: 22 };
  */
 const ENTRANCE = { fromZ: 4, minY: -1.2 };
 
+/**
+ * 正面の出入り口（2026-08-08・loyさん「clubVERSEの出入り口はスクショのオレンジのとこにしてほしい」）。
+ *
+ * ⚠ この会場のGLBには当たり判定を入れていないので、**正面の壁をどこでも素通りできた**。
+ *   幅58mのファサードのどこからでも街へ出られる状態で、建物としておかしい。
+ *   実際の開口部（ネオンの看板が下がっている所）だけを通れるようにする。
+ *
+ * 実測（2026-08-08・高さ1.2mで前から水平にレイを撃って壁の切れ目を測った）:
+ *   正面の壁は z=23。開口部は x=8.75〜13.2（足元の高さでは 8.75〜12.2）。
+ *   なので**内側に少しだけ寄せて** 8.9〜12.9 を通り道にする（壁にめり込んで見えないように）。
+ * ⚠ 左の x=-9〜-5.5 にも貫通する隙間があるが、そこは通路ではないので塞がる（この帯の外なので弾かれる）
+ */
+const FRONT_GATE = { minX: 8.9, maxX: 12.9, fromZ: 22.2, toZ: 27 };
+
+/**
+ * 会場の外壁（2026-08-08）。この矩形の境目を跨げるのは**正面の開口部だけ**。
+ *
+ * ⚠ 点で「立てる／立てない」を答える作りなので、線ではなく**厚みのある帯**にする。
+ *   薄いと、1フレームの移動量（車は歩きの3.4倍＝0.3m前後）で飛び越えてしまう。
+ */
+const SHELL = { minX: -13.5, maxX: 25.5, minZ: -30.5, maxZ: 23.2 };
+/** 外壁の帯の厚み（m） */
+const WALL_T = 1.4;
+
+/** 外壁に阻まれるか（正面の開口部だけは通す） */
+function blockedByShell(x, z) {
+  const inXspan = x >= SHELL.minX - WALL_T && x <= SHELL.maxX + WALL_T;
+  const inZspan = z >= SHELL.minZ - WALL_T && z <= SHELL.maxZ + WALL_T;
+  if (!inXspan || !inZspan) return false; // 会場から離れている
+  // 正面の開口部（ここだけ通り抜けられる）
+  if (x >= FRONT_GATE.minX && x <= FRONT_GATE.maxX
+    && z >= SHELL.maxZ - WALL_T && z <= SHELL.maxZ + WALL_T) return false;
+  const onXwall = (x >= SHELL.minX - WALL_T && x <= SHELL.minX)
+    || (x >= SHELL.maxX && x <= SHELL.maxX + WALL_T);
+  const onZwall = (z >= SHELL.minZ - WALL_T && z <= SHELL.minZ)
+    || (z >= SHELL.maxZ && z <= SHELL.maxZ + WALL_T);
+  return onXwall || onZwall;
+}
+
 /** 入場位置。ステージ正面の少し手前（ステージ前端は z=-18） */
 const SPAWN = new THREE.Vector3(CLUB_SCREEN.x, 0, -6);
 
@@ -835,6 +874,11 @@ export function createClubWorld(scene, { renderer } = {}) {
    */
   function canStandAt(x, z) {
     if (!loaded || !model) return true;
+    // ⚠ この会場のGLBには当たり判定が無く、**壁をどこでも素通りできた**。
+    //   出入りは**正面の開口部だけ**にする（2026-08-08 loyさん指定・スクショの位置）
+    if (blockedByShell(x, z)) return false;
+    // 会場の外（街）は平らなので、床のレイは撃たずに歩かせる
+    if (x < SHELL.minX || x > SHELL.maxX || z < SHELL.minZ || z > SHELL.maxZ) return true;
     if (!inEntrance(z)) return true;
     const y = raycastFloor(x, z);
     if (y === null) return false; // 床が無い＝出られない
