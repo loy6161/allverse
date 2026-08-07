@@ -11,6 +11,7 @@ import { createCars, nearestCar, CAR_SPEED } from './car.js';
 import { createCallView } from './callview.js';
 import { createVoice } from './voice.js';
 import { createBar } from './bar3d.js';
+import { createVrView } from './vrview.js';
 import { createRoom, ROOM_ORIGIN, getHouse, insideRoom, DOOR_POS, RENT as ROOM_RENT } from './housing.js';
 import { createCityCoins } from './citycoins.js';
 import { WEATHERS } from './phoneextra.js';
@@ -260,6 +261,8 @@ let callView = null;
 let voice = null;
 /** 会場の中のバーカウンター（2026-08-08・loyさん指定の位置） */
 let clubBar = null;
+/** スマホVR（二眼モード。2026-08-08・観覧専用） */
+let vrView = null;
 
 /**
  * 通話の声を要るときだけ用意する（2026-08-08）。
@@ -1254,6 +1257,35 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
   // タブを閉じるしか出る方法が無かったので、入場画面へ戻れるようにする
   initExitButton({ slot: topBar.slot });
 
+  // スマホVR（2026-08-08・loyさん依頼）。
+  // > いままでVRやったことない人にも体験する機会をっていう思いがある。
+  // > とりあえず移動とかは無くて会場のホール内だけの観覧専用でいい
+  // ⚠ ボタンは**外に残す**（👁・🏷・🏃と同じ扱い）。スマホの中に隠すと、
+  //   ゴーグルに入れてから戻すときに困る
+  vrView = createVrView({
+    renderer,
+    scene,
+    camera,
+    getPlayer: () => player,
+    onChange: (isOn) => {
+      // 二眼の間は歩けない（観覧専用）。キーが押しっぱなしのまま入っても止まる
+      if (controls && controls.setInputEnabled) controls.setInputEnabled(!isOn);
+    },
+    onMessage: (text) => {
+      if (chat) chat.addMessage('', text, { system: true });
+    },
+  });
+  // ジャイロの無い端末（ふつうのPC）には出さない。押しても首を振れないため
+  if (vrView.supported()) {
+    const vrBtn = document.createElement('button');
+    vrBtn.type = 'button';
+    // ⚠ クラスは付けない。`.vc-topbar button` の見た目がそのまま効く
+    vrBtn.textContent = '🥽';
+    vrBtn.title = 'VRで見る（スマホをゴーグルに入れて。画面タップで戻ります）';
+    vrBtn.addEventListener('click', () => vrView.toggle());
+    topBar.slot.appendChild(vrBtn);
+  }
+
   // 自分のアバターの小窓（2026-08-04追加）。
   // ⚠ 着替えると player が差し替わるので、そのつど取り直す（変数を掴まない）
   selfView = initSelfView({ getPlayer: () => player });
@@ -2169,6 +2201,13 @@ function loop() {
   }
 
   fpsMeter.tick();
+  // 二眼モード（スマホVR）。⚠ **両目ぶんで2回描く**ので、
+  //   ブルームと自分の姿の小窓は止める（そのままだと確実にフレームが落ちる）
+  if (vrView && vrView.isOn()) {
+    vrView.render();
+    liveScreen.update();
+    return;
+  }
   if (bloom && bloomOn) bloom.render(scene, camera);
   else renderer.render(scene, camera);
   // 自分の姿の小窓（2026-08-04追加）。**本編を描いたあと**に呼ぶ。
