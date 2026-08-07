@@ -37,6 +37,17 @@ export function createVoice({ send, onState = () => {} }) {
   /** 相手が先に ice を送ってきたときの置き場（offer/answer より先に届くことがある） */
   let pendingIce = [];
 
+  /** 接続だけを閉じる（マイクは stop() でまとめて離す） */
+  function closePc() {
+    if (!pc) return;
+    pc.onicecandidate = null;
+    pc.ontrack = null;
+    pc.onconnectionstatechange = null;
+    pc.close();
+    pc = null;
+    pendingIce = [];
+  }
+
   function ensureAudio() {
     if (audioEl) return audioEl;
     audioEl = document.createElement('audio');
@@ -64,10 +75,17 @@ export function createVoice({ send, onState = () => {} }) {
   }
 
   function makePc(id) {
+    // ⚠ 前の接続が生きていたら必ず閉じる（2026-08-08 レビュー指摘）。
+    //   閉じないと**マイクを掴んだままの接続が残る**（両者が同時に掛けたとき等）
+    if (pc) closePc();
     peerId = id;
     pc = new RTCPeerConnection({ iceServers: ICE });
+    const myPc = pc;
+    const myPeer = id;
     pc.onicecandidate = (e) => {
-      if (e.candidate) send({ to: peerId, kind: 'ice', data: e.candidate.toJSON() });
+      // ⚠ 送り先は**この接続の相手**を使う。共有の peerId を見ると、
+      //   2本目の通話が始まった後に遅れて出た合図が別人へ飛ぶ
+      if (e.candidate && myPc === pc) send({ to: myPeer, kind: 'ice', data: e.candidate.toJSON() });
     };
     pc.ontrack = (e) => {
       ensureAudio().srcObject = e.streams[0];
@@ -135,13 +153,7 @@ export function createVoice({ send, onState = () => {} }) {
 
     /** 通話が終わった。マイクも必ず離す（ランプが点いたままにしない） */
     stop() {
-      if (pc) {
-        pc.onicecandidate = null;
-        pc.ontrack = null;
-        pc.onconnectionstatechange = null;
-        pc.close();
-      }
-      pc = null;
+      closePc();
       if (mic) {
         for (const t of mic.getTracks()) t.stop();
       }

@@ -2319,6 +2319,12 @@ function relayToPeer(client, msg, kind) {
   send(target.ws, { t: kind, from: client.id, fromName: client.n });
 }
 
+/** 1回に送れる上限（VC） */
+const PAY_MAX = 20000;
+/** 送金の回数を数える窓（ミリ秒）と、その中で許す回数 */
+const PAY_WINDOW_MS = 60000;
+const PAY_MAX_PER_WINDOW = 10;
+
 /**
  * 送金（2026-08-08・loyさん依頼）。
  * ⚠ **いまは残高が各端末にある**（モック）ので、サーバーは「渡した」という合図を中継するだけ。
@@ -2326,7 +2332,18 @@ function relayToPeer(client, msg, kind) {
  */
 function handlePay(client, msg) {
   const amount = Math.floor(Number(msg.amount) || 0);
-  if (!(amount > 0) || amount > 1000000) return;
+  // ⚠ サーバーは残高を持っていないので、**払えるかどうかを確かめられない**
+  //   （2026-08-08 レビュー指摘）。UIを通さず直接繋げば、自分の残高を減らさずに
+  //   他人へいくらでも配れてしまう。本物の台帳が入るまでの当座の防波堤として、
+  //   1回の額と回数を絞っておく。台帳が入ったら**ここで残高を動かす**（そのとき上限も見直す）
+  if (!(amount > 0) || amount > PAY_MAX) return;
+  const now = Date.now();
+  client.payLog = (client.payLog || []).filter((t) => now - t < PAY_WINDOW_MS);
+  if (client.payLog.length >= PAY_MAX_PER_WINDOW) {
+    send(client.ws, { t: 'pay-denied', why: '送金が続きすぎです。少し待ってください' });
+    return;
+  }
+  client.payLog.push(now);
   const to = String(msg.to || '');
   let target = null;
   for (const members of rooms.values()) {

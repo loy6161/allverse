@@ -254,6 +254,8 @@ export function initControls(
   let inputEnabled = true;
   /** 歩く速さの倍率（空腹などで変わる）。1が既定 */
   let speedScale = 1;
+  /** 走れるか（車に乗っている間は false。速さの掛け算で壁を飛び越えないため） */
+  let runAllowed = true;
 
   window.addEventListener('keydown', (e) => {
     if (!inputEnabled) return;
@@ -427,7 +429,11 @@ export function initControls(
     // 走る（Shiftを押している間）。巨大エリア（?world=open）を端まで移動できるように
     // 2026-08-06 追加。ふだんの会場でも「急いで席に戻る」のに使える
     // 空腹で遅くなる（2026-08-08）。会場の中では常に1.0（ライブに支障を出さない）
-    const base = keys.has('ShiftLeft') || keys.has('ShiftRight') ? SPEED * RUN_MULT : SPEED;
+    // ⚠ 車に乗っている間は走れない（2026-08-08 レビュー指摘）。
+    //   走り6倍と車3.4倍が掛け算になると85m/s になり、フレームが落ちたときに
+    //   壁の当たり判定（点で見ている）を飛び越えてしまう
+    const running = runAllowed && (keys.has('ShiftLeft') || keys.has('ShiftRight'));
+    const base = running ? SPEED * RUN_MULT : SPEED;
     const speed = base * (speedScale || 1);
     // 自分で動かしたら自動移動はやめる（操作を奪われる感じを出さない）
     if (manual && moveTarget) cancelMoveTarget();
@@ -564,6 +570,10 @@ export function initControls(
     /** 歩く速さの倍率。空腹で遅くする用（1が既定） */
     setSpeedScale(v) {
       speedScale = Number.isFinite(v) && v > 0 ? v : 1;
+    },
+    /** 走り（Shift）を許すか。車に乗っている間は止める */
+    setRunAllowed(on) {
+      runAllowed = Boolean(on);
     },
     /** キー入力の受け付けを切り替える（スマホを開いている間は止める） */
     setInputEnabled(on) {

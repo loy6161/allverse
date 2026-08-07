@@ -884,6 +884,14 @@ export function initPhone(opts = {}) {
      * ring=呼ばれた / accept=相手が出た / end=切れた
      */
     onCallSignal({ kind, id, name }) {
+      // ⚠ 通話中に別の人から呼ばれても**乗っ取らせない**（2026-08-08 レビュー指摘）。
+      //   相手を差し替えると、いま話している相手を切る手段が画面から消える
+      if (kind === 'ring' && (callState === 'live' || callState === 'ring')) {
+        if (opts.onCallBusy) opts.onCallBusy(name);
+        return;
+      }
+      // 自分の通話相手以外からの accept / end は無視する（取り違え防止）
+      if (kind !== 'ring' && callPeer && id && callPeer.id !== id) return;
       if (kind === 'ring') {
         callPeer = { id, name };
         callState = 'incoming';

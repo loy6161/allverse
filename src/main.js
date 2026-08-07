@@ -1704,6 +1704,10 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
         else if (kind === 'accept') net.sendCallAccept(to);
         else net.sendCallEnd(to);
       },
+      /** 通話中に別の人から呼ばれた（乗っ取らせないので、来たことだけ知らせる） */
+      onCallBusy: (name) => {
+        if (chat) chat.addMessage('', `${name} から着信がありました（通話中のため出られません）`, { system: true });
+      },
       /** 通話中に映す相手を切り替える（null で止める） */
       onCallLive: (peerId) => {
         if (!callView) callView = createCallView(scene);
@@ -1883,8 +1887,12 @@ function updateHungerState(dt) {
   if (!player) return;
   updateHunger(dt, inClubArea(player.position.x, player.position.z));
   // 車に乗っている間は速い。空腹の遅さとは掛け算にする
-  const carBoost = cars && cars.ridingId() ? CAR_SPEED : 1;
+  const riding = Boolean(cars && cars.ridingId());
+  const carBoost = riding ? CAR_SPEED : 1;
   if (controls && controls.setSpeedScale) controls.setSpeedScale(speedFactor() * carBoost);
+  // ⚠ 車のときは走り（Shift）を止める。掛け算で85m/sになり、
+  //   フレームが落ちたときに壁を飛び越える（2026-08-08 レビュー指摘）
+  if (controls && controls.setRunAllowed) controls.setRunAllowed(!riding);
 }
 
 // 街での滞在ボーナス（2026-08-08）。一定時間ごとに少額を配る「稼ぐ手段」の1つ
