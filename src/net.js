@@ -418,6 +418,21 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
         case 'dm-denied':
           if (h.onPhoneDenied) h.onPhoneDenied(msg.why || '');
           break;
+        case 'pay':
+          if (h.onPay) h.onPay({ from: msg.from, fromName: msg.fromName, amount: msg.amount });
+          break;
+        case 'pay-ok':
+          if (h.onPayOk) h.onPayOk({ to: msg.to, toName: msg.toName, amount: msg.amount });
+          break;
+        case 'pay-denied':
+          if (h.onPhoneDenied) h.onPhoneDenied(msg.why || '渡せませんでした');
+          break;
+        case 'friend-req':
+          if (h.onFriendReq) h.onFriendReq({ id: msg.from, name: msg.fromName });
+          break;
+        case 'friend-ok':
+          if (h.onFriendOk) h.onFriendOk({ id: msg.from, name: msg.fromName });
+          break;
         case 'dm':
           if (h.onDm) {
             h.onDm({ from: msg.from, fromName: msg.fromName, to: msg.to, txt: msg.txt, at: msg.at, mine: Boolean(msg.mine) });
@@ -627,14 +642,27 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     if (joined) send({ t: 'sns-list' });
   }
   /** SNSに投稿する（140文字まで。長さはサーバーでも切る） */
-  function sendSnsPost(txt, photo = false) {
+  function sendSnsPost(txt, img = '') {
     const s = String(txt == null ? '' : txt).slice(0, 140);
     if (!joined || !s) return;
-    send({ t: 'sns-post', txt: s, photo: Boolean(photo) });
+    // 写真は縮めたJPEGのデータURL。長すぎるものはサーバーが落とす
+    send({ t: 'sns-post', txt: s, img: typeof img === 'string' ? img : '' });
   }
   /** いいね（もう一度押すと外れる） */
   function sendSnsLike(pid) {
     if (joined && pid) send({ t: 'sns-like', pid });
+  }
+  /** フレンド申請を送る（相手の画面に「申請が来た」が出る） */
+  function sendFriendReq(to) {
+    if (joined && to) send({ t: 'friend-req', to });
+  }
+  /** 申請を受けたことを相手に伝える */
+  function sendFriendOk(to) {
+    if (joined && to) send({ t: 'friend-ok', to });
+  }
+  /** ポイントを渡す（相手の端末で足される。モック） */
+  function sendPay(to, amount) {
+    if (joined && to && amount > 0) send({ t: 'pay', to, amount });
   }
   /** 1対1のメッセージ。宛先は同じイベントに居る人のid */
   function sendDm(to, txt) {
@@ -772,6 +800,9 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     requestSns,
     sendSnsPost,
     sendSnsLike,
+    sendFriendReq,
+    sendFriendOk,
+    sendPay,
     sendDm,
     sendScreen,
     sendLoadSim,

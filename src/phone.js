@@ -1,7 +1,8 @@
 import { getWallet, onWalletChange } from './wallet.js';
 import { itemById } from './catalog.js';
 import { parseAccessories, toggleAccessory } from './accessory.js';
-import { renderMap, renderSns, renderMessenger, renderCamera } from './phoneapps.js';
+import { renderMap, renderSns, renderMessenger, renderCamera, renderFriends, renderPay } from './phoneapps.js';
+import { getFriends, onFriendsChange, isFriend, acceptRequest, declineRequest, removeFriend } from './friends.js';
 
 // ============================================================
 // スマホ（2026-08-08・loyさん発案）
@@ -80,6 +81,18 @@ function injectStyle() {
   padding: 10px 16px 6px; font-size: 11px; color: rgba(220,235,255,0.75);
 }
 .vc-phone-coin { margin-left: auto; color: #ffd86b; font-weight: 700; }
+/* ⚠ 閉じるボタンは**筐体の中**に置く。外の📱ボタンは筐体の裏に隠れて押せなかった
+   （2026-08-08 loyさん「スマホを閉じれないね」）。Tab / Esc でも閉じられる */
+.vc-phone-x {
+  width: 22px; height: 22px; border-radius: 7px; cursor: pointer; font-size: 12px; line-height: 1;
+  color: #eaf6ff; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.28);
+}
+.vc-phone-x:hover { border-color: #ff6fd8; }
+
+/* カメラのときは小さくして、街が見えるようにする（歩きながら撮れる） */
+.vc-phone.vc-phone-cam {
+  height: 320px; width: 300px; opacity: 0.97;
+}
 .vc-phone-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px 14px 14px; }
 .vc-phone-apps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 10px; padding-top: 6px; }
 .vc-app {
@@ -182,6 +195,7 @@ export function initPhone(opts = {}) {
       <div class="vc-phone-status">
         <span id="vc-phone-clock"></span>
         <span class="vc-phone-coin" id="vc-phone-coin"></span>
+        <button type="button" class="vc-phone-x" id="vc-phone-x" title="閉じる">✕</button>
       </div>
       <div class="vc-phone-body" id="vc-phone-body"></div>
     </div>
@@ -205,6 +219,8 @@ export function initPhone(opts = {}) {
   const threads = {};
   /** いま開いている相手 */
   let dmWith = null;
+  /** 送金の結果メッセージ（1回だけ出す） */
+  let payMsg = '';
 
   const paintStatus = () => {
     coinEl.textContent = `${getWallet().balance.toLocaleString()} VC`;
@@ -212,6 +228,9 @@ export function initPhone(opts = {}) {
     clockEl.textContent = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
   onWalletChange(paintStatus);
+  onFriendsChange(() => {
+    if (open && (view === 'friends' || view === 'dm' || view === 'pay')) paint();
+  });
 
   // ---- ホーム ----
   function renderHome() {
@@ -391,6 +410,7 @@ export function initPhone(opts = {}) {
       stopMap();
       stopMap = null;
     }
+    syncMovable();
     if (view === 'bag') renderBag();
     else if (view === 'wallet') renderWallet();
     else if (view === 'map') {
@@ -410,9 +430,63 @@ export function initPhone(opts = {}) {
         },
       });
       denied = '';
+    } else if (view === 'friends') {
+      header('連絡帳');
+      const fr = getFriends();
+      renderFriends(bodyEl, {
+        people: (opts.getPeople ? opts.getPeople() : []),
+        friends: fr.friends,
+        requests: fr.requests,
+        onRequest: (person) => {
+          if (opts.onFriendReq) opts.onFriendReq(person.id);
+          payMsg = '';
+          paint();
+        },
+        onAccept: (name) => {
+          acceptRequest(name);
+          // 相手にも「受けたよ」を伝える（いま会場に居れば届く）
+          const person = (opts.getPeople ? opts.getPeople() : []).find((x) => x.name === name);
+          if (person && opts.onFriendOk) opts.onFriendOk(person.id);
+          paint();
+        },
+        onDecline: (name) => {
+          declineRequest(name);
+          paint();
+        },
+        onRemove: (name) => {
+          removeFriend(name);
+          paint();
+        },
+        onTalk: (name) => {
+          const person = (opts.getPeople ? opts.getPeople() : []).find((x) => x.name === name);
+          if (!person) return;
+          dmWith = person.id;
+          view = 'dm';
+          paint();
+        },
+      });
+    } else if (view === 'pay') {
+      header('送金');
+      const fr = getFriends();
+      const targets = (opts.getPeople ? opts.getPeople() : []).filter((x) => fr.friends.includes(x.name));
+      renderPay(bodyEl, {
+        balance: getWallet().balance,
+        targets,
+        message: payMsg,
+        onSend: (t, n) => {
+          if (opts.onPay) opts.onPay(t, n);
+          payMsg = '';
+          paint();
+        },
+      });
+      payMsg = '';
     } else if (view === 'dm') {
       header('メッセンジャー');
-      const people = (opts.getPeople ? opts.getPeople() : []).filter((x) => x.id !== (opts.getMyId ? opts.getMyId() : ''));
+      // ⚠ 話せるのは**フレンドだけ**（loyさん「メッセージはフレンドのみがいいね」）。
+      //   会場に居るだけの人へ送りつける道を作らない
+      const people = (opts.getPeople ? opts.getPeople() : [])
+        .filter((x) => x.id !== (opts.getMyId ? opts.getMyId() : ''))
+        .filter((x) => isFriend(x.name));
       const active = dmWith ? people.find((x) => x.id === dmWith) || { id: dmWith, name: '相手' } : null;
       // 開いたら既読にする
       if (active && threads[active.id]) for (const m of threads[active.id]) m.read = true;
@@ -437,13 +511,24 @@ export function initPhone(opts = {}) {
       header('カメラ');
       renderCamera(bodyEl, {
         shoot: () => (opts.shoot ? opts.shoot() : ''),
-        onPostPhoto: () => {
-          if (opts.onSnsPost) opts.onSnsPost('📷 写真を撮りました', true);
+        onPostPhoto: (img) => {
+          if (opts.onSnsPost) opts.onSnsPost('📷 撮ったよ', img);
           view = 'sns';
           paint();
         },
       });
     } else renderHome();
+  }
+
+  /**
+   * 歩けるかを決めて外へ伝える。
+   * ⚠ カメラのときは**歩けないと撮影にならない**（2026-08-08 loyさん
+   *   「カメラ出した状態で歩けないと撮影むづかしいね」）。カメラだけ例外にする
+   */
+  function syncMovable() {
+    const canWalk = !open || view === 'camera';
+    phone.classList.toggle('vc-phone-cam', open && view === 'camera');
+    if (opts.onOpenChange) opts.onOpenChange(!canWalk);
   }
 
   function setOpen(next) {
@@ -454,7 +539,7 @@ export function initPhone(opts = {}) {
       view = 'home';
       paint();
     }
-    if (opts.onOpenChange) opts.onOpenChange(open);
+    syncMovable();
   }
 
   phone.querySelector('#vc-phone-home').addEventListener('click', () => {
@@ -463,6 +548,7 @@ export function initPhone(opts = {}) {
     paint();
   });
   btn.addEventListener('click', () => setOpen(!open));
+  phone.querySelector('#vc-phone-x').addEventListener('click', () => setOpen(false));
 
   // Tabキーでも開け閉めできる（ゲームでよくある持ち物のキー）。
   // ⚠ ブラウザの既定（次の入力欄へ移動）を止める
@@ -511,6 +597,17 @@ export function initPhone(opts = {}) {
       threads[other].push({ txt: msg.txt, mine: Boolean(msg.mine), at: msg.at, read: Boolean(msg.mine) });
       if (open && view === 'dm') paint();
       return other;
+    },
+    /** 送金の結果を出す */
+    setPayMessage(text) {
+      payMsg = text || '';
+      if (open && view === 'pay') paint();
+    },
+    /** 連絡帳を開く（申請が来たときの案内から飛べるように） */
+    openFriends() {
+      setOpen(true);
+      view = 'friends';
+      paint();
     },
     /** 未読の合計（バッジ用） */
     unreadCount() {

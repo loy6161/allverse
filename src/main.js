@@ -8,8 +8,13 @@ import { preloadAvatars } from './avatar_glb.js';
 import { initJoinScreen, openCustomizer, setKnownRole } from './join.js';
 import { createShopBuildings, nearestSpot } from './shops3d.js';
 import { initPhone } from './phone.js';
+import { addRequest, addFriend } from './friends.js';
+import { updateHunger, speedFactor, eat, getHunger, hungerLabel, onHungerChange } from './hunger.js';
 import { openShop, closeShop, isShopOpen } from './shopui.js';
-import { getWallet, onWalletChange, claimDailyBonus, claimEventBonus } from './wallet.js';
+import {
+  getWallet, onWalletChange, claimDailyBonus, claimEventBonus,
+  spend as spendPoints, grant as grantPoints,
+} from './wallet.js';
 import { openPlacePicker } from './placepick.js';
 import { saveLocalPrefs } from './prefs.js';
 import { getChatEmote } from './bubbletime.js';
@@ -962,6 +967,20 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       onPhoneDenied: (why) => {
         if (phoneUI) phoneUI.setDenied(why);
       },
+      onFriendReq: ({ name }) => {
+        if (addRequest(name) && chat) {
+          chat.addMessage('', `${name} からフレンド申請が届きました（📱→連絡帳）`, { system: true });
+        }
+      },
+      onFriendOk: ({ name }) => {
+        addFriend(name);
+        if (chat) chat.addMessage('', `${name} とフレンドになりました`, { system: true });
+      },
+      onPay: ({ fromName, amount }) => {
+        grantPoints(amount, `${fromName} からの送金`);
+        if (chat) chat.addMessage('', `${fromName} から ${amount} VC を受け取りました`, { system: true });
+      },
+      onPayOk: () => {},
       onDm: (msg) => {
         if (!phoneUI) return;
         phoneUI.addDm(msg);
@@ -1472,7 +1491,9 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
         { id: 'bag', name: '持ち物', icon: '🎒', inside: true, run: () => {} },
         { id: 'map', name: 'マップ', icon: '🗺', inside: true, run: () => {} },
         { id: 'sns', name: 'SNS', icon: '🐦', inside: true, run: () => {} },
+        { id: 'friends', name: '連絡帳', icon: '📇', inside: true, run: () => {} },
         { id: 'dm', name: 'メッセージ', icon: '💬', inside: true, run: () => {} },
+        { id: 'pay', name: '送金', icon: '💸', inside: true, run: () => {} },
         { id: 'camera', name: 'カメラ', icon: '📷', inside: true, run: () => {} },
         { id: 'wallet', name: 'ウォレット', icon: '💰', inside: true, run: () => {} },
         app('settings', '設定', '⚙', settings, '.vc-set-panel'),
@@ -1501,6 +1522,22 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       },
       onDm: (to, txt) => {
         if (net && !demoMode) net.sendDm(to, txt);
+      },
+      onFriendReq: (to) => {
+        if (net && !demoMode) net.sendFriendReq(to);
+        if (chat) chat.addMessage('', 'フレンド申請を送りました', { system: true });
+      },
+      onFriendOk: (to) => {
+        if (net && !demoMode) net.sendFriendOk(to);
+      },
+      /** 送金（モック）。自分の残高を先に減らし、相手には合図を送る */
+      onPay: (target, amount) => {
+        if (!spendPoints(amount, `送金: ${target.name}`)) {
+          if (phoneUI) phoneUI.setPayMessage('ポイントが足りません');
+          return;
+        }
+        if (net && !demoMode) net.sendPay(target.id, amount);
+        if (phoneUI) phoneUI.setPayMessage(`${target.name} に ${amount} VC を渡しました`);
       },
       /**
        * カメラ（写真）。いまの3Dの絵をそのまま画像にする。
@@ -1583,6 +1620,16 @@ function updateVenue(dt) {
 }
 
 /**
+ * 空腹（2026-08-08）。**会場の外に居る間だけ**減り、歩く速さに効く。
+ * ⚠ ライブに支障を出さないため、会場の中では一切減らない（loyさん指定）
+ */
+function updateHungerState(dt) {
+  if (!player) return;
+  updateHunger(dt, inClubArea(player.position.x, player.position.z));
+  if (controls && controls.setSpeedScale) controls.setSpeedScale(speedFactor());
+}
+
+/**
  * お店の中の台（カウンター・ガチャ台・スロット台）の前に立っているかを見て案内を出す。
  * ⚠ 毎フレーム走るので、**中身は距離を測るだけ**にしてある（DOM は変わったときだけ触る）
  */
@@ -1617,9 +1664,12 @@ function enterShop(kind, tab) {
     // 飲む（2026-08-08・loyさん「飲む動作まで作る」）。
     // ★ 新しい3Dは作らない。**既存の「乾杯」エモート**（ビールジョッキが出る）を再生する。
     //   他の人の画面にも同じエモートが出るよう、サーバーにも送る
-    onDrink: () => {
+    onDrink: (item) => {
       if (player && player.userData.playEmote) player.userData.playEmote('cheers');
       if (net && !demoMode) net.sendEmote('cheers');
+      // 飲むとお腹が少し回復する（2026-08-08・loyさん「飲食で回復」）
+      const after = eat(item && item.id === 9 ? 30 : 20);
+      if (chat) chat.addMessage('', `お腹が回復しました（${Math.round(after)}%）`, { system: true });
     },
   });
 }
@@ -1657,6 +1707,20 @@ function initWalletHud() {
   paint();
   bar.appendChild(el);
 
+  // 空腹（2026-08-08）。会場の中では減らないので、街に出たときだけ意味がある
+  const hu = document.createElement('span');
+  hu.id = 'vc-hunger-hud';
+  hu.style.cssText = 'margin-left:10px;font-weight:700;';
+  hu.title = '空腹（街に出ている間だけ減ります。飲食で回復）';
+  const paintHunger = () => {
+    const l = hungerLabel();
+    hu.style.color = l.color;
+    hu.textContent = `🍖 ${Math.round(getHunger())}%`;
+  };
+  onHungerChange(paintHunger);
+  paintHunger();
+  bar.appendChild(hu);
+
   // 扉の案内（画面の下中央）
   if (!document.getElementById('vc-door-hint')) {
     const hint = document.createElement('div');
@@ -1681,6 +1745,7 @@ function loop() {
   if (player) {
     controls.update(dt);
     updateVenue(dt);
+    updateHungerState(dt);
     if (player.userData.update) player.userData.update(dt);
     if (sim) sim.update(dt);
     if (crowd) crowd.update(t); // 人影（手前のぶんだけ軽く揺れる）

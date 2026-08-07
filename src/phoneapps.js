@@ -208,7 +208,15 @@ export function renderSns(host, { posts, myId, onPost, onLike, denied }) {
       + `<span style="color:rgba(220,235,255,0.45)">${when.getHours()}:${String(when.getMinutes()).padStart(2, '0')}</span>`;
     const body = document.createElement('div');
     body.style.cssText = 'font-size:12px;line-height:1.6;margin:4px 0 6px;white-space:pre-wrap;word-break:break-word;';
-    body.textContent = item.txt + (item.photo ? ' 📷' : '');
+    body.textContent = item.txt;
+    // 写真つきの投稿（2026-08-08・loyさん「SNS投稿したけど写真でないね」）
+    if (item.img) {
+      const im = document.createElement('img');
+      im.src = item.img;
+      im.style.cssText = 'width:100%;border-radius:9px;margin:4px 0 6px;'
+        + 'border:1px solid rgba(255,255,255,0.15);display:block;';
+      body.appendChild(im);
+    }
     const like = document.createElement('button');
     like.type = 'button';
     const liked = (item.likes || []).includes(myId);
@@ -304,6 +312,141 @@ export function renderMessenger(host, { people, threads, active, myId, onOpen, o
 }
 
 /**
+ * 連絡帳（フレンド）— 2026-08-08・loyさん依頼。
+ * ここに居る人へ申請 → 相手が受けるとフレンド。**メッセージはフレンドだけ**。
+ */
+export function renderFriends(host, { people, friends, requests, onRequest, onAccept, onDecline, onRemove, onTalk }) {
+  const note = document.createElement('p');
+  note.className = 'vc-phone-note';
+  note.textContent = 'フレンドになるとメッセージを送り合えます。⚠ 名簿はこの端末だけに残ります。';
+  host.appendChild(note);
+
+  const section = (title) => {
+    const h = document.createElement('div');
+    h.style.cssText = 'font-size:11px;letter-spacing:1px;color:rgba(0,255,234,0.8);margin:10px 0 6px;';
+    h.textContent = title;
+    host.appendChild(h);
+  };
+  const row = (label, buttons) => {
+    const r = document.createElement('div');
+    r.style.cssText = 'display:flex;align-items:center;gap:6px;padding:7px 9px;margin-bottom:6px;'
+      + 'border-radius:10px;font-size:12px;background:rgba(255,255,255,0.05);'
+      + 'border:1px solid rgba(255,255,255,0.14);';
+    const n = document.createElement('span');
+    n.textContent = label;
+    n.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    r.appendChild(n);
+    for (const [text, fn, color] of buttons) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = text;
+      b.style.cssText = 'padding:3px 8px;font-size:11px;border-radius:7px;cursor:pointer;'
+        + `color:#eaf6ff;background:rgba(255,255,255,0.07);border:1px solid ${color || 'rgba(255,255,255,0.25)'};`;
+      b.addEventListener('click', fn);
+      r.appendChild(b);
+    }
+    host.appendChild(r);
+  };
+
+  if (requests.length) {
+    section('届いている申請');
+    for (const name of requests) {
+      row(name, [
+        ['受ける', () => onAccept(name), '#9be34a'],
+        ['断る', () => onDecline(name), 'rgba(255,255,255,0.25)'],
+      ]);
+    }
+  }
+
+  section(`フレンド（${friends.length}人）`);
+  if (!friends.length) {
+    const p = document.createElement('p');
+    p.className = 'vc-phone-note';
+    p.textContent = 'まだ居ません。下の「この会場に居る人」から申請できます。';
+    host.appendChild(p);
+  }
+  for (const name of friends) {
+    row(name, [
+      ['話す', () => onTalk(name), '#00ffea'],
+      ['外す', () => onRemove(name), 'rgba(255,120,140,0.6)'],
+    ]);
+  }
+
+  section('この会場に居る人');
+  const others = people.filter((x) => !friends.includes(x.name));
+  if (!others.length) {
+    const p = document.createElement('p');
+    p.className = 'vc-phone-note';
+    p.textContent = 'いま他に誰も居ません。';
+    host.appendChild(p);
+  }
+  for (const x of others) {
+    row(x.name, [['申請', () => onRequest(x), '#ffd86b']]);
+  }
+}
+
+/**
+ * 送金（ポイントを譲る）— 2026-08-08・loyさん依頼。
+ * ⚠ 相手は**フレンドかつ会場に居る人**だけ。誰にでも送れると、
+ *   あとで換金の抜け道（現金でポイントを売買する）に使われる恐れがある
+ */
+export function renderPay(host, { balance, targets, onSend, message }) {
+  const note = document.createElement('p');
+  note.className = 'vc-phone-note';
+  note.textContent = `いま ${balance.toLocaleString()} VC。フレンドで、いま会場に居る人に渡せます。`;
+  host.appendChild(note);
+
+  if (message) {
+    const m = document.createElement('div');
+    m.style.cssText = 'font-size:12px;color:#9be34a;margin-bottom:8px;';
+    m.textContent = message;
+    host.appendChild(m);
+  }
+
+  if (!targets.length) {
+    const p = document.createElement('p');
+    p.className = 'vc-phone-note';
+    p.textContent = '渡せる相手が居ません（フレンドが会場に居るときに使えます）。';
+    host.appendChild(p);
+    return;
+  }
+
+  const sel = document.createElement('select');
+  sel.style.cssText = 'width:100%;padding:7px;border-radius:9px;margin-bottom:8px;font-size:12px;'
+    + 'color:#eaf6ff;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.25);';
+  for (const t of targets) {
+    const o = document.createElement('option');
+    o.value = t.id;
+    o.textContent = t.name;
+    o.style.color = '#000';
+    sel.appendChild(o);
+  }
+  host.appendChild(sel);
+
+  const amount = document.createElement('input');
+  amount.type = 'number';
+  amount.min = '1';
+  amount.value = '100';
+  amount.style.cssText = 'width:100%;padding:7px 9px;border-radius:9px;margin-bottom:8px;font-size:12px;'
+    + 'color:#fff;background:rgba(255,255,255,0.07);border:1px solid rgba(0,255,234,0.35);outline:none;';
+  amount.addEventListener('keydown', (e) => e.stopPropagation());
+  host.appendChild(amount);
+
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.textContent = '渡す';
+  go.style.cssText = 'width:100%;padding:10px;font-size:13px;font-weight:700;border-radius:11px;'
+    + 'cursor:pointer;border:none;color:#06121a;background:linear-gradient(90deg,#00ffea,#ff00e5);';
+  go.addEventListener('click', () => {
+    const n = Math.floor(Number(amount.value));
+    const t = targets.find((x) => x.id === sel.value);
+    if (!t || !(n > 0)) return;
+    onSend(t, n);
+  });
+  host.appendChild(go);
+}
+
+/**
  * カメラ（こちらの判断で追加・2026-08-08）。
  * GTAの「スナップマティック」に当たるもの。いまの画面を撮って、保存かSNS投稿ができる。
  * ⚠ 撮るのは3Dの画面だけ。**YouTubeの映像は写らない**
@@ -359,7 +502,26 @@ export function renderCamera(host, { shoot, onPostPhoto }) {
   });
   toSns.addEventListener('click', () => {
     if (!dataUrl) return;
-    onPostPhoto();
+    // ⚠ 元の画像は数百KBある。そのまま配ると通信が詰まるので、
+    //   **横360pxのJPEGに縮めてから**送る（30KB前後）。モックなのでこれで十分
+    shrink(dataUrl, 360).then((small) => onPostPhoto(small));
+  });
+}
+
+/** 画像を横幅 maxW まで縮めた JPEG のデータURLにする */
+function shrink(dataUrl, maxW) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width);
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.width * scale);
+      cv.height = Math.round(img.height * scale);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      resolve(cv.toDataURL('image/jpeg', 0.6));
+    };
+    img.onerror = () => resolve('');
+    img.src = dataUrl;
   });
 }
 

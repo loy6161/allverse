@@ -508,6 +508,7 @@ export function openShop(kind, hooks = {}) {
         if ((getWallet().items[it.id] || 0) <= 0) return;
         addItem(it.id, -1); // 飲んだら減る
         if (hooks.onDrink) hooks.onDrink(it);
+        // 空腹の回復（2026-08-08）。飲み物は軽め
         flash = `${it.name} を飲みました`;
         paintBody();
         // ⚠ 画面が出たままだと**飲む動作が見えない**（2026-08-08 loyさん指摘）。

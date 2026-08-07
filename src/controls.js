@@ -252,6 +252,8 @@ export function initControls(
    * 画面の裏で移動して迷子になる）。押しっぱなしのキーも忘れさせる
    */
   let inputEnabled = true;
+  /** 歩く速さの倍率（空腹などで変わる）。1が既定 */
+  let speedScale = 1;
 
   window.addEventListener('keydown', (e) => {
     if (!inputEnabled) return;
@@ -424,7 +426,9 @@ export function initControls(
     const manual = Math.abs(fw) > 0.1 || Math.abs(side) > 0.1;
     // 走る（Shiftを押している間）。巨大エリア（?world=open）を端まで移動できるように
     // 2026-08-06 追加。ふだんの会場でも「急いで席に戻る」のに使える
-    const speed = keys.has('ShiftLeft') || keys.has('ShiftRight') ? SPEED * RUN_MULT : SPEED;
+    // 空腹で遅くなる（2026-08-08）。会場の中では常に1.0（ライブに支障を出さない）
+    const base = keys.has('ShiftLeft') || keys.has('ShiftRight') ? SPEED * RUN_MULT : SPEED;
+    const speed = base * (speedScale || 1);
     // 自分で動かしたら自動移動はやめる（操作を奪われる感じを出さない）
     if (manual && moveTarget) cancelMoveTarget();
 
@@ -556,6 +560,10 @@ export function initControls(
      */
     setBounds(b) {
       if (b) bounds = b;
+    },
+    /** 歩く速さの倍率。空腹で遅くする用（1が既定） */
+    setSpeedScale(v) {
+      speedScale = Number.isFinite(v) && v > 0 ? v : 1;
     },
     /** キー入力の受け付けを切り替える（スマホを開いている間は止める） */
     setInputEnabled(on) {

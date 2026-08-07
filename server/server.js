@@ -2276,8 +2276,10 @@ function handleSnsPost(client, msg) {
     email: client.email || '',
     role: client.role,
     txt,
-    // 写真（データURL）は重いので載せない。代わりに「写真つき」の印だけ持つ
-    photo: Boolean(msg.photo),
+    // 写真（縮めたJPEGのデータURL）。
+    // ⚠ 大きいものは落とす。100KBを超える画像を全員へ配ると通信が詰まる
+    img: typeof msg.img === 'string' && msg.img.startsWith('data:image/') && msg.img.length < 100000
+      ? msg.img : '',
     t: now,
     likes: [],
   };
@@ -2296,6 +2298,56 @@ function handleSnsLike(client, msg) {
   if (i >= 0) post.likes.splice(i, 1);
   else post.likes.push(client.id);
   broadcastToEvent(client.eventId, { t: 'sns-like', pid: post.pid, likes: post.likes.length });
+}
+
+/**
+ * フレンド申請・承諾の中継（2026-08-08）。
+ * ⚠ サーバーは**覚えない**。相手に届けるだけ（名簿は各自のブラウザにある）。
+ *   モックの段階で名簿をサーバーに持つと、削除・引き継ぎ・通報の設計が要るため。
+ * @param {'friend-req'|'friend-ok'} kind
+ */
+function relayToPeer(client, msg, kind) {
+  const to = String(msg.to || '');
+  if (!to) return;
+  let target = null;
+  for (const members of rooms.values()) {
+    for (const c of members.values()) {
+      if (c.id === to && c.eventId === client.eventId) target = c;
+    }
+  }
+  if (!target || isBlockedBetween(client, target)) return;
+  send(target.ws, { t: kind, from: client.id, fromName: client.n });
+}
+
+/**
+ * 送金（2026-08-08・loyさん依頼）。
+ * ⚠ **いまは残高が各端末にある**（モック）ので、サーバーは「渡した」という合図を中継するだけ。
+ *   本物の台帳が入ったら、ここでサーバーが残高を動かす（クライアントの数字は信用しない）。
+ */
+function handlePay(client, msg) {
+  const amount = Math.floor(Number(msg.amount) || 0);
+  if (!(amount > 0) || amount > 1000000) return;
+  const to = String(msg.to || '');
+  let target = null;
+  for (const members of rooms.values()) {
+    for (const c of members.values()) {
+      if (c.id === to && c.eventId === client.eventId) target = c;
+    }
+  }
+  if (!target || isBlockedBetween(client, target)) {
+    send(client.ws, { t: 'pay-denied', why: '相手が見つかりません' });
+    return;
+  }
+  send(target.ws, { t: 'pay', from: client.id, fromName: client.n, amount });
+  send(client.ws, { t: 'pay-ok', to, toName: target.n, amount });
+}
+
+function handleFriendReq(client, msg) {
+  relayToPeer(client, msg, 'friend-req');
+}
+
+function handleFriendOk(client, msg) {
+  relayToPeer(client, msg, 'friend-ok');
 }
 
 /**
@@ -2355,6 +2407,9 @@ const HANDLERS = {
   'event-delete': handleEventDelete,
   move: handleMove,
   events: handleEventsRequest,
+  pay: handlePay,
+  'friend-req': handleFriendReq,
+  'friend-ok': handleFriendOk,
   'sns-list': handleSnsList,
   'sns-post': handleSnsPost,
   'sns-like': handleSnsLike,
