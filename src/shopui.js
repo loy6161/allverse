@@ -200,6 +200,22 @@ export function openShop(kind, hooks = {}) {
   // ⚠ 画面を作り直すと出したばかりの一言が消える（買った直後・飲んだ直後）。
   //   作り直しをまたいで1回だけ出せるように、ここに置いておく
   let flash = '';
+  /**
+   * しばらく画面をどける（アバターの動きを見せるため）。
+   * ⚠ 消すのではなく**隠すだけ**。消すと開き直す操作が要る
+   */
+  function peek(ms) {
+    if (!openPanel) return;
+    const el = openPanel;
+    const bk = document.getElementById('vc-shop-back');
+    el.style.visibility = 'hidden';
+    if (bk) bk.style.visibility = 'hidden';
+    setTimeout(() => {
+      el.style.visibility = '';
+      if (bk) bk.style.visibility = '';
+    }, ms);
+  }
+
   function msgBox() {
     const m = document.createElement('div');
     m.className = 'vc-shop-msg';
@@ -494,6 +510,9 @@ export function openShop(kind, hooks = {}) {
         if (hooks.onDrink) hooks.onDrink(it);
         flash = `${it.name} を飲みました`;
         paintBody();
+        // ⚠ 画面が出たままだと**飲む動作が見えない**（2026-08-08 loyさん指摘）。
+        //   乾杯のエモートの間だけ画面をどける
+        peek(2400);
       });
       card.appendChild(drink);
       grid.appendChild(card);
