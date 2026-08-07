@@ -1,54 +1,69 @@
 import * as THREE from 'three';
 
 // ============================================================
-// 街に置く「入れるお店」の建物 — **モック**（2026-08-07）
+// 街のお店・カジノ（**中に入れる建物**） — 2026-08-08
 //
 // loyさん「建物内でお店やカジノ店など作りたい」。
+// 最初のモックは扉の前でパネルが開くだけだったが、「次は建物の中に入れるように」と
+// 決まったので、**歩いて入れる部屋**にした。中の台に近づくと、その台の画面が開く。
 //
-// ⚠ いまは**扉に近づくと画面が開く**だけで、建物の中には入りません。
-//   中を歩ける部屋にするのは次の段階（docs/SPEC_POINTS.md）。
-//   まず「歩く → 店に入る → 買う → 着る」の流れが成立するかを見るためのモックです。
+// ★ 作りの方針（world_lounge.js と同じ考え方をそのまま踏襲）
+//   ・**別ワールドに差し替えない。** 同じシーンの同じ場所に建てる。
+//     差し替えると同じ部屋にいる人どうしが見えなくなる（座標は同期しているのに姿が無い）
+//   ・**ライトを足さない。** three のライトはシーン全体に効くので、
+//     loyさんの環境（CPU描画）では1画素あたりの計算が全体で重くなる。
+//     光の要らない材質（MeshBasicMaterial）だけで組む
+//   ・遠いときは丸ごと非表示にする（描画の負担を増やさない）
 //
-// 置き場所は**会場を出てすぐの大通り沿い**（街に出る立ち位置は (4.5, 40)）。
-// ⚠ 最初は x=±30 に置いたら**画面に入らなかった**（20m先で視界の幅は片側9mほどしかない）。
-//   21km²の街は自動生成で見分けがつかないので、出てすぐ目に入る位置に置くこと。
+// ⚠ 置き場所は**会場の西**。clubVERSE の床は南（z>22）に無く、
+//   会場の敷地（x -45..55 / z -50..40）の中は床のある所にしか立てないため、
+//   南に置いた最初の版は**扉の前に立てなかった**（2026-08-07 loyさん「いけない」）。
 // ============================================================
 
+/** 部屋の高さ */
+const WALL_H = 5;
+/** 入口の大きさ */
+const DOOR_W = 4.4;
+const DOOR_H = 3.4;
+
 /**
- * 建物の定義。id は shopui.js の kind と揃える。
- *
- * ⚠ 置き場所は**会場の西側**。理由（2026-08-07 実測）:
- *   clubVERSE の床は南（z>22）には無く、**南からは会場の外に出られない**。
- *   会場の敷地（x -45..55 / z -50..40）の中では床のある所にしか立てないので、
- *   最初に南（z=46）へ置いた建物は**扉の前に立てなかった**（loyさん「いけない」）。
- *   西は x=-45 より外に出ればどこでも立てるので、そちら側に置く。
- *   会場から西へ歩くと出られる（loyさん「clubVERSEの西の門からCITYにでれるように」）。
+ * 建物の定義。
+ * pos は部屋の中心。入口は東（+X＝会場側）に開けてある。
+ * fixtures は中に置く台。近づくと対応する画面が開く（tab は shopui.js のタブid）
  */
 export const SHOP_BUILDINGS = [
   {
     id: 'shop',
     label: 'VERSE SHOP',
-    color: 0x1b3a55,
     neon: 0x00ffea,
-    pos: [-72, 0, -18], // 会場の西・少し奥
-    size: [16, 9, 14],
-    doorFace: 'east', // 扉は会場側（+X）を向く
+    wall: 0x1b3a55,
+    pos: [-72, 0, -18],
+    half: [8, 7], // 16m × 14m
+    fixtures: [
+      { id: 'counter', tab: 'shop', label: 'お店', at: [-4, -3], color: 0x27618a },
+      { id: 'gacha', tab: 'gacha', label: 'ガチャ', at: [-4, 3], color: 0xffd86b },
+    ],
   },
   {
     id: 'casino',
     label: 'VERSE CASINO',
-    color: 0x3a1b45,
     neon: 0xff00e5,
-    pos: [-72, 0, 14], // 会場の西・少し手前
-    size: [16, 11, 14],
-    doorFace: 'east',
+    wall: 0x3a1b45,
+    pos: [-72, 0, 14],
+    half: [8, 7],
+    fixtures: [
+      { id: 'slot', tab: 'slot', label: 'スロット', at: [-4, -3], color: 0xff5fd2 },
+      { id: 'gacha2', tab: 'gacha', label: 'ガチャ', at: [-4, 3], color: 0xffd86b },
+    ],
   },
 ];
 
-/** 扉の前に立ったと見なす距離（m） */
-export const DOOR_RANGE = 5;
+/** 台に近づいたと見なす距離（m） */
+export const FIXTURE_RANGE = 2.8;
+/** 建物を出す距離（これより遠いと丸ごと非表示） */
+const SHOW_DIST = 90;
 
-function label(text, color) {
+function signSprite(text, color) {
   const pad = 24;
   const cv = document.createElement('canvas');
   const ctx = cv.getContext('2d');
@@ -64,67 +79,133 @@ function label(text, color) {
   c2.fillText(text, pad, cv.height / 2);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
-  const sp = new THREE.Sprite(mat);
+  const sp = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }),
+  );
   sp.scale.set((cv.width / cv.height) * 2.4, 2.4, 1);
   return sp;
 }
 
 /**
- * 建物を作って scene に足す。
- * @returns {{ doors: {id:string,label:string,x:number,z:number}[], dispose:()=>void }}
+ * お店の建物を作って scene に足す。
+ * @returns {{ spots: object[], update:(x:number,z:number)=>void, dispose:()=>void }}
  */
 export function createShopBuildings(scene) {
   const root = new THREE.Group();
   root.name = 'shop-buildings';
   scene.add(root);
 
-  const doors = [];
+  const spots = [];
+  const groups = [];
   const disposables = [];
 
+  // 光の計算をしない材質だけで作る（上の注意書き）
+  const mat = (color, side = THREE.FrontSide) =>
+    new THREE.MeshBasicMaterial({ color, fog: true, side });
+
   for (const b of SHOP_BUILDINGS) {
-    const [w, h, d] = b.size;
-    const [x, y, z] = b.pos;
+    const [ox, oy, oz] = b.pos;
+    const [hx, hz] = b.half;
+    const g = new THREE.Group();
+    g.position.set(ox, oy, oz);
+    root.add(g);
+    groups.push(g);
 
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(w, h, d),
-      new THREE.MeshBasicMaterial({ color: b.color, fog: true }),
-    );
-    body.position.set(x, y + h / 2, z);
-    root.add(body);
-    disposables.push(body);
+    const add = (mesh) => {
+      g.add(mesh);
+      disposables.push(mesh);
+      return mesh;
+    };
 
-    // 扉。光らせて「ここが入口」と分かるようにする。
-    // doorFace で向きを変える（'east' なら +X 面、既定は会場側＝ -Z 面）
-    const door = new THREE.Mesh(
-      new THREE.PlaneGeometry(3.2, 4.4),
-      new THREE.MeshBasicMaterial({ color: b.neon, fog: true }),
-    );
-    const east = b.doorFace === 'east';
-    const doorX = east ? x + w / 2 + 0.05 : x;
-    const doorZ = east ? z : z - d / 2 - 0.05;
-    door.position.set(doorX, 2.2, doorZ);
-    if (east) door.rotation.y = Math.PI / 2;
-    root.add(door);
-    disposables.push(door);
+    // ---- 床 ----
+    const floor = add(new THREE.Mesh(new THREE.PlaneGeometry(hx * 2, hz * 2), mat(0x1a1f2e)));
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = 0.02;
 
-    // 看板（建物の上）
-    const sign = label(b.label, b.neon);
-    sign.position.set(doorX + (east ? 1.5 : 0), y + h + 2.2, doorZ + (east ? 0 : 0));
-    root.add(sign);
-    disposables.push(sign);
+    // ---- 壁（両面。外から見ても建物に見えるように）----
+    const wall = (w, h, pos, rotY) => {
+      const m = add(new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat(b.wall, THREE.DoubleSide)));
+      m.position.set(pos[0], pos[1], pos[2]);
+      if (rotY) m.rotation.y = rotY;
+      return m;
+    };
+    wall(hx * 2, WALL_H, [0, WALL_H / 2, -hz], 0); // 北
+    wall(hx * 2, WALL_H, [0, WALL_H / 2, hz], 0); // 南
+    wall(hz * 2, WALL_H, [-hx, WALL_H / 2, 0], Math.PI / 2); // 西（奥）
 
-    // 立ち位置は扉の少し手前（外側）
-    doors.push({
-      id: b.id,
-      label: b.label,
-      x: doorX + (east ? 2 : 0),
-      z: doorZ - (east ? 0 : 2),
-    });
+    // ---- 東の壁は入口ぶんを開ける（門の左右＋上）----
+    const sideW = (hz * 2 - DOOR_W) / 2;
+    wall(sideW, WALL_H, [hx, WALL_H / 2, -(DOOR_W / 2 + sideW / 2)], Math.PI / 2);
+    wall(sideW, WALL_H, [hx, WALL_H / 2, DOOR_W / 2 + sideW / 2], Math.PI / 2);
+    wall(DOOR_W, WALL_H - DOOR_H, [hx, DOOR_H + (WALL_H - DOOR_H) / 2, 0], Math.PI / 2);
+
+    // 入口の光る枠。
+    // ⚠ 1枚の板で塗ると**入口が塞がって見える**（2026-08-08 スクショで確認）。
+    //   中が見えないと入れることが伝わらないので、**細い帯4本の縁取り**にする
+    const bar = (w, h, y, z) => {
+      const m = add(new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat(b.neon, THREE.DoubleSide)));
+      m.position.set(hx + 0.06, y, z);
+      m.rotation.y = Math.PI / 2;
+    };
+    const T = 0.16; // 帯の太さ
+    bar(DOOR_W + T * 2, T, DOOR_H + T / 2, 0); // 上
+    bar(T, DOOR_H, DOOR_H / 2, -(DOOR_W / 2 + T / 2)); // 左
+    bar(T, DOOR_H, DOOR_H / 2, DOOR_W / 2 + T / 2); // 右
+
+    // ---- 天井 ----
+    const ceil = add(new THREE.Mesh(new THREE.PlaneGeometry(hx * 2, hz * 2), mat(0x0b0e16, THREE.DoubleSide)));
+    ceil.rotation.x = Math.PI / 2;
+    ceil.position.y = WALL_H;
+
+    // ---- ネオンの帯（内側）----
+    const neonBar = (w, pos, rotY) => {
+      const m = add(new THREE.Mesh(new THREE.PlaneGeometry(w, 0.14), mat(b.neon)));
+      m.position.set(pos[0], pos[1], pos[2]);
+      if (rotY) m.rotation.y = rotY;
+    };
+    neonBar(hx * 2 - 1, [0, 3.2, -hz + 0.03], 0);
+    neonBar(hz * 2 - 1, [-hx + 0.03, 3.2, 0], Math.PI / 2);
+
+    // ---- 看板（屋根の上・入口側）----
+    const sign = add(signSprite(b.label, b.neon));
+    sign.position.set(hx - 1, WALL_H + 1.8, 0);
+
+    // ---- 台（カウンター・ガチャ台・スロット台）----
+    for (const f of b.fixtures) {
+      const [fx, fz] = f.at;
+      const tall = f.tab !== 'shop';
+      const w = tall ? 1.2 : 3.4;
+      const h = tall ? 1.8 : 1.1;
+      const d = 1.0;
+      const box = add(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(0x2a3145)));
+      box.position.set(fx, h / 2, fz);
+      // 光る面（東向き＝入ってきた人から見える側）
+      const face = add(new THREE.Mesh(new THREE.PlaneGeometry(d * 0.8, h * 0.5), mat(f.color)));
+      face.position.set(fx + w / 2 + 0.02, h * 0.62, fz);
+      face.rotation.y = Math.PI / 2;
+      const tag = add(signSprite(f.label, f.color));
+      tag.scale.multiplyScalar(0.42);
+      tag.position.set(fx, h + 0.7, fz);
+
+      spots.push({
+        id: `${b.id}:${f.id}`,
+        label: f.label,
+        tab: f.tab,
+        shop: b.id,
+        x: ox + fx + 1.8, // 台の手前（東側）に立つ
+        z: oz + fz,
+      });
+    }
   }
 
   return {
-    doors,
+    spots,
+    /** プレイヤーの位置を渡す。遠い建物は丸ごと消す（描画を増やさない） */
+    update(px, pz) {
+      for (const g of groups) {
+        g.visible = Math.hypot(g.position.x - px, g.position.z - pz) < SHOW_DIST;
+      }
+    },
     dispose() {
       for (const o of disposables) {
         if (o.geometry) o.geometry.dispose();
@@ -138,15 +219,15 @@ export function createShopBuildings(scene) {
   };
 }
 
-/** いちばん近い扉。範囲外なら null */
-export function nearestDoor(doors, x, z) {
+/** いちばん近い台。範囲外なら null */
+export function nearestSpot(spots, x, z) {
   let best = null;
-  let bestD = DOOR_RANGE;
-  for (const dr of doors) {
-    const d = Math.hypot(dr.x - x, dr.z - z);
+  let bestD = FIXTURE_RANGE;
+  for (const s of spots) {
+    const d = Math.hypot(s.x - x, s.z - z);
     if (d < bestD) {
       bestD = d;
-      best = dr;
+      best = s;
     }
   }
   return best;

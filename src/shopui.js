@@ -131,6 +131,8 @@ export function isShopOpen() {
  *   買った飾りをその場で着けるために、いまの見た目と反映先をもらう
  */
 export function openShop(kind, hooks = {}) {
+  // どのタブから開くか（店の中の台ごとに違う。2026-08-08）
+  const startTab = hooks.tab || null;
   injectStyle();
   closeShop();
 
@@ -177,7 +179,7 @@ export function openShop(kind, hooks = {}) {
     ? [['slot', 'スロット'], ['gacha', 'ガチャ'], ['bag', '持ち物']]
     : [['shop', 'お店'], ['gacha', 'ガチャ'], ['bag', '持ち物']];
 
-  let current = TABS[0][0];
+  let current = TABS.some(([id]) => id === startTab) ? startTab : TABS[0][0];
 
   function paintTabs() {
     tabsEl.innerHTML = '';

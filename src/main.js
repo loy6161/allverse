@@ -6,7 +6,7 @@ import { createClubWorld } from './world_club.js';
 import { createAvatar } from './avatar.js';
 import { preloadAvatars } from './avatar_glb.js';
 import { initJoinScreen, openCustomizer, setKnownRole } from './join.js';
-import { createShopBuildings, nearestDoor } from './shops3d.js';
+import { createShopBuildings, nearestSpot } from './shops3d.js';
 import { openShop, closeShop, isShopOpen } from './shopui.js';
 import { getWallet, onWalletChange } from './wallet.js';
 import { openPlacePicker } from './placepick.js';
@@ -88,8 +88,8 @@ const inClubArea = (x, z) =>
 let city = null;
 /** 街に置くお店・カジノの建物（2026-08-07・モック） */
 let shopBuildings = null;
-/** いま扉の前に立っている店（null なら範囲外） */
-let nearDoor = null;
+/** いま前に立っている台（null なら範囲外）。店の中のカウンター・ガチャ台・スロット台 */
+let nearSpot = null;
 function ensureCity() {
   if (city || WORLD_KIND !== 'club') return city;
   city = createCityLayer(scene, { hole: { minIx: 0, maxIx: 0, minIz: 0, maxIz: 0 } });
@@ -1349,9 +1349,9 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       closeShop();
       return;
     }
-    if (!nearDoor) return;
+    if (!nearSpot) return;
     e.preventDefault();
-    enterShop(nearDoor.id);
+    enterShop(nearSpot.shop, nearSpot.tab);
   });
 
   // スマホ対応（タッチ端末 or ?mobile=1 のときだけ有効化される）
@@ -1407,18 +1407,19 @@ function updateVenue(dt) {
 }
 
 /**
- * お店の扉の前に立っているかを見て、案内を出す（2026-08-07・モック）。
+ * お店の中の台（カウンター・ガチャ台・スロット台）の前に立っているかを見て案内を出す。
  * ⚠ 毎フレーム走るので、**中身は距離を測るだけ**にしてある（DOM は変わったときだけ触る）
  */
 function updateShopDoors() {
   if (!shopBuildings) return;
-  const near = nearestDoor(shopBuildings.doors, player.position.x, player.position.z);
-  if (near === nearDoor) return;
-  nearDoor = near;
+  shopBuildings.update(player.position.x, player.position.z);
+  const near = nearestSpot(shopBuildings.spots, player.position.x, player.position.z);
+  if (near === nearSpot) return;
+  nearSpot = near;
   const hint = document.getElementById('vc-door-hint');
   if (!hint) return;
   if (near) {
-    hint.textContent = `${near.label} — E で入る`;
+    hint.textContent = `${near.label} — E で開く`;
     hint.classList.remove('hidden');
   } else {
     hint.classList.add('hidden');
@@ -1429,8 +1430,9 @@ function updateShopDoors() {
  * お店・カジノに入る（2026-08-07・モック）。
  * 買った飾りはその場で見た目に反映し、他の人にも伝える（着せ替え画面と同じ道を通す）
  */
-function enterShop(kind) {
+function enterShop(kind, tab) {
   openShop(kind, {
+    tab,
     getConfig: () => session.config,
     onWear: (config) => {
       session.config = { ...config };
