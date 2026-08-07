@@ -6,6 +6,9 @@ import { createClubWorld } from './world_club.js';
 import { createAvatar } from './avatar.js';
 import { preloadAvatars } from './avatar_glb.js';
 import { initJoinScreen, openCustomizer, setKnownRole } from './join.js';
+import { createShopBuildings, nearestDoor } from './shops3d.js';
+import { openShop, closeShop, isShopOpen } from './shopui.js';
+import { getWallet, onWalletChange } from './wallet.js';
 import { openPlacePicker } from './placepick.js';
 import { saveLocalPrefs } from './prefs.js';
 import { getChatEmote } from './bubbletime.js';
@@ -83,9 +86,16 @@ const inClubArea = (x, z) =>
 
 /** 街（CITY）。要るときだけ作る。中央の区画には建てない（そこに会場がある） */
 let city = null;
+/** 街に置くお店・カジノの建物（2026-08-07・モック） */
+let shopBuildings = null;
+/** いま扉の前に立っている店（null なら範囲外） */
+let nearDoor = null;
 function ensureCity() {
   if (city || WORLD_KIND !== 'club') return city;
   city = createCityLayer(scene, { hole: { minIx: 0, maxIx: 0, minIz: 0, maxIz: 0 } });
+  // 街に「入れるお店」を置く（2026-08-07・モック）。
+  // 自動生成のタイルとは別に、**決まった場所に手で置く**（毎回同じ場所にある必要があるため）
+  if (!shopBuildings) shopBuildings = createShopBuildings(scene);
   if (controls) controls.setBounds(city.bounds);
   return city;
 }
@@ -1040,6 +1050,8 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
 
   updateCount(null);
   hud.classList.remove('hidden');
+  // 残高の表示と、扉の案内を用意する（2026-08-07・モック）
+  initWalletHud();
   chatRoot.classList.remove('hidden');
   avatarBtn.classList.remove('hidden');
 
@@ -1318,6 +1330,20 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
     );
   });
 
+  // Eキー: お店・カジノの扉の前で押すと入る（2026-08-07・モック）
+  window.addEventListener('keydown', (e) => {
+    const el = document.activeElement;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+    if (e.key.toLowerCase() !== 'e' || e.repeat) return;
+    if (isShopOpen()) {
+      closeShop();
+      return;
+    }
+    if (!nearDoor) return;
+    e.preventDefault();
+    enterShop(nearDoor.id);
+  });
+
   // スマホ対応（タッチ端末 or ?mobile=1 のときだけ有効化される）
   initMobile({ controls, chatRoot });
 }
@@ -1367,6 +1393,85 @@ const prevPos = new THREE.Vector3();
 function updateVenue(dt) {
   if (!city || !player) return;
   city.update(dt, 0, player.position.x, player.position.z);
+  updateShopDoors();
+}
+
+/**
+ * お店の扉の前に立っているかを見て、案内を出す（2026-08-07・モック）。
+ * ⚠ 毎フレーム走るので、**中身は距離を測るだけ**にしてある（DOM は変わったときだけ触る）
+ */
+function updateShopDoors() {
+  if (!shopBuildings) return;
+  const near = nearestDoor(shopBuildings.doors, player.position.x, player.position.z);
+  if (near === nearDoor) return;
+  nearDoor = near;
+  const hint = document.getElementById('vc-door-hint');
+  if (!hint) return;
+  if (near) {
+    hint.textContent = `${near.label} — E で入る`;
+    hint.classList.remove('hidden');
+  } else {
+    hint.classList.add('hidden');
+  }
+}
+
+/**
+ * お店・カジノに入る（2026-08-07・モック）。
+ * 買った飾りはその場で見た目に反映し、他の人にも伝える（着せ替え画面と同じ道を通す）
+ */
+function enterShop(kind) {
+  openShop(kind, {
+    getConfig: () => session.config,
+    onWear: (config) => {
+      session.config = { ...config };
+      applyMyLook(session.config);
+    },
+  });
+}
+
+/**
+ * 自分の見た目を作り直して、周りにも伝える。
+ * ⚠ 手順は「アバター変更」の確定処理と**同じものを踏む**こと
+ *   （位置と向きを引き継ぐ／controls に付け替える／名前の表示状態を保つ／保存して送る）。
+ *   1つでも抜けると、その場で棒立ちになったり他人の画面に反映されなかったりする
+ */
+function applyMyLook(config) {
+  const pos = player.position.clone();
+  const rotY = player.rotation.y;
+  scene.remove(player);
+  player = createAvatar({ ...config, name: session.name, badge: badgeForRole(myRole) });
+  player.position.copy(pos);
+  player.rotation.y = rotY;
+  if (namesHidden && player.userData.setNameVisible) player.userData.setNameVisible(false);
+  scene.add(player);
+  controls.setAvatar(player);
+  saveLocalPrefs({ config });
+  if (net && !demoMode) net.sendUpdate(session.name, config);
+}
+
+/** 画面の上に残高を出す（モック。台帳はまだ無い） */
+function initWalletHud() {
+  const bar = document.getElementById('room-info');
+  if (!bar || document.getElementById('vc-balance-hud')) return;
+  const el = document.createElement('span');
+  el.id = 'vc-balance-hud';
+  el.style.cssText = 'margin-left:10px;color:#ffd86b;font-weight:700;';
+  el.title = 'VERSE COIN（いまはこの端末だけのモック）';
+  const paint = () => { el.textContent = `${getWallet().balance.toLocaleString()} VC`; };
+  onWalletChange(paint);
+  paint();
+  bar.appendChild(el);
+
+  // 扉の案内（画面の下中央）
+  if (!document.getElementById('vc-door-hint')) {
+    const hint = document.createElement('div');
+    hint.id = 'vc-door-hint';
+    hint.className = 'hidden';
+    hint.style.cssText = 'position:fixed;left:50%;bottom:120px;transform:translateX(-50%);'
+      + 'padding:8px 16px;border-radius:20px;font-size:13px;color:#eaf6ff;z-index:20;'
+      + 'background:rgba(6,8,20,0.8);border:1px solid rgba(0,255,234,0.6);pointer-events:none;';
+    document.body.appendChild(hint);
+  }
 }
 
 function loop() {
