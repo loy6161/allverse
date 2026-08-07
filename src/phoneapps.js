@@ -447,6 +447,79 @@ export function renderPay(host, { balance, targets, onSend, message }) {
 }
 
 /**
+ * マイルーム（ハウジング）— 2026-08-08・loyさん依頼。
+ * 借りる → 持っている家具を置く → 部屋へ行く、の3つだけ。
+ */
+export function renderHouse(host, { rented, rent, balance, placed, stock, onRent, onPlace, onUndo, onClear, message }) {
+  const note = document.createElement('p');
+  note.className = 'vc-phone-note';
+
+  if (!rented) {
+    note.textContent = `街の西に部屋があります。借りると家具を置けます（${rent} VC・1回きり）。`;
+    host.appendChild(note);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `借りる（${rent} VC）`;
+    b.disabled = balance < rent;
+    b.style.cssText = 'width:100%;padding:11px;font-size:13px;font-weight:700;border-radius:11px;'
+      + 'cursor:pointer;border:none;color:#06121a;background:linear-gradient(90deg,#00ffea,#ff00e5);';
+    b.addEventListener('click', onRent);
+    host.appendChild(b);
+    if (message) {
+      const m = document.createElement('div');
+      m.style.cssText = 'font-size:12px;color:#ff9aa2;margin-top:8px;';
+      m.textContent = message;
+      host.appendChild(m);
+    }
+    return;
+  }
+
+  note.textContent = `あなたの部屋（家具 ${placed}個）。持っている家具を押すと、`
+    + '**いま立っている場所**に置かれます。部屋の中で押してください。';
+  host.appendChild(note);
+  if (message) {
+    const m = document.createElement('div');
+    m.style.cssText = 'font-size:12px;color:#9be34a;margin-bottom:8px;';
+    m.textContent = message;
+    host.appendChild(m);
+  }
+
+  if (!stock.length) {
+    const p = document.createElement('p');
+    p.className = 'vc-phone-note';
+    p.textContent = '置ける家具を持っていません（お店の「家具」やガチャで手に入ります）。';
+    host.appendChild(p);
+  }
+  const grid = document.createElement('div');
+  grid.className = 'vc-phone-list';
+  for (const it of stock) {
+    const card = document.createElement('div');
+    card.className = 'vc-phone-card';
+    card.innerHTML = `<div class="ico">${it.icon}</div><div class="nm">${it.name}</div>`;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = 'ここに置く';
+    b.addEventListener('click', () => onPlace(it));
+    card.appendChild(b);
+    grid.appendChild(card);
+  }
+  host.appendChild(grid);
+
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px;margin-top:10px;';
+  for (const [label, fn] of [['1つ戻す', onUndo], ['全部片づける', onClear]]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.style.cssText = 'flex:1;padding:7px;font-size:11px;border-radius:9px;cursor:pointer;'
+      + 'color:#eaf6ff;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.22);';
+    b.addEventListener('click', fn);
+    row.appendChild(b);
+  }
+  host.appendChild(row);
+}
+
+/**
  * ビデオ通話の画面（2026-08-08）。
  * state: 'idle' 相手を選ぶ / 'ring' 呼び出し中 / 'incoming' 着信 / 'live' 通話中
  */

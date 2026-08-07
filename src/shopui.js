@@ -360,6 +360,7 @@ export function openShop(kind, hooks = {}) {
     btn.disabled = getWallet().balance < GACHA.price;
     btn.addEventListener('click', () => {
       // ⚠ 足りないときに**黙って何もしない**と「壊れている」と思われる（レビューで指摘）
+      if (hooks.onAchievement) hooks.onAchievement('first_gacha', '運試し');
       if (!spend(GACHA.price, 'ガチャ')) {
         msg.textContent = 'ポイントが足りません';
         return;
@@ -415,6 +416,7 @@ export function openShop(kind, hooks = {}) {
     let spinning = false;
     btn.addEventListener('click', () => {
       if (spinning) return;
+      if (hooks.onAchievement) hooks.onAchievement('first_slot', 'ギャンブラー');
       if (!spend(SLOT_BET, 'スロット')) {
         msg.textContent = 'ポイントが足りません';
         return;

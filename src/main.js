@@ -9,6 +9,8 @@ import { initJoinScreen, openCustomizer, setKnownRole } from './join.js';
 import { createShopBuildings, nearestSpot } from './shops3d.js';
 import { createCars, nearestCar, CAR_SPEED } from './car.js';
 import { createCallView } from './callview.js';
+import { createRoom, ROOM_ORIGIN } from './housing.js';
+import { WEATHERS } from './phoneextra.js';
 import { initPhone } from './phone.js';
 import { addRequest, addFriend } from './friends.js';
 import { updateHunger, speedFactor, eat, getHunger, hungerLabel, onHungerChange } from './hunger.js';
@@ -112,6 +114,8 @@ function ensureCity() {
   if (!shopBuildings) shopBuildings = createShopBuildings(scene);
   // 車（2026-08-08）。街は21km²あるので、移動手段として置く
   if (!cars) cars = createCars(scene);
+  // マイルーム（2026-08-08）。借りると家具を置ける
+  if (!house) house = createRoom(scene);
   if (controls) controls.setBounds(city.bounds);
   return city;
 }
@@ -236,6 +240,12 @@ let selfView = null;
 let phoneUI = null;
 /** ビデオ通話の映像（相手のアバターの顔を小さく描く） */
 let callView = null;
+/** マイルーム（ハウジング） */
+let house = null;
+/** ナビの行き先（null なら案内しない） */
+let naviSpot = null;
+/** 天気（自分の画面だけ） */
+let weatherId = 'clear';
 let chatMode = 'local'; // 'local' … 独自チャット / 'youtube' … YouTubeへ一本化
 // キック/BAN/入場拒否の説明。設定されているときは、切断を「通信不良」として扱わない
 let removedReason = '';
@@ -993,6 +1003,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       },
       onFriendOk: ({ name }) => {
         addFriend(name);
+        if (phoneUI) phoneUI.unlockAchievement('first_friend', 'ともだち');
         if (chat) chat.addMessage('', `${name} とフレンドになりました`, { system: true });
       },
       onPay: ({ fromName, amount }) => {
@@ -1531,6 +1542,12 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
         { id: 'friends', name: '連絡帳', icon: '📇', inside: true, run: () => {} },
         { id: 'dm', name: 'メッセージ', icon: '💬', inside: true, run: () => {} },
         { id: 'call', name: '通話', icon: '📹', inside: true, run: () => {} },
+        { id: 'house', name: 'マイルーム', icon: '🏠', inside: true, run: () => {} },
+        { id: 'album', name: 'アルバム', icon: '📸', inside: true, run: () => {} },
+        { id: 'ach', name: '実績', icon: '🏆', inside: true, run: () => {} },
+        { id: 'rank', name: 'ランキング', icon: '📈', inside: true, run: () => {} },
+        { id: 'navi', name: 'ナビ', icon: '🧭', inside: true, run: () => {} },
+        { id: 'weather', name: '天気', icon: '☀', inside: true, run: () => {} },
         { id: 'pay', name: '送金', icon: '💸', inside: true, run: () => {} },
         { id: 'camera', name: 'カメラ', icon: '📷', inside: true, run: () => {} },
         { id: 'wallet', name: 'ウォレット', icon: '💰', inside: true, run: () => {} },
@@ -1554,6 +1571,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       getPeople: () => (remote ? remote.list().map((r) => ({ id: r.id, name: r.name })) : []),
       onSnsPost: (txt, photo) => {
         if (net && !demoMode) net.sendSnsPost(txt, photo);
+        if (phoneUI) phoneUI.unlockAchievement('first_post', 'はじめてのつぶやき');
       },
       onSnsLike: (pid) => {
         if (net && !demoMode) net.sendSnsLike(pid);
@@ -1564,6 +1582,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       /** 通話の合図を送る（呼ぶ・出る・切る） */
       onCall: (kind, to) => {
         if (!net || demoMode) return;
+        if (kind === 'accept' && phoneUI) phoneUI.unlockAchievement('first_call', 'もしもし');
         if (kind === 'call') net.sendCall(to);
         else if (kind === 'accept') net.sendCallAccept(to);
         else net.sendCallEnd(to);
@@ -1577,6 +1596,53 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       callView: () => {
         if (!callView) callView = createCallView(scene);
         return callView.canvas;
+      },
+      /** 部屋を借りる（ポイントを払う） */
+      onRentRoom: (cost) => {
+        const ok = spendPoints(cost, '部屋の家賃');
+        if (ok && phoneUI) phoneUI.unlockAchievement('first_room', '我が家');
+        return ok;
+      },
+      /** 実績が取れたときの知らせ */
+      onAchievement: (label) => {
+        if (chat) chat.addMessage('', `🏆 実績「${label}」を達成しました`, { system: true });
+      },
+      /** ナビ（行き先） */
+      getNavi: () => (naviSpot ? naviSpot.id : null),
+      onNavi: (spot) => {
+        naviSpot = spot;
+        updateNaviHud();
+      },
+      /** 天気（自分の画面だけ） */
+      getWeather: () => weatherId,
+      onWeather: (w) => {
+        weatherId = w.id;
+        applyWeather(w);
+      },
+      /** アルバム用に写真を縮める（そのまま入れると保存の上限に当たる） */
+      shrinkForAlbum: (dataUrl) => new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, 480 / img.width);
+          const cv = document.createElement('canvas');
+          cv.width = Math.round(img.width * scale);
+          cv.height = Math.round(img.height * scale);
+          cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+          resolve(cv.toDataURL('image/jpeg', 0.6));
+        };
+        img.onerror = () => resolve('');
+        img.src = dataUrl;
+      }),
+      /** いま部屋の中に立っているか。置く場所（部屋の中の座標）を返す */
+      getRoomSpot: () => {
+        if (!player || !house) return null;
+        const dx = player.position.x - ROOM_ORIGIN.x;
+        const dz = player.position.z - ROOM_ORIGIN.z;
+        if (Math.abs(dx) > house.half.x - 0.4 || Math.abs(dz) > house.half.z - 0.4) return null;
+        return { x: dx, z: dz, r: player.rotation.y };
+      },
+      onHouseChanged: () => {
+        if (house) house.refresh();
       },
       onFriendReq: (to) => {
         if (net && !demoMode) net.sendFriendReq(to);
@@ -1696,6 +1762,8 @@ function updateShopDoors() {
   const near = nearestSpot(shopBuildings.spots, player.position.x, player.position.z);
   const car = cars ? nearestCar(cars.spots, player.position.x, player.position.z) : null;
   if (cars) cars.update(player);
+  if (house) house.update(player.position.x, player.position.z);
+  if (naviSpot) updateNaviHud();
   // ⚠ 乗り降りでも案内を出し直す。ここを見ていないと、乗ったのに
   //   「E で乗る」のままになる（2026-08-08 実測して気づいた）
   const riding = cars ? cars.ridingId() : '';
@@ -1720,6 +1788,52 @@ function updateShopDoors() {
   }
 }
 
+/**
+ * ナビの案内（2026-08-08）。行き先までの向きと距離を画面の下に出す。
+ * ⚠ 3Dの矢印は作らない。**文字だけ**にして描画を増やさない
+ */
+function updateNaviHud() {
+  let el = document.getElementById('vc-navi-hud');
+  if (!naviSpot) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'vc-navi-hud';
+    el.style.cssText = 'position:fixed;left:50%;bottom:158px;transform:translateX(-50%);'
+      + 'padding:6px 14px;border-radius:16px;font-size:12px;color:#06121a;z-index:20;'
+      + 'background:rgba(255,216,107,0.92);pointer-events:none;font-weight:700;';
+    document.body.appendChild(el);
+  }
+  if (!player) return;
+  const dx = naviSpot.x - player.position.x;
+  const dz = naviSpot.z - player.position.z;
+  const dist = Math.round(Math.hypot(dx, dz));
+  // プレイヤーの向きから見て、目的地がどちらにあるか（8方向の矢印）
+  const target = Math.atan2(dx, dz);
+  let rel = target - player.rotation.y;
+  while (rel > Math.PI) rel -= Math.PI * 2;
+  while (rel < -Math.PI) rel += Math.PI * 2;
+  const arrows = ['⬆', '↗', '➡', '↘', '⬇', '↙', '⬅', '↖'];
+  const idx = Math.round(((rel + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 4)) % 8;
+  el.textContent = `${arrows[idx]} ${naviSpot.name} まで ${dist}m`;
+}
+
+/**
+ * 天気（2026-08-08）。霧の色と濃さを変えるだけ。
+ * ⚠ 霧はシーン全体に効くので、会場の中の見え方も少し変わる。
+ *   濃い霧は遠くを描かなくなるぶん**軽くもなる**
+ */
+function applyWeather(w) {
+  if (!scene.fog) return;
+  const base = city ? 4600 * 0.02 : 200; // 元の見通し距離のめやす
+  scene.fog.color.setHex(w.fog);
+  scene.fog.near = base * w.near * 5;
+  scene.fog.far = base * w.far * 5;
+  if (scene.background && scene.background.isColor) scene.background.setHex(w.fog);
+}
+
 /** 車に乗る・降りる（2026-08-08） */
 function toggleCar() {
   if (!cars) return false;
@@ -1731,6 +1845,7 @@ function toggleCar() {
   if (!nearCarSpot) return false;
   cars.ride(nearCarSpot.id);
   if (chat) chat.addMessage('', '車に乗りました（Eで降りる）', { system: true });
+  if (phoneUI) phoneUI.unlockAchievement('first_drive', 'ドライブ');
   return true;
 }
 
@@ -1749,10 +1864,14 @@ function enterShop(kind, tab) {
     // 飲む（2026-08-08・loyさん「飲む動作まで作る」）。
     // ★ 新しい3Dは作らない。**既存の「乾杯」エモート**（ビールジョッキが出る）を再生する。
     //   他の人の画面にも同じエモートが出るよう、サーバーにも送る
+    onAchievement: (id, label) => {
+      if (phoneUI) phoneUI.unlockAchievement(id, label);
+    },
     onDrink: (item) => {
       if (player && player.userData.playEmote) player.userData.playEmote('cheers');
       if (net && !demoMode) net.sendEmote('cheers');
       // 飲むとお腹が少し回復する（2026-08-08・loyさん「飲食で回復」）
+      if (phoneUI) phoneUI.unlockAchievement('first_drink', '乾杯');
       const after = eat(item && item.id === 9 ? 30 : 20);
       if (chat) chat.addMessage('', `お腹が回復しました（${Math.round(after)}%）`, { system: true });
     },
@@ -1788,7 +1907,10 @@ function initWalletHud() {
   el.style.cssText = 'margin-left:10px;color:#ffd86b;font-weight:700;';
   el.title = 'VERSE COIN（いまはこの端末だけのモック）';
   const paint = () => { el.textContent = `${getWallet().balance.toLocaleString()} VC`; };
-  onWalletChange(paint);
+  onWalletChange(() => {
+    paint();
+    if (getWallet().balance >= 5000 && phoneUI) phoneUI.unlockAchievement('rich', '小金持ち');
+  });
   paint();
   bar.appendChild(el);
 

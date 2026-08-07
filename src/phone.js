@@ -3,7 +3,13 @@ import { itemById } from './catalog.js';
 import { parseAccessories, toggleAccessory } from './accessory.js';
 import {
   renderMap, renderSns, renderMessenger, renderCamera, renderFriends, renderPay, renderCall,
+  renderHouse,
 } from './phoneapps.js';
+import { getHouse, onHouseChange, rentRoom, placeItem, removeLast, clearItems, placeableItems, RENT } from './housing.js';
+import {
+  renderAlbum, addPhoto, removePhoto, renderAchievements, unlock,
+  renderRanking, renderNavi, renderWeather,
+} from './phoneextra.js';
 import { getFriends, onFriendsChange, isFriend, acceptRequest, declineRequest, removeFriend } from './friends.js';
 
 // ============================================================
@@ -234,6 +240,9 @@ export function initPhone(opts = {}) {
     clockEl.textContent = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
   onWalletChange(paintStatus);
+  onHouseChange(() => {
+    if (open && view === 'house') paint();
+  });
   onFriendsChange(() => {
     if (open && (view === 'friends' || view === 'dm' || view === 'pay')) paint();
   });
@@ -513,6 +522,87 @@ export function initPhone(opts = {}) {
           if (opts.onDm) opts.onDm(to, txt);
         },
       });
+    } else if (view === 'album') {
+      header('アルバム');
+      renderAlbum(bodyEl, {
+        onPost: (img) => {
+          if (opts.onSnsPost) opts.onSnsPost('📷 アルバムから', img);
+          view = 'sns';
+          paint();
+        },
+        onDelete: (t) => {
+          removePhoto(t);
+          paint();
+        },
+      });
+    } else if (view === 'ach') {
+      header('実績');
+      renderAchievements(bodyEl);
+    } else if (view === 'rank') {
+      header('ランキング');
+      renderRanking(bodyEl, { posts });
+    } else if (view === 'navi') {
+      header('ナビ');
+      const p = opts.map && opts.map.getPlayer ? opts.map.getPlayer() : null;
+      renderNavi(bodyEl, {
+        current: opts.getNavi ? opts.getNavi() : null,
+        playerPos: p ? { x: p.position.x, z: p.position.z } : { x: 0, z: 0 },
+        onSet: (spot) => {
+          if (opts.onNavi) opts.onNavi(spot);
+          paint();
+        },
+      });
+    } else if (view === 'weather') {
+      header('天気');
+      renderWeather(bodyEl, {
+        current: opts.getWeather ? opts.getWeather() : 'clear',
+        onSet: (w) => {
+          if (opts.onWeather) opts.onWeather(w);
+          paint();
+        },
+      });
+    } else if (view === 'house') {
+      header('マイルーム');
+      const h = getHouse();
+      renderHouse(bodyEl, {
+        rented: h.rented,
+        rent: RENT,
+        balance: getWallet().balance,
+        placed: h.items.length,
+        stock: placeableItems(getWallet().items),
+        message: payMsg,
+        onRent: () => {
+          if (!opts.onRentRoom) return;
+          const ok = opts.onRentRoom(RENT);
+          payMsg = ok ? '' : 'ポイントが足りません';
+          if (ok) rentRoom();
+          paint();
+        },
+        onPlace: (item) => {
+          // ⚠ 置く場所は**いま立っている場所**。部屋の外なら断る
+          const where = opts.getRoomSpot ? opts.getRoomSpot() : null;
+          if (!where) {
+            payMsg = '部屋の中で押してください（街の西にあります）';
+            paint();
+            return;
+          }
+          placeItem(item.id, where.x, where.z, where.r);
+          if (opts.onHouseChanged) opts.onHouseChanged();
+          payMsg = `${item.name} を置きました`;
+          paint();
+        },
+        onUndo: () => {
+          removeLast();
+          if (opts.onHouseChanged) opts.onHouseChanged();
+          paint();
+        },
+        onClear: () => {
+          clearItems();
+          if (opts.onHouseChanged) opts.onHouseChanged();
+          paint();
+        },
+      });
+      payMsg = '';
     } else if (view === 'call') {
       header('ビデオ通話');
       const fr = getFriends();
@@ -547,7 +637,16 @@ export function initPhone(opts = {}) {
     } else if (view === 'camera') {
       header('カメラ');
       renderCamera(bodyEl, {
-        shoot: () => (opts.shoot ? opts.shoot() : ''),
+        shoot: () => {
+          const img = opts.shoot ? opts.shoot() : '';
+          if (img) {
+            // 撮ったらアルバムに残す（縮めてから入れる）
+            if (opts.shrinkForAlbum) opts.shrinkForAlbum(img).then((small) => addPhoto(small || img));
+            else addPhoto(img);
+            if (unlock('first_photo') && opts.onAchievement) opts.onAchievement('カメラマン');
+          }
+          return img;
+        },
         onPostPhoto: (img) => {
           if (opts.onSnsPost) opts.onSnsPost('📷 撮ったよ', img);
           view = 'sns';
@@ -659,6 +758,10 @@ export function initPhone(opts = {}) {
       callPeer = null;
       if (opts.onCallLive) opts.onCallLive(null);
       if (open && view === 'call') paint();
+    },
+    /** 実績を解除する（外の出来事から呼ぶ） */
+    unlockAchievement(id, label) {
+      if (unlock(id) && opts.onAchievement) opts.onAchievement(label);
     },
     /** 送金の結果を出す */
     setPayMessage(text) {
