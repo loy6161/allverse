@@ -141,8 +141,9 @@ function injectStyle() {
   box-shadow: none !important;
   border-radius: 0 !important;
   z-index: auto !important;
-  display: block !important;
 }
+/* ⚠ display は**上書きしない**。上書きすると、中の✕で閉じても消えず
+   （!important が勝つ）、押しても何も起きないように見える（2026-08-08 レビュー指摘） */
 .vc-log-minus { color: #ff9aa2; }
 
 @media (max-width: 640px) {
@@ -251,22 +252,37 @@ export function initPhone(opts = {}) {
    *   閉じるときは必ず元の場所へ返す。返し忘れると次に開いたとき出てこない
    */
   function openHosted(app) {
-    app.run(); // 元のボタンを押す＝画面が開く
+    // ⚠ ボタンは**開閉の切り替え**なので、既に開いているときに押すと閉じてしまう。
+    //   閉じているときだけ押す
+    const found = document.querySelector(app.host);
+    if (!found || getComputedStyle(found).display === 'none') app.run();
     const el = document.querySelector(app.host);
     if (!el) return;
-    hosted = { app, el, parent: el.parentNode, next: el.nextSibling };
+    hosted = { app, el, parent: el.parentNode, next: el.nextSibling, watch: null };
     view = `host:${app.id}`;
     paint();
+    // 中の✕で閉じられたら、スマホのホームへ戻す（空の画面が残らないように）
+    hosted.watch = setInterval(() => {
+      if (!hosted) return;
+      if (getComputedStyle(hosted.el).display === 'none') {
+        releaseHosted();
+        view = 'home';
+        paint();
+      }
+    }, 300);
   }
 
   function releaseHosted() {
     if (!hosted) return;
-    const { app, el, parent, next } = hosted;
+    const { app, el, parent, next, watch } = hosted;
     hosted = null;
+    if (watch) clearInterval(watch);
     el.classList.remove('vc-in-phone');
     if (parent) parent.insertBefore(el, next || null);
-    // もう一度ボタンを押して閉じる（開閉が同じボタンなので、これで元に戻る）
-    if (app.run) app.run();
+    // もう一度ボタンを押して閉じる（開閉が同じボタンなので、これで元に戻る）。
+    // ⚠ **開いているときだけ**押す。スマホの中で✕を押して既に閉じている場合に押すと、
+    //   スマホの外で開き直してしまい、閉じるボタンの無い画面が残る（2026-08-08 レビュー指摘）
+    if (app.run && getComputedStyle(el).display !== 'none') app.run();
   }
 
   function header(title) {
