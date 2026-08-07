@@ -54,6 +54,8 @@ export const SHOP_BUILDINGS = [
     fixtures: [
       { id: 'slot', tab: 'slot', label: 'スロット', at: [-4, -3], color: 0xff5fd2 },
       { id: 'gacha2', tab: 'gacha', label: 'ガチャ', at: [-4, 3], color: 0xffd86b },
+      // バー（2026-08-08・loyさん「飲む動作まで作る」）。VRC側の「バーでビールを飲む」に当たる
+      { id: 'bar', tab: 'bar', label: 'バー', at: [0, -5.5], color: 0xffb35f, wide: true },
     ],
   },
 ];
@@ -98,6 +100,8 @@ export function createShopBuildings(scene) {
   const spots = [];
   const groups = [];
   const disposables = [];
+  /** クリックの当たり判定に使うメッシュ（2026-08-08・loyさん「クリックでもできない？」） */
+  const pickables = [];
 
   // 光の計算をしない材質だけで作る（上の注意書き）
   const mat = (color, side = THREE.FrontSide) =>
@@ -173,7 +177,7 @@ export function createShopBuildings(scene) {
     // ---- 台（カウンター・ガチャ台・スロット台）----
     for (const f of b.fixtures) {
       const [fx, fz] = f.at;
-      const tall = f.tab !== 'shop';
+      const tall = !(f.tab === 'shop' || f.wide);
       const w = tall ? 1.2 : 3.4;
       const h = tall ? 1.8 : 1.1;
       const d = 1.0;
@@ -187,19 +191,25 @@ export function createShopBuildings(scene) {
       tag.scale.multiplyScalar(0.42);
       tag.position.set(fx, h + 0.7, fz);
 
-      spots.push({
+      const spot = {
         id: `${b.id}:${f.id}`,
         label: f.label,
         tab: f.tab,
         shop: b.id,
         x: ox + fx + 1.8, // 台の手前（東側）に立つ
         z: oz + fz,
-      });
+      };
+      spots.push(spot);
+      // 台の本体と光る面をクリックできるようにする（看板スプライトは当たり判定に入れない）
+      box.userData.spot = spot;
+      face.userData.spot = spot;
+      pickables.push(box, face);
     }
   }
 
   return {
     spots,
+    pickables,
     /** プレイヤーの位置を渡す。遠い建物は丸ごと消す（描画を増やさない） */
     update(px, pz) {
       for (const g of groups) {

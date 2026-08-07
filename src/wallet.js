@@ -91,7 +91,71 @@ export function hasItem(itemId) {
   return (read().items[itemId] || 0) > 0;
 }
 
+// ------------------------------------------------------------------
+// 貯まる手段（2026-08-08・loyさんの選択「ログインボーナス（1日1回）」「イベント参加」）
+//
+// ⚠ **これもモック**。この端末の中で日付を見て配っているだけなので、
+//   保存を消せば何度でも受け取れる。本番はサーバーが判定する。
+// ------------------------------------------------------------------
+
+/** 1日1回のログインボーナス */
+export const DAILY_BONUS = 300;
+/** イベントに参加したときのボーナス（同じイベントでは1日1回だけ） */
+export const EVENT_BONUS = 200;
+
+/** その端末の「今日」。日付が変わったかを見るだけなので地域時刻でよい */
+function today() {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+function readClaims() {
+  try {
+    return JSON.parse(localStorage.getItem(CLAIM_KEY) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+
+const CLAIM_KEY = 'vc.wallet.claims';
+
+/**
+ * 1日1回のログインボーナス。受け取ったら金額を返し、今日すでに受け取っていれば 0。
+ * @returns {number}
+ */
+export function claimDailyBonus() {
+  const claims = readClaims();
+  if (claims.daily === today()) return 0;
+  claims.daily = today();
+  try {
+    localStorage.setItem(CLAIM_KEY, JSON.stringify(claims));
+  } catch { /* 保存できなくても配る */ }
+  grant(DAILY_BONUS, 'ログインボーナス');
+  return DAILY_BONUS;
+}
+
+/**
+ * イベント参加のボーナス。**同じイベントでは1日1回**。
+ * @param {string} eventId
+ * @returns {number} 受け取った金額（既に受け取っていれば 0）
+ */
+export function claimEventBonus(eventId) {
+  if (!eventId) return 0;
+  const claims = readClaims();
+  const key = `ev:${eventId}`;
+  if (claims[key] === today()) return 0;
+  claims[key] = today();
+  try {
+    localStorage.setItem(CLAIM_KEY, JSON.stringify(claims));
+  } catch { /* 保存できなくても配る */ }
+  grant(EVENT_BONUS, 'イベント参加');
+  return EVENT_BONUS;
+}
+
 /** モックを初期状態に戻す（試すとき用） */
 export function resetWallet() {
   write({ balance: START_BALANCE, items: {}, log: [] });
+  try {
+    localStorage.removeItem(CLAIM_KEY);
+  } catch { /* 消せなくてもよい */ }
 }

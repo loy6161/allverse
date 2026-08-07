@@ -176,7 +176,7 @@ export function openShop(kind, hooks = {}) {
   paintBalance();
 
   const TABS = kind === 'casino'
-    ? [['slot', 'スロット'], ['gacha', 'ガチャ'], ['bag', '持ち物']]
+    ? [['slot', 'スロット'], ['bar', 'バー'], ['gacha', 'ガチャ'], ['bag', '持ち物']]
     : [['shop', 'お店'], ['gacha', 'ガチャ'], ['bag', '持ち物']];
 
   let current = TABS.some(([id]) => id === startTab) ? startTab : TABS[0][0];
@@ -197,9 +197,14 @@ export function openShop(kind, hooks = {}) {
     }
   }
 
+  // ⚠ 画面を作り直すと出したばかりの一言が消える（買った直後・飲んだ直後）。
+  //   作り直しをまたいで1回だけ出せるように、ここに置いておく
+  let flash = '';
   function msgBox() {
     const m = document.createElement('div');
     m.className = 'vc-shop-msg';
+    m.textContent = flash;
+    flash = '';
     return m;
   }
 
@@ -249,7 +254,7 @@ export function openShop(kind, hooks = {}) {
               return;
             }
             addItem(it.id, 1);
-            msg.textContent = `${it.name} を買いました`;
+            flash = `${it.name} を買いました`;
             paintBody();
           });
         }
@@ -306,7 +311,7 @@ export function openShop(kind, hooks = {}) {
         btn.textContent = on ? '外す' : '着ける';
         btn.addEventListener('click', () => {
           wear(it);
-          msg.textContent = on ? `${it.name} を外しました` : `${it.name} を着けました`;
+          flash = on ? `${it.name} を外しました` : `${it.name} を着けました`;
           paintBody();
         });
         card.appendChild(btn);
@@ -434,9 +439,73 @@ export function openShop(kind, hooks = {}) {
     bodyEl.appendChild(msg);
   }
 
+  /**
+   * バー（2026-08-08・loyさん「飲む動作まで作る」）。
+   * 買うとその場で飲める。**飲むと1つ減る**（消えもの）。
+   * ★ 3Dは作っていない。既存の「乾杯」エモート（ビールジョッキが出る）を再生している
+   */
+  function renderBar() {
+    const wallet = getWallet();
+    const note = document.createElement('p');
+    note.className = 'vc-shop-note';
+    note.textContent = '買うと持ち物に入ります。「飲む」を押すと1つ減って、乾杯の動作をします'
+      + '（まわりの人にも見えます）。';
+    bodyEl.appendChild(note);
+
+    const msg = msgBox();
+    const grid = document.createElement('div');
+    grid.className = 'vc-shop-grid';
+    for (const it of CATALOG.filter((x) => x.cat === 'drink')) {
+      const have = wallet.items[it.id] || 0;
+      const card = document.createElement('div');
+      card.className = 'vc-shop-card';
+      card.innerHTML = `
+        <div class="vc-shop-ico">${it.icon}</div>
+        <div class="vc-shop-name">${it.name}</div>
+        <div class="vc-shop-price">${it.price} ${COIN}</div>
+        <div class="vc-shop-owned">${have}個</div>
+      `;
+      const buy = document.createElement('button');
+      buy.type = 'button';
+      buy.className = 'vc-shop-buy';
+      buy.style.marginTop = '6px';
+      buy.textContent = '買う';
+      buy.disabled = wallet.balance < it.price;
+      buy.addEventListener('click', () => {
+        if (!spend(it.price, `バー: ${it.name}`)) {
+          msg.textContent = `ポイントが足りません（${it.price} ${COIN} 必要）`;
+          return;
+        }
+        addItem(it.id, 1);
+        flash = `${it.name} を買いました`;
+        paintBody();
+      });
+      card.appendChild(buy);
+
+      const drink = document.createElement('button');
+      drink.type = 'button';
+      drink.className = 'vc-shop-buy';
+      drink.style.marginTop = '6px';
+      drink.textContent = '飲む';
+      drink.disabled = have <= 0;
+      drink.addEventListener('click', () => {
+        if ((getWallet().items[it.id] || 0) <= 0) return;
+        addItem(it.id, -1); // 飲んだら減る
+        if (hooks.onDrink) hooks.onDrink(it);
+        flash = `${it.name} を飲みました`;
+        paintBody();
+      });
+      card.appendChild(drink);
+      grid.appendChild(card);
+    }
+    bodyEl.appendChild(grid);
+    bodyEl.appendChild(msg);
+  }
+
   function paintBody() {
     bodyEl.innerHTML = '';
     if (current === 'shop') renderShop();
+    else if (current === 'bar') renderBar();
     else if (current === 'bag') renderBag();
     else if (current === 'gacha') renderGacha();
     else if (current === 'slot') renderSlot();

@@ -8,7 +8,7 @@ import { preloadAvatars } from './avatar_glb.js';
 import { initJoinScreen, openCustomizer, setKnownRole } from './join.js';
 import { createShopBuildings, nearestSpot } from './shops3d.js';
 import { openShop, closeShop, isShopOpen } from './shopui.js';
-import { getWallet, onWalletChange } from './wallet.js';
+import { getWallet, onWalletChange, claimDailyBonus, claimEventBonus } from './wallet.js';
 import { openPlacePicker } from './placepick.js';
 import { saveLocalPrefs } from './prefs.js';
 import { getChatEmote } from './bubbletime.js';
@@ -1060,8 +1060,14 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
 
   updateCount(null);
   hud.classList.remove('hidden');
-  // 残高の表示と、扉の案内を用意する（2026-08-07・モック）
+  // 残高の表示と、台の案内を用意する（2026-08-07・モック）
   initWalletHud();
+  // ポイントを配る（2026-08-08・loyさんの選択「ログインボーナス」「イベント参加」）。
+  // ⚠ いまは端末の中で日付を見ているだけのモック。本番はサーバーが判定する
+  const daily = claimDailyBonus();
+  if (daily) chat.addMessage('', `ログインボーナス ${daily} VC を受け取りました`, { system: true });
+  const evb = claimEventBonus(eventId || '');
+  if (evb) chat.addMessage('', `イベント参加ボーナス ${evb} VC を受け取りました`, { system: true });
   chatRoot.classList.remove('hidden');
   avatarBtn.classList.remove('hidden');
 
@@ -1340,6 +1346,46 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
     );
   });
 
+  // ---- 台をクリックしても開くようにする（2026-08-08）----
+  // loyさん「Eだけじゃなくてクリックでもできない？ たぶんキー押すのは一瞬気づかない。
+  //          初見はみんなクリックしちゃうと思う」
+  // ⚠ 画面のドラッグは視点回しに使っているので、**押して離すまでに動いていない**ときだけ
+  //   クリックとみなす（少しでも動いたら視点回し）。
+  {
+    const ray = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    let downAt = null;
+    const CLICK_MOVE_PX = 6;
+    const CLICK_MS = 500;
+    /** クリックで開けてよい距離。遠すぎる台を押しても開かない（近づいてもらう） */
+    const CLICK_RANGE = 8;
+
+    renderer.domElement.addEventListener('pointerdown', (e) => {
+      downAt = { x: e.clientX, y: e.clientY, t: Date.now() };
+    });
+    renderer.domElement.addEventListener('pointerup', (e) => {
+      const d = downAt;
+      downAt = null;
+      if (!d || !shopBuildings || !player) return;
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > CLICK_MOVE_PX) return; // ドラッグ
+      if (Date.now() - d.t > CLICK_MS) return; // 長押し
+      const rect = renderer.domElement.getBoundingClientRect();
+      ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      ray.setFromCamera(ndc, camera);
+      const hit = ray.intersectObjects(shopBuildings.pickables, false)[0];
+      const spot = hit && hit.object.userData.spot;
+      if (!spot) return;
+      const far = Math.hypot(spot.x - player.position.x, spot.z - player.position.z) > CLICK_RANGE;
+      if (far) {
+        // 押したのに何も起きないと壊れて見えるので、理由を出す
+        if (chat) chat.addMessage('', `${spot.label} に近づいてください`, { system: true });
+        return;
+      }
+      enterShop(spot.shop, spot.tab);
+    });
+  }
+
   // Eキー: お店・カジノの扉の前で押すと入る（2026-08-07・モック）
   window.addEventListener('keydown', (e) => {
     const el = document.activeElement;
@@ -1419,7 +1465,7 @@ function updateShopDoors() {
   const hint = document.getElementById('vc-door-hint');
   if (!hint) return;
   if (near) {
-    hint.textContent = `${near.label} — E で開く`;
+    hint.textContent = `${near.label} — クリック / E で開く`;
     hint.classList.remove('hidden');
   } else {
     hint.classList.add('hidden');
@@ -1437,6 +1483,13 @@ function enterShop(kind, tab) {
     onWear: (config) => {
       session.config = { ...config };
       applyMyLook(session.config);
+    },
+    // 飲む（2026-08-08・loyさん「飲む動作まで作る」）。
+    // ★ 新しい3Dは作らない。**既存の「乾杯」エモート**（ビールジョッキが出る）を再生する。
+    //   他の人の画面にも同じエモートが出るよう、サーバーにも送る
+    onDrink: () => {
+      if (player && player.userData.playEmote) player.userData.playEmote('cheers');
+      if (net && !demoMode) net.sendEmote('cheers');
     },
   });
 }
