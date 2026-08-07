@@ -949,6 +949,27 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
           ? `${by} によってBANされました（理由: ${why}）。このアカウントでは入れません。`
           : `${by} によってBANされました。このアカウントでは入れません。`;
       },
+      // ---- スマホのアプリ（2026-08-08）----
+      onSnsList: (list) => {
+        if (phoneUI) phoneUI.setPosts(list);
+      },
+      onSnsPost: (post) => {
+        if (phoneUI) phoneUI.addPost(post);
+      },
+      onSnsLike: ({ pid, likes }) => {
+        if (phoneUI) phoneUI.updateLikes(pid, likes);
+      },
+      onPhoneDenied: (why) => {
+        if (phoneUI) phoneUI.setDenied(why);
+      },
+      onDm: (msg) => {
+        if (!phoneUI) return;
+        phoneUI.addDm(msg);
+        // 受け取ったことに気づけるように、チャット欄にも1行出す
+        if (!msg.mine && chat) {
+          chat.addMessage('', `${msg.fromName} からメッセージが届きました（📱→メッセージ）`, { system: true });
+        }
+      },
       onChat: (m) => {
         // YouTube由来の発言は、自分のものでも吹き出しを出す。
         // 自分はYouTube側に書いたので、会場の画面にはまだ何も出ていない
@@ -1430,22 +1451,33 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
     const room = grab((b) => b.textContent.trim() === '🚪');
     const settings = grab((b) => b.textContent.trim() === '⚙');
 
-    const app = (id, name, icon, btn) => ({
+    /**
+     * 既にある画面を**スマホの中**で開くアプリ。
+     * ⚠ host はその画面の要素を指すセレクタ。スマホの中へ借りてきて、戻るとき元の場所へ返す
+     */
+    const app = (id, name, icon, btn, host) => ({
       id,
       name,
       icon,
+      host,
       run: () => btn && btn.click(),
       show: () => Boolean(btn) && btn.style.display !== 'none',
     });
 
     phoneUI = initPhone({
       apps: [
-        app('avatar', 'アバター', '👤', avatar),
+        // ⚠ アバターの着せ替えは画面いっぱいの別画面（自分の姿を大きく見る必要がある）。
+        //   スマホの中には入れず全画面で開く（閉じるボタンも元からある）
+        { id: 'avatar', name: 'アバター', icon: '👤', run: () => avatar && avatar.click() },
         { id: 'bag', name: '持ち物', icon: '🎒', inside: true, run: () => {} },
+        { id: 'map', name: 'マップ', icon: '🗺', inside: true, run: () => {} },
+        { id: 'sns', name: 'SNS', icon: '🐦', inside: true, run: () => {} },
+        { id: 'dm', name: 'メッセージ', icon: '💬', inside: true, run: () => {} },
+        { id: 'camera', name: 'カメラ', icon: '📷', inside: true, run: () => {} },
         { id: 'wallet', name: 'ウォレット', icon: '💰', inside: true, run: () => {} },
-        app('settings', '設定', '⚙', settings),
-        app('room', 'ルーム', '🚪', room),
-        app('help', 'ヘルプ', '❓', help),
+        app('settings', '設定', '⚙', settings, '.vc-set-panel'),
+        app('room', 'ルーム', '🚪', room, '.vc-room-panel'),
+        app('help', 'ヘルプ', '❓', help, '.vc-help-panel'),
       ],
       getConfig: () => session.config,
       onWear: (config) => {
@@ -1453,8 +1485,47 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
         applyMyLook(session.config);
       },
       // 開いている間は歩かせない（画面の裏で移動して迷子になるため）
-      onOpenChange: (open) => {
-        if (controls && controls.setInputEnabled) controls.setInputEnabled(!open);
+      onOpenChange: (isOpen) => {
+        if (controls && controls.setInputEnabled) controls.setInputEnabled(!isOpen);
+        // 開いたときにSNSの最新をもらう（開いていない間は取りに行かない）
+        if (isOpen && net && !demoMode) net.requestSns();
+      },
+      getMyId: () => myId,
+      /** メッセンジャーの相手＝いま同じ会場に居る人（自分以外） */
+      getPeople: () => (remote ? remote.list().map((r) => ({ id: r.id, name: r.name })) : []),
+      onSnsPost: (txt, photo) => {
+        if (net && !demoMode) net.sendSnsPost(txt, photo);
+      },
+      onSnsLike: (pid) => {
+        if (net && !demoMode) net.sendSnsLike(pid);
+      },
+      onDm: (to, txt) => {
+        if (net && !demoMode) net.sendDm(to, txt);
+      },
+      /**
+       * カメラ（写真）。いまの3Dの絵をそのまま画像にする。
+       * ⚠ 描いた直後でないと**真っ黒になる**（WebGLは描画のたびに中身が捨てられるため）。
+       *   その場で1コマ描き直してから取り出す
+       */
+      shoot: () => {
+        try {
+          renderer.render(scene, camera);
+          return renderer.domElement.toDataURL('image/png');
+        } catch {
+          return '';
+        }
+      },
+      map: {
+        getPlayer: () => player,
+        getVenue: () => CLUB_AREA,
+        getShops: () => (shopBuildings
+          ? shopBuildings.spots.map((sp) => ({
+            x: sp.x,
+            z: sp.z,
+            label: sp.label,
+            color: sp.shop === 'casino' ? '#ff5fd2' : '#00ffea',
+          }))
+          : []),
       },
     });
   }

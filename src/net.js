@@ -403,6 +403,26 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
         case 'chat':
           if (h.onChat) h.onChat({ id: msg.id, n: msg.n, txt: msg.txt, scope: msg.sc || 'local' });
           break;
+        // ---- スマホのアプリ（2026-08-08）----
+        // SNS（Xのような投稿）とメッセンジャー（1対1）。どちらもサーバーが配る
+        case 'sns-list':
+          if (h.onSnsList) h.onSnsList(msg.posts || []);
+          break;
+        case 'sns-post':
+          if (h.onSnsPost) h.onSnsPost(msg.post);
+          break;
+        case 'sns-like':
+          if (h.onSnsLike) h.onSnsLike({ pid: msg.pid, likes: msg.likes });
+          break;
+        case 'sns-denied':
+        case 'dm-denied':
+          if (h.onPhoneDenied) h.onPhoneDenied(msg.why || '');
+          break;
+        case 'dm':
+          if (h.onDm) {
+            h.onDm({ from: msg.from, fromName: msg.fromName, to: msg.to, txt: msg.txt, at: msg.at, mine: Boolean(msg.mine) });
+          }
+          break;
         // 合言葉が発行された（YouTubeのチャットに打つと本人と繋がる）
         case 'yt-code':
           if (h.onYtCode) h.onYtCode({ ok: msg.ok, code: msg.code, expiresAt: msg.expiresAt, why: msg.why });
@@ -601,6 +621,28 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     send({ t: 'emote', e: id });
   }
 
+  // ---- スマホのアプリ（2026-08-08）----
+  /** SNSの投稿一覧をもらう */
+  function requestSns() {
+    if (joined) send({ t: 'sns-list' });
+  }
+  /** SNSに投稿する（140文字まで。長さはサーバーでも切る） */
+  function sendSnsPost(txt, photo = false) {
+    const s = String(txt == null ? '' : txt).slice(0, 140);
+    if (!joined || !s) return;
+    send({ t: 'sns-post', txt: s, photo: Boolean(photo) });
+  }
+  /** いいね（もう一度押すと外れる） */
+  function sendSnsLike(pid) {
+    if (joined && pid) send({ t: 'sns-like', pid });
+  }
+  /** 1対1のメッセージ。宛先は同じイベントに居る人のid */
+  function sendDm(to, txt) {
+    const s = String(txt == null ? '' : txt).slice(0, 200);
+    if (!joined || !to || !s) return;
+    send({ t: 'dm', to, txt: s });
+  }
+
   /**
    * 負荷の測定（管理者のみ・2026-08-06追加）。
    * n人ぶんの仮想ユーザーをサーバーの中に作って、本物と同じ配信処理を回してもらう。
@@ -727,6 +769,10 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     sendChat,
     sendUpdate,
     sendEmote,
+    requestSns,
+    sendSnsPost,
+    sendSnsLike,
+    sendDm,
     sendScreen,
     sendLoadSim,
     sendPlayback,

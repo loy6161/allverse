@@ -1,6 +1,7 @@
 import { getWallet, onWalletChange } from './wallet.js';
 import { itemById } from './catalog.js';
 import { parseAccessories, toggleAccessory } from './accessory.js';
+import { renderMap, renderSns, renderMessenger, renderCamera } from './phoneapps.js';
 
 // ============================================================
 // スマホ（2026-08-08・loyさん発案）
@@ -47,7 +48,7 @@ function injectStyle() {
 /* 筐体（loyさん「スマホの筐体作る」） */
 .vc-phone {
   position: fixed; right: 24px; bottom: 96px; z-index: 62;
-  width: 320px; height: 620px;
+  width: 360px; height: 640px;
   max-height: calc(100vh - 130px);
   border-radius: 38px;
   padding: 12px 10px;
@@ -120,6 +121,28 @@ function injectStyle() {
 }
 .vc-log-amt { margin-left: auto; font-weight: 700; }
 .vc-log-plus { color: #9be34a; }
+
+/* ---- 既にある画面をスマホの中に収める（2026-08-08）----
+   ⚠ 元の画面は position:fixed で画面の隅に出るように作られている。
+   スマホの中に入れる間だけ、位置と装飾を打ち消す（元のCSSは触らない）。
+   これをやらないと、スマホの外に出たまま**閉じるボタンが無くなる**
+   （開閉ボタンをスマホの中へ移したため。loyさん「開くと閉じれなくなる」） */
+.vc-in-phone {
+  position: static !important;
+  inset: auto !important;
+  transform: none !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 4px 0 !important;
+  border: none !important;
+  background: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  z-index: auto !important;
+  display: block !important;
+}
 .vc-log-minus { color: #ff9aa2; }
 
 @media (max-width: 640px) {
@@ -171,6 +194,16 @@ export function initPhone(opts = {}) {
 
   let open = false;
   let view = 'home';
+  /** 地図の描き直しを止めるための後始末 */
+  let stopMap = null;
+  /** SNSの投稿（サーバーから届いたもの。新しい順） */
+  let posts = [];
+  /** SNS・DMで断られた理由（1回だけ出す） */
+  let denied = '';
+  /** メッセンジャーのやり取り（相手id → メッセージの配列）。**この端末だけ**に残る */
+  const threads = {};
+  /** いま開いている相手 */
+  let dmWith = null;
 
   const paintStatus = () => {
     coinEl.textContent = `${getWallet().balance.toLocaleString()} VC`;
@@ -195,13 +228,45 @@ export function initPhone(opts = {}) {
           paint();
           return;
         }
-        // 外の画面を開くアプリ。スマホは閉じる（画面が重ならないように）
+        if (app.host) {
+          // 既にある画面を**スマホの中で**開く（loyさん「スマホの中で開くようにしないとだね」）
+          openHosted(app);
+          return;
+        }
+        // 画面いっぱいで開くもの（アバターの着せ替えなど）。スマホは閉じる
         setOpen(false);
         app.run();
       });
       grid.appendChild(b);
     }
     bodyEl.appendChild(grid);
+  }
+
+  /** いまスマホの中に借りている画面（戻すときに使う） */
+  let hosted = null;
+
+  /**
+   * 既にある画面をスマホの中に入れて開く。
+   * ⚠ 作り直さない。**元の要素をそのまま借りてくる**（中の細かい挙動を写し損ねないため）。
+   *   閉じるときは必ず元の場所へ返す。返し忘れると次に開いたとき出てこない
+   */
+  function openHosted(app) {
+    app.run(); // 元のボタンを押す＝画面が開く
+    const el = document.querySelector(app.host);
+    if (!el) return;
+    hosted = { app, el, parent: el.parentNode, next: el.nextSibling };
+    view = `host:${app.id}`;
+    paint();
+  }
+
+  function releaseHosted() {
+    if (!hosted) return;
+    const { app, el, parent, next } = hosted;
+    hosted = null;
+    el.classList.remove('vc-in-phone');
+    if (parent) parent.insertBefore(el, next || null);
+    // もう一度ボタンを押して閉じる（開閉が同じボタンなので、これで元に戻る）
+    if (app.run) app.run();
   }
 
   function header(title) {
@@ -212,6 +277,7 @@ export function initPhone(opts = {}) {
     back.className = 'vc-phone-back';
     back.textContent = '← ホーム';
     back.addEventListener('click', () => {
+      releaseHosted();
       view = 'home';
       paint();
     });
@@ -294,14 +360,78 @@ export function initPhone(opts = {}) {
   }
 
   function paint() {
+    // ⚠ 借りている画面は innerHTML='' で消してはいけない（元に返せなくなる）。
+    //   先に外へ逃がしてから中身を作り直す
+    if (hosted && hosted.el.parentNode === bodyEl) bodyEl.removeChild(hosted.el);
     bodyEl.innerHTML = '';
     paintStatus();
+    if (hosted && view === `host:${hosted.app.id}`) {
+      header(hosted.app.name);
+      hosted.el.classList.add('vc-in-phone');
+      bodyEl.appendChild(hosted.el);
+      return;
+    }
+    if (stopMap) {
+      stopMap();
+      stopMap = null;
+    }
     if (view === 'bag') renderBag();
     else if (view === 'wallet') renderWallet();
-    else renderHome();
+    else if (view === 'map') {
+      header('マップ');
+      stopMap = renderMap(bodyEl, opts.map || {});
+    } else if (view === 'sns') {
+      header('SNS');
+      renderSns(bodyEl, {
+        posts,
+        myId: opts.getMyId ? opts.getMyId() : '',
+        denied,
+        onPost: (txt) => {
+          if (opts.onSnsPost) opts.onSnsPost(txt);
+        },
+        onLike: (pid) => {
+          if (opts.onSnsLike) opts.onSnsLike(pid);
+        },
+      });
+      denied = '';
+    } else if (view === 'dm') {
+      header('メッセンジャー');
+      const people = (opts.getPeople ? opts.getPeople() : []).filter((x) => x.id !== (opts.getMyId ? opts.getMyId() : ''));
+      const active = dmWith ? people.find((x) => x.id === dmWith) || { id: dmWith, name: '相手' } : null;
+      // 開いたら既読にする
+      if (active && threads[active.id]) for (const m of threads[active.id]) m.read = true;
+      renderMessenger(bodyEl, {
+        people,
+        threads,
+        active,
+        myId: opts.getMyId ? opts.getMyId() : '',
+        onOpen: (id) => {
+          dmWith = id;
+          paint();
+        },
+        onBack: () => {
+          dmWith = null;
+          paint();
+        },
+        onSend: (to, txt) => {
+          if (opts.onDm) opts.onDm(to, txt);
+        },
+      });
+    } else if (view === 'camera') {
+      header('カメラ');
+      renderCamera(bodyEl, {
+        shoot: () => (opts.shoot ? opts.shoot() : ''),
+        onPostPhoto: () => {
+          if (opts.onSnsPost) opts.onSnsPost('📷 写真を撮りました', true);
+          view = 'sns';
+          paint();
+        },
+      });
+    } else renderHome();
   }
 
   function setOpen(next) {
+    if (!next) releaseHosted(); // 閉じる前に借りている画面を返す
     open = next;
     phone.style.display = open ? 'flex' : 'none';
     if (open) {
@@ -312,6 +442,7 @@ export function initPhone(opts = {}) {
   }
 
   phone.querySelector('#vc-phone-home').addEventListener('click', () => {
+    releaseHosted();
     view = 'home';
     paint();
   });
@@ -332,6 +463,47 @@ export function initPhone(opts = {}) {
 
   return {
     isOpen: () => open,
+    /** SNSの一覧が届いた */
+    setPosts(list) {
+      posts = Array.isArray(list) ? list : [];
+      if (open && view === 'sns') paint();
+    },
+    /** 新しい投稿が1件届いた */
+    addPost(post) {
+      if (!post) return;
+      posts.unshift(post);
+      posts = posts.slice(0, 50);
+      if (open && view === 'sns') paint();
+    },
+    /** いいねの数が変わった */
+    updateLikes(pid, count) {
+      const p = posts.find((x) => x.pid === pid);
+      if (!p) return;
+      // 数だけ届くので、自分が押したかどうかは配列の長さで持ち直す
+      p.likes = new Array(count).fill('?');
+      if (open && view === 'sns') paint();
+    },
+    /** 断られた理由（投稿できない等） */
+    setDenied(why) {
+      denied = why || '';
+      if (open && view === 'sns') paint();
+    },
+    /** 1対1のメッセージが届いた／送った */
+    addDm(msg) {
+      const other = msg.mine ? msg.to : msg.from;
+      if (!threads[other]) threads[other] = [];
+      threads[other].push({ txt: msg.txt, mine: Boolean(msg.mine), at: msg.at, read: Boolean(msg.mine) });
+      if (open && view === 'dm') paint();
+      return other;
+    },
+    /** 未読の合計（バッジ用） */
+    unreadCount() {
+      let n = 0;
+      for (const id of Object.keys(threads)) {
+        n += threads[id].filter((m) => !m.mine && !m.read).length;
+      }
+      return n;
+    },
     setOpen,
     /** 持ち物をすぐ開く（他から呼べるように） */
     openBag() {

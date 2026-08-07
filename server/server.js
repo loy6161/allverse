@@ -2214,6 +2214,124 @@ function handleLoadSim(client, msg) {
   send(client.ws, { t: 'loadsim', running: true, ...started, max: MAX_VIRTUAL, maxShown: MAX_SHOWN });
 }
 
+// ------------------------------------------------------------
+// SNS（Xのような投稿）とメッセンジャー（1対1） — **モック**（2026-08-08）
+//
+// loyさん「スマホ機能で……メッセンジャー（1対1でのチャット）／SNS（Xみたいに投稿できる）」。
+// イメージは GTA6（街の中でスマホを開くと世界がある）。
+//
+// ⚠ **保存しない。** 投稿はサーバーのメモリに最新200件だけ持ち、再起動で消える。
+//   モックとして「流れが成立するか」を見るためのもので、DBに残す設計は
+//   通報・削除・保存期間の話とセットで決める必要がある（先に決めずに残さない）。
+//
+// ⚠ 投稿もDMも**イベント（会場）の中だけ**に届く。全ルームに配る:
+//   SNSは「街の掲示板」なので同じイベントの全員に見せる。DMは相手1人だけ。
+// ------------------------------------------------------------
+
+/** イベントid → 投稿の配列（新しい順） */
+const posts = new Map();
+const MAX_POSTS = 200;
+const MAX_POST_LEN = 140;
+/** 連投よけ。1人あたりの投稿間隔 */
+const POST_INTERVAL_MS = 3000;
+
+function postsOf(eventId) {
+  if (!posts.has(eventId)) posts.set(eventId, []);
+  return posts.get(eventId);
+}
+
+/**
+ * その人に見せる投稿。
+ * ⚠ ブロックは相互不可視だが、**投稿主はもう居ないかもしれない**（接続が切れている）。
+ *   そのため「読む側のブロック一覧に載っているか」だけで落とす。
+ *   投稿主側のブロックは、その人が接続していれば配信時に効いている
+ */
+function visiblePostsFor(client) {
+  return postsOf(client.eventId)
+    .filter((p) => !client.blocks.has(p.email ? `e:${p.email}` : `g:${p.id}`))
+    .slice(0, 50);
+}
+
+function handleSnsList(client) {
+  send(client.ws, { t: 'sns-list', posts: visiblePostsFor(client) });
+}
+
+function handleSnsPost(client, msg) {
+  if (client.role === 'guest') {
+    send(client.ws, { t: 'sns-denied', why: 'ゲストは投稿できません（ログインが必要です）' });
+    return;
+  }
+  const txt = clampString(msg.txt, MAX_POST_LEN).trim();
+  if (!txt) return;
+  const now = Date.now();
+  if (client.lastPostAt && now - client.lastPostAt < POST_INTERVAL_MS) {
+    send(client.ws, { t: 'sns-denied', why: '少し間を空けてください' });
+    return;
+  }
+  client.lastPostAt = now;
+  const post = {
+    pid: `p${now.toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`,
+    id: client.id,
+    n: client.n,
+    email: client.email || '',
+    role: client.role,
+    txt,
+    // 写真（データURL）は重いので載せない。代わりに「写真つき」の印だけ持つ
+    photo: Boolean(msg.photo),
+    t: now,
+    likes: [],
+  };
+  const list = postsOf(client.eventId);
+  list.unshift(post);
+  if (list.length > MAX_POSTS) list.length = MAX_POSTS;
+  // 同じイベントの全員へ（ブロック関係は受け取り側で落とす）
+  broadcastToEvent(client.eventId, { t: 'sns-post', post }, null, client);
+}
+
+function handleSnsLike(client, msg) {
+  const list = postsOf(client.eventId);
+  const post = list.find((p) => p.pid === msg.pid);
+  if (!post) return;
+  const i = post.likes.indexOf(client.id);
+  if (i >= 0) post.likes.splice(i, 1);
+  else post.likes.push(client.id);
+  broadcastToEvent(client.eventId, { t: 'sns-like', pid: post.pid, likes: post.likes.length });
+}
+
+/**
+ * メッセンジャー（1対1）。
+ * ⚠ 宛先は**同じイベントに居る人**に限る。居ない相手には送れない
+ *   （知らない人に一方的に送りつける道を作らないため）。
+ * ⚠ ブロックしている相手とはやり取りできない。
+ * ⚠ サーバーには残さない（履歴は各自のブラウザだけ）。
+ */
+function handleDm(client, msg) {
+  if (client.role === 'guest') {
+    send(client.ws, { t: 'dm-denied', why: 'ゲストは送れません（ログインが必要です）' });
+    return;
+  }
+  const txt = clampString(msg.txt, MAX_TXT_LEN).trim();
+  const to = String(msg.to || '');
+  if (!txt || !to) return;
+  let target = null;
+  for (const members of rooms.values()) {
+    for (const c of members.values()) {
+      if (c.id === to && c.eventId === client.eventId) target = c;
+    }
+  }
+  if (!target) {
+    send(client.ws, { t: 'dm-denied', why: '相手が見つかりません（退場したかもしれません）' });
+    return;
+  }
+  if (isBlockedBetween(client, target)) {
+    send(client.ws, { t: 'dm-denied', why: '送れません' });
+    return;
+  }
+  const line = { t: 'dm', from: client.id, fromName: client.n, to, txt, at: Date.now() };
+  send(target.ws, line);
+  send(client.ws, { ...line, mine: true });
+}
+
 const HANDLERS = {
   join: handleJoin,
   loadsim: handleLoadSim,
@@ -2237,6 +2355,10 @@ const HANDLERS = {
   'event-delete': handleEventDelete,
   move: handleMove,
   events: handleEventsRequest,
+  'sns-list': handleSnsList,
+  'sns-post': handleSnsPost,
+  'sns-like': handleSnsLike,
+  dm: handleDm,
   block: handleBlock,
   unblock: handleUnblock,
   kick: handleKick,
