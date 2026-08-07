@@ -668,7 +668,14 @@ export function initPhone(opts = {}) {
   }
 
   function setOpen(next) {
-    if (!next) releaseHosted(); // 閉じる前に借りている画面を返す
+    if (!next) {
+      releaseHosted(); // 閉じる前に借りている画面を返す
+      // ⚠ マップは0.5秒ごとに描き直している。閉じたまま回り続けないよう止める
+      if (stopMap) {
+        stopMap();
+        stopMap = null;
+      }
+    }
     open = next;
     phone.style.display = open ? 'flex' : 'none';
     if (open) {

@@ -35,12 +35,25 @@ export function createCallView(scene) {
   renderer.setSize(SIZE, SIZE, false);
   const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 40);
 
-  let target = null;
+  /**
+   * ⚠ アバターの入れ物そのものは持たない。**毎回ひき直す**。
+   *   見た目を変えた人は入れ物ごと作り直されるので、掴んだままだと
+   *   壊れた映像が固まって残る（2026-08-08 検証役の指摘）
+   */
+  let resolve = null;
   let timer = null;
+  let onLost = null;
   const head = new THREE.Vector3();
 
   function draw() {
-    if (!target) return;
+    const target = resolve ? resolve() : null;
+    if (!target || !target.parent) {
+      // 相手が退室した／見えなくなった → 回し続けない
+      const cb = onLost;
+      stop();
+      if (cb) cb();
+      return;
+    }
     // 顔の高さ（アバターの目の高さは約0.79m。身長の倍率も掛かる）
     target.getWorldPosition(head);
     const scale = target.scale.x || 1;
@@ -54,21 +67,31 @@ export function createCallView(scene) {
     renderer.render(scene, camera);
   }
 
+  function stop() {
+    resolve = null;
+    onLost = null;
+    if (timer) clearInterval(timer);
+    timer = null;
+  }
+
   return {
     canvas,
-    /** 誰を映すか（アバターの入れ物）。null で止める */
-    setTarget(obj) {
-      target = obj || null;
-      if (target && !timer) timer = setInterval(draw, Math.round(1000 / FPS));
-      if (!target && timer) {
-        clearInterval(timer);
-        timer = null;
+    /**
+     * 誰を映すか。**入れ物ではなく「引いてくる関数」**を渡す。
+     * @param {null|(()=>object|null)} getter null で止める
+     * @param {object} [o] o.onLost 相手が居なくなったときに呼ぶ
+     */
+    setTarget(getter, o = {}) {
+      stop();
+      resolve = typeof getter === 'function' ? getter : null;
+      onLost = o.onLost || null;
+      if (resolve) {
+        timer = setInterval(draw, Math.round(1000 / FPS));
+        draw();
       }
-      if (target) draw();
     },
     dispose() {
-      if (timer) clearInterval(timer);
-      timer = null;
+      stop();
       renderer.dispose();
     },
   };

@@ -522,7 +522,10 @@ function injectStyle() {
      ⚠ flex-wrap は **nowrap**。縦積み＋wrap＋高さ制限だと、入りきらない列が
      **横に折り返して画面の外へ出る**（2026-08-07 幅375pxで実測して発見） */
   .join-body { flex-direction: column; flex-wrap: nowrap; }
-  .join-col-left, .join-col-right { width: 100%; }
+  /* ⚠ 縦積みのときは列を**縮ませない**。縮むと（左列が高さ320pxに潰れて）
+     中の項目が列の外へあふれ、下にある「なまえ」の上に重なって描かれる
+     （2026-08-08 幅513pxで実測して発見）。中身ぶん伸ばすのが正しい */
+  .join-col-left, .join-col-right { width: 100%; flex: 0 0 auto; }
   .join-preview {
     width: 100%;
     height: 200px;

@@ -1590,7 +1590,17 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       /** 通話中に映す相手を切り替える（null で止める） */
       onCallLive: (peerId) => {
         if (!callView) callView = createCallView(scene);
-        callView.setTarget(peerId && remote ? remote.getAvatar(peerId) : null);
+        // ⚠ アバターは見た目を変えると作り直されるので、**掴まずに毎回ひく**
+        callView.setTarget(
+          peerId ? () => (remote ? remote.getAvatar(peerId) : null) : null,
+          {
+            // 相手が退室したら、こちらの通話も終わらせる（映像だけ回り続けるのを防ぐ）
+            onLost: () => {
+              if (phoneUI) phoneUI.onCallSignal({ kind: 'end', id: peerId });
+              if (chat) chat.addMessage('', '通話が切れました（相手が退室しました）', { system: true });
+            },
+          },
+        );
       },
       /** 通話の映像（キャンバス）を渡す */
       callView: () => {

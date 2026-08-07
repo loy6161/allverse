@@ -68,6 +68,7 @@ export function rentRoom() {
  */
 export function placeItem(itemId, x, z, rot = 0) {
   const v = read();
+  if (!v.rented) return false; // 借りていない部屋には置けない（UI任せにしない）
   if (v.items.length >= 40) return false; // 置きすぎ防止（見た目と保存量）
   v.items.push({ id: Number(itemId), x: +x.toFixed(2), z: +z.toFixed(2), r: +rot.toFixed(2) });
   write(v);
