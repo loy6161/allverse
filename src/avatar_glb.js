@@ -265,6 +265,15 @@ float tipAmount(vec3 p) {
  *   「結び目を原点に持ってくる → 拡大 → 置きたい場所へ動かす」の順で効かせる。
  */
 const RIBBON_ANCHOR = new THREE.Vector3(0.19, 1.13, 0.02); // 結び目の位置（生成器の値）
+/**
+ * 頭に接する位置（2026-08-07・loyさん「リボンは頭につけて」）。
+ *
+ * ⚠ 元の位置 (0.19, 1.13) は**頭から浮いていた**。頭は中心(0, 0.86)・半径0.272 の球で、
+ *   髪ドームを含めても半径は約0.30。x=0.19 で表面に触れる高さは
+ *   0.86 + √(0.30² − 0.19² − 0.02²) ≈ 1.09。0.04 ほど高すぎたので下げる。
+ */
+const SIDE = new THREE.Vector3(0.17, 1.08, 0.02);
+const TOP_Y = 1.13; // 頭のてっぺん（髪ドームの上端 1.16 のわずかに下＝めり込ませて接地させる）
 const RIBBON_SIZES = { sm: 1, lg: 1.5 };
 
 function wrapRibbon(mesh, pos, size) {
@@ -278,14 +287,18 @@ function wrapRibbon(mesh, pos, size) {
   if (pos === 'r') {
     // 本人の右。左右を反転して置く（材質は両面描画なので裏返っても見た目は同じ）
     outer.scale.x *= -1;
-    outer.position.set(-RIBBON_ANCHOR.x, RIBBON_ANCHOR.y, RIBBON_ANCHOR.z);
+    outer.position.set(-SIDE.x, SIDE.y, SIDE.z);
   } else if (pos === 'c') {
-    // 中央（頭のてっぺん）。少し上げて、頭にめり込まないようにする。
-    // ⚠ 羽根は結び目から片側へ伸びる形なので、結び目を x=0 に置くと**見た目は右寄り**になる。
-    //   実測した見た目の中心（+0.07）ぶん戻して、正面から見て真ん中に来るようにする
-    outer.position.set(-0.07, RIBBON_ANCHOR.y + 0.04, RIBBON_ANCHOR.z - 0.02);
+    // 中央（頭のてっぺん）。
+    // ⚠ 羽根は結び目から「右」と「後ろ」へ伸びる**非対称な形**。そのまま真ん中に置くと
+    //   真横を向いて見える（loyさん「中はリボンが横向かないような角度にして」）。
+    //   Y軸で45°回して、正面から見たときに羽根が左右へ開くようにする
+    //   ずらし量は大きさに比例させる（大きいリボンほど羽根が右へ伸びるため。
+    //   固定値だと「中央・大」が右に寄って見えた・2026-08-07 スクショで確認）
+    outer.position.set(-0.05 * s, TOP_Y, -0.01 * s);
+    outer.rotation.y = -Math.PI / 4;
   } else {
-    outer.position.copy(RIBBON_ANCHOR);
+    outer.position.copy(SIDE);
   }
   return outer;
 }
