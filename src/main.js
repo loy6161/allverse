@@ -7,6 +7,8 @@ import { createAvatar } from './avatar.js';
 import { preloadAvatars } from './avatar_glb.js';
 import { initJoinScreen, openCustomizer, setKnownRole } from './join.js';
 import { createShopBuildings, nearestSpot } from './shops3d.js';
+import { createCars, nearestCar, CAR_SPEED } from './car.js';
+import { createCallView } from './callview.js';
 import { initPhone } from './phone.js';
 import { addRequest, addFriend } from './friends.js';
 import { updateHunger, speedFactor, eat, getHunger, hungerLabel, onHungerChange } from './hunger.js';
@@ -96,12 +98,20 @@ let city = null;
 let shopBuildings = null;
 /** いま前に立っている台（null なら範囲外）。店の中のカウンター・ガチャ台・スロット台 */
 let nearSpot = null;
+/** 街に置いてある車（2026-08-08） */
+let cars = null;
+/** いま近くにある車（null なら範囲外） */
+let nearCarSpot = null;
+/** 前のフレームで乗っていた車（案内を出し直す判定に使う） */
+let lastRiding = '';
 function ensureCity() {
   if (city || WORLD_KIND !== 'club') return city;
   city = createCityLayer(scene, { hole: { minIx: 0, maxIx: 0, minIz: 0, maxIz: 0 } });
   // 街に「入れるお店」を置く（2026-08-07・モック）。
   // 自動生成のタイルとは別に、**決まった場所に手で置く**（毎回同じ場所にある必要があるため）
   if (!shopBuildings) shopBuildings = createShopBuildings(scene);
+  // 車（2026-08-08）。街は21km²あるので、移動手段として置く
+  if (!cars) cars = createCars(scene);
   if (controls) controls.setBounds(city.bounds);
   return city;
 }
@@ -224,6 +234,8 @@ let helpUI = null;
 let selfView = null;
 /** スマホ（2026-08-08）。設定・持ち物・アプリの入口 */
 let phoneUI = null;
+/** ビデオ通話の映像（相手のアバターの顔を小さく描く） */
+let callView = null;
 let chatMode = 'local'; // 'local' … 独自チャット / 'youtube' … YouTubeへ一本化
 // キック/BAN/入場拒否の説明。設定されているときは、切断を「通信不良」として扱わない
 let removedReason = '';
@@ -967,6 +979,13 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       onPhoneDenied: (why) => {
         if (phoneUI) phoneUI.setDenied(why);
       },
+      onCall: ({ id, name, kind }) => {
+        if (!phoneUI) return;
+        phoneUI.onCallSignal({ kind, id, name });
+        if (kind === 'ring' && chat) {
+          chat.addMessage('', `${name} から通話がかかってきました`, { system: true });
+        }
+      },
       onFriendReq: ({ name }) => {
         if (addRequest(name) && chat) {
           chat.addMessage('', `${name} からフレンド申請が届きました（📱→連絡帳）`, { system: true });
@@ -1416,7 +1435,20 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       ray.setFromCamera(ndc, camera);
-      const hit = ray.intersectObjects(shopBuildings.pickables, false)[0];
+      const targets = shopBuildings.pickables.concat(cars ? cars.pickables : []);
+      const hit = ray.intersectObjects(targets, false)[0];
+      // 車をクリックしたら乗る（近いときだけ）
+      const carSpot = hit && hit.object.userData.car;
+      if (carSpot) {
+        const far = Math.hypot(carSpot.x - player.position.x, carSpot.z - player.position.z) > CLICK_RANGE;
+        if (far) {
+          if (chat) chat.addMessage('', '車に近づいてください', { system: true });
+          return;
+        }
+        nearCarSpot = carSpot;
+        toggleCar();
+        return;
+      }
       const spot = hit && hit.object.userData.spot;
       if (!spot) return;
       const far = Math.hypot(spot.x - player.position.x, spot.z - player.position.z) > CLICK_RANGE;
@@ -1436,6 +1468,11 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
     if (e.key.toLowerCase() !== 'e' || e.repeat) return;
     if (isShopOpen()) {
       closeShop();
+      return;
+    }
+    // 車が先（乗っている間は降りるが最優先）
+    if (toggleCar()) {
+      e.preventDefault();
       return;
     }
     if (!nearSpot) return;
@@ -1493,6 +1530,7 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
         { id: 'sns', name: 'SNS', icon: '🐦', inside: true, run: () => {} },
         { id: 'friends', name: '連絡帳', icon: '📇', inside: true, run: () => {} },
         { id: 'dm', name: 'メッセージ', icon: '💬', inside: true, run: () => {} },
+        { id: 'call', name: '通話', icon: '📹', inside: true, run: () => {} },
         { id: 'pay', name: '送金', icon: '💸', inside: true, run: () => {} },
         { id: 'camera', name: 'カメラ', icon: '📷', inside: true, run: () => {} },
         { id: 'wallet', name: 'ウォレット', icon: '💰', inside: true, run: () => {} },
@@ -1522,6 +1560,23 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
       },
       onDm: (to, txt) => {
         if (net && !demoMode) net.sendDm(to, txt);
+      },
+      /** 通話の合図を送る（呼ぶ・出る・切る） */
+      onCall: (kind, to) => {
+        if (!net || demoMode) return;
+        if (kind === 'call') net.sendCall(to);
+        else if (kind === 'accept') net.sendCallAccept(to);
+        else net.sendCallEnd(to);
+      },
+      /** 通話中に映す相手を切り替える（null で止める） */
+      onCallLive: (peerId) => {
+        if (!callView) callView = createCallView(scene);
+        callView.setTarget(peerId && remote ? remote.getAvatar(peerId) : null);
+      },
+      /** 通話の映像（キャンバス）を渡す */
+      callView: () => {
+        if (!callView) callView = createCallView(scene);
+        return callView.canvas;
       },
       onFriendReq: (to) => {
         if (net && !demoMode) net.sendFriendReq(to);
@@ -1626,7 +1681,9 @@ function updateVenue(dt) {
 function updateHungerState(dt) {
   if (!player) return;
   updateHunger(dt, inClubArea(player.position.x, player.position.z));
-  if (controls && controls.setSpeedScale) controls.setSpeedScale(speedFactor());
+  // 車に乗っている間は速い。空腹の遅さとは掛け算にする
+  const carBoost = cars && cars.ridingId() ? CAR_SPEED : 1;
+  if (controls && controls.setSpeedScale) controls.setSpeedScale(speedFactor() * carBoost);
 }
 
 /**
@@ -1637,16 +1694,44 @@ function updateShopDoors() {
   if (!shopBuildings) return;
   shopBuildings.update(player.position.x, player.position.z);
   const near = nearestSpot(shopBuildings.spots, player.position.x, player.position.z);
-  if (near === nearSpot) return;
+  const car = cars ? nearestCar(cars.spots, player.position.x, player.position.z) : null;
+  if (cars) cars.update(player);
+  // ⚠ 乗り降りでも案内を出し直す。ここを見ていないと、乗ったのに
+  //   「E で乗る」のままになる（2026-08-08 実測して気づいた）
+  const riding = cars ? cars.ridingId() : '';
+  if (near === nearSpot && car === nearCarSpot && riding === lastRiding) return;
   nearSpot = near;
+  nearCarSpot = car;
+  lastRiding = riding;
   const hint = document.getElementById('vc-door-hint');
   if (!hint) return;
-  if (near) {
+  if (cars && cars.ridingId()) {
+    hint.textContent = '車に乗っています — E で降りる';
+    hint.classList.remove('hidden');
+  } else if (near) {
     hint.textContent = `${near.label} — クリック / E で開く`;
     hint.classList.remove('hidden');
+  } else if (car) {
+    hint.textContent = '車 — クリック / E で乗る';
+    hint.classList.remove('hidden');
   } else {
+    hint.textContent = '';
     hint.classList.add('hidden');
   }
+}
+
+/** 車に乗る・降りる（2026-08-08） */
+function toggleCar() {
+  if (!cars) return false;
+  if (cars.ridingId()) {
+    cars.getOff();
+    if (chat) chat.addMessage('', '車を降りました', { system: true });
+    return true;
+  }
+  if (!nearCarSpot) return false;
+  cars.ride(nearCarSpot.id);
+  if (chat) chat.addMessage('', '車に乗りました（Eで降りる）', { system: true });
+  return true;
 }
 
 /**

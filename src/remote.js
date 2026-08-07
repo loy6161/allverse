@@ -172,6 +172,11 @@ export function initRemotePlayers(scene) {
     clear,
     setNamesVisible,
     isNamesVisible,
+    /** その人のアバター（3Dの入れ物）。ビデオ通話で顔を映すのに使う（2026-08-08） */
+    getAvatar(id) {
+      const p = peers.get(id);
+      return p ? p.root : null;
+    },
     /** 参加者一覧パネル用。今見えている人だけが並ぶ（ブロックした相手は入らない） */
     list() {
       return [...peers.entries()].map(([id, p]) => ({ id, name: p.name, role: p.role || 'user' }));

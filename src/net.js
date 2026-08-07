@@ -418,6 +418,15 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
         case 'dm-denied':
           if (h.onPhoneDenied) h.onPhoneDenied(msg.why || '');
           break;
+        case 'call':
+          if (h.onCall) h.onCall({ id: msg.from, name: msg.fromName, kind: 'ring' });
+          break;
+        case 'call-accept':
+          if (h.onCall) h.onCall({ id: msg.from, name: msg.fromName, kind: 'accept' });
+          break;
+        case 'call-end':
+          if (h.onCall) h.onCall({ id: msg.from, name: msg.fromName, kind: 'end', why: msg.why || '' });
+          break;
         case 'pay':
           if (h.onPay) h.onPay({ from: msg.from, fromName: msg.fromName, amount: msg.amount });
           break;
@@ -660,6 +669,10 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
   function sendFriendOk(to) {
     if (joined && to) send({ t: 'friend-ok', to });
   }
+  /** ビデオ通話（アバターの顔）。呼ぶ・出る・切る */
+  function sendCall(to) { if (joined && to) send({ t: 'call', to }); }
+  function sendCallAccept(to) { if (joined && to) send({ t: 'call-accept', to }); }
+  function sendCallEnd(to) { if (joined && to) send({ t: 'call-end', to }); }
   /** ポイントを渡す（相手の端末で足される。モック） */
   function sendPay(to, amount) {
     if (joined && to && amount > 0) send({ t: 'pay', to, amount });
@@ -803,6 +816,9 @@ export function initNet({ name, config, handlers, idToken = '', eventId = '', ro
     sendFriendReq,
     sendFriendOk,
     sendPay,
+    sendCall,
+    sendCallAccept,
+    sendCallEnd,
     sendDm,
     sendScreen,
     sendLoadSim,

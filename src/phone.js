@@ -1,7 +1,9 @@
 import { getWallet, onWalletChange } from './wallet.js';
 import { itemById } from './catalog.js';
 import { parseAccessories, toggleAccessory } from './accessory.js';
-import { renderMap, renderSns, renderMessenger, renderCamera, renderFriends, renderPay } from './phoneapps.js';
+import {
+  renderMap, renderSns, renderMessenger, renderCamera, renderFriends, renderPay, renderCall,
+} from './phoneapps.js';
 import { getFriends, onFriendsChange, isFriend, acceptRequest, declineRequest, removeFriend } from './friends.js';
 
 // ============================================================
@@ -221,6 +223,10 @@ export function initPhone(opts = {}) {
   let dmWith = null;
   /** 送金の結果メッセージ（1回だけ出す） */
   let payMsg = '';
+  /** 通話の状態: idle / ring（こちらから呼び出し中）/ incoming（着信）/ live（通話中） */
+  let callState = 'idle';
+  /** 通話の相手 { id, name } */
+  let callPeer = null;
 
   const paintStatus = () => {
     coinEl.textContent = `${getWallet().balance.toLocaleString()} VC`;
@@ -507,6 +513,37 @@ export function initPhone(opts = {}) {
           if (opts.onDm) opts.onDm(to, txt);
         },
       });
+    } else if (view === 'call') {
+      header('ビデオ通話');
+      const fr = getFriends();
+      const friends = (opts.getPeople ? opts.getPeople() : []).filter((x) => fr.friends.includes(x.name));
+      renderCall(bodyEl, {
+        state: callState,
+        friends,
+        peer: callPeer,
+        // 通話中は相手のアバターを映す小さな画面を差し込む
+        view: callState === 'live' && opts.callView ? opts.callView() : null,
+        onCall: (f) => {
+          callPeer = f;
+          callState = 'ring';
+          if (opts.onCall) opts.onCall('call', f.id);
+          paint();
+        },
+        onAccept: () => {
+          if (!callPeer) return;
+          callState = 'live';
+          if (opts.onCall) opts.onCall('accept', callPeer.id);
+          if (opts.onCallLive) opts.onCallLive(callPeer.id);
+          paint();
+        },
+        onEnd: () => {
+          if (callPeer && opts.onCall) opts.onCall('end', callPeer.id);
+          if (opts.onCallLive) opts.onCallLive(null);
+          callState = 'idle';
+          callPeer = null;
+          paint();
+        },
+      });
     } else if (view === 'camera') {
       header('カメラ');
       renderCamera(bodyEl, {
@@ -597,6 +634,31 @@ export function initPhone(opts = {}) {
       threads[other].push({ txt: msg.txt, mine: Boolean(msg.mine), at: msg.at, read: Boolean(msg.mine) });
       if (open && view === 'dm') paint();
       return other;
+    },
+    /**
+     * 通話の合図が届いた。
+     * ring=呼ばれた / accept=相手が出た / end=切れた
+     */
+    onCallSignal({ kind, id, name }) {
+      if (kind === 'ring') {
+        callPeer = { id, name };
+        callState = 'incoming';
+        setOpen(true);
+        view = 'call';
+        paint();
+        return;
+      }
+      if (kind === 'accept') {
+        callState = 'live';
+        if (opts.onCallLive) opts.onCallLive(id);
+        if (open && view === 'call') paint();
+        return;
+      }
+      // end
+      callState = 'idle';
+      callPeer = null;
+      if (opts.onCallLive) opts.onCallLive(null);
+      if (open && view === 'call') paint();
     },
     /** 送金の結果を出す */
     setPayMessage(text) {

@@ -2342,6 +2342,28 @@ function handlePay(client, msg) {
   send(client.ws, { t: 'pay-ok', to, toName: target.n, amount });
 }
 
+/**
+ * ビデオ通話（2026-08-08・loyさん「アバターの顔をリアルタイムで映す通話」）。
+ * ⚠ サーバーは**呼び出しの合図を中継するだけ**。映像は流れない
+ *   （相手のアバターは各自の画面に既に居るので、それを写す）。
+ *   だから通信量はほぼゼロで、カメラの許可も要らない。
+ */
+function handleCall(client, msg) {
+  const kind = msg.t; // call / call-accept / call-end
+  const to = String(msg.to || '');
+  let target = null;
+  for (const members of rooms.values()) {
+    for (const c of members.values()) {
+      if (c.id === to && c.eventId === client.eventId) target = c;
+    }
+  }
+  if (!target || isBlockedBetween(client, target)) {
+    send(client.ws, { t: 'call-end', from: to, why: '相手が見つかりません' });
+    return;
+  }
+  send(target.ws, { t: kind, from: client.id, fromName: client.n });
+}
+
 function handleFriendReq(client, msg) {
   relayToPeer(client, msg, 'friend-req');
 }
@@ -2408,6 +2430,9 @@ const HANDLERS = {
   move: handleMove,
   events: handleEventsRequest,
   pay: handlePay,
+  call: handleCall,
+  'call-accept': handleCall,
+  'call-end': handleCall,
   'friend-req': handleFriendReq,
   'friend-ok': handleFriendOk,
   'sns-list': handleSnsList,

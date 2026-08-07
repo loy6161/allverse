@@ -447,6 +447,81 @@ export function renderPay(host, { balance, targets, onSend, message }) {
 }
 
 /**
+ * ビデオ通話の画面（2026-08-08）。
+ * state: 'idle' 相手を選ぶ / 'ring' 呼び出し中 / 'incoming' 着信 / 'live' 通話中
+ */
+export function renderCall(host, { state, friends, peer, view, onCall, onAccept, onEnd }) {
+  const note = document.createElement('p');
+  note.className = 'vc-phone-note';
+
+  if (state === 'idle') {
+    note.textContent = 'フレンドで、いま同じ会場に居る人と話せます。'
+      + '⚠ 相手のアバターの顔がそのまま映ります（カメラは使いません）。';
+    host.appendChild(note);
+    if (!friends.length) {
+      const p = document.createElement('p');
+      p.className = 'vc-phone-note';
+      p.textContent = '通話できる相手が居ません（フレンドが同じ会場に居るときに使えます）。';
+      host.appendChild(p);
+      return;
+    }
+    for (const f of friends) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.style.cssText = 'display:flex;width:100%;gap:8px;align-items:center;padding:9px 10px;'
+        + 'margin-bottom:6px;border-radius:10px;cursor:pointer;color:#eaf6ff;font-size:12px;'
+        + 'background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.14);';
+      b.innerHTML = `<span>📹</span><span>${escapeHtml(f.name)}</span>`;
+      b.addEventListener('click', () => onCall(f));
+      host.appendChild(b);
+    }
+    return;
+  }
+
+  const title = document.createElement('div');
+  title.style.cssText = 'text-align:center;font-size:13px;font-weight:700;margin-bottom:8px;';
+  title.textContent = peer ? peer.name : '';
+  host.appendChild(title);
+
+  if (state === 'live' && view) {
+    host.appendChild(view);
+  } else {
+    const ph = document.createElement('div');
+    ph.style.cssText = 'height:150px;border-radius:12px;display:flex;align-items:center;'
+      + 'justify-content:center;font-size:34px;background:#0a0c16;'
+      + 'border:1px solid rgba(255,255,255,0.16);';
+    ph.textContent = state === 'incoming' ? '📞' : '📹';
+    host.appendChild(ph);
+  }
+
+  const label = document.createElement('div');
+  label.style.cssText = 'text-align:center;font-size:11px;color:rgba(220,235,255,0.6);margin:8px 0;';
+  label.textContent = state === 'ring' ? '呼び出し中…'
+    : state === 'incoming' ? '着信中' : '通話中';
+  host.appendChild(label);
+
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:8px;';
+  if (state === 'incoming') {
+    const ok = document.createElement('button');
+    ok.type = 'button';
+    ok.textContent = '出る';
+    ok.style.cssText = 'flex:1;padding:10px;font-size:13px;font-weight:700;border-radius:11px;'
+      + 'cursor:pointer;border:none;color:#06121a;background:#9be34a;';
+    ok.addEventListener('click', onAccept);
+    row.appendChild(ok);
+  }
+  const end = document.createElement('button');
+  end.type = 'button';
+  end.textContent = state === 'incoming' ? '断る' : '切る';
+  end.style.cssText = 'flex:1;padding:10px;font-size:13px;font-weight:700;border-radius:11px;'
+    + 'cursor:pointer;border:none;color:#fff;background:#e2445c;';
+  end.addEventListener('click', onEnd);
+  row.appendChild(end);
+  host.appendChild(row);
+}
+
+/**
  * カメラ（こちらの判断で追加・2026-08-08）。
  * GTAの「スナップマティック」に当たるもの。いまの画面を撮って、保存かSNS投稿ができる。
  * ⚠ 撮るのは3Dの画面だけ。**YouTubeの映像は写らない**
