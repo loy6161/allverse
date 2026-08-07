@@ -246,7 +246,15 @@ export function initControls(
     return true;
   }
 
+  /**
+   * キー入力を受け付けるか（2026-08-08追加）。
+   * スマホの画面を開いている間は歩かせない（開いたまま歩くと、
+   * 画面の裏で移動して迷子になる）。押しっぱなしのキーも忘れさせる
+   */
+  let inputEnabled = true;
+
   window.addEventListener('keydown', (e) => {
+    if (!inputEnabled) return;
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
     keys.add(e.code);
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
@@ -548,6 +556,11 @@ export function initControls(
      */
     setBounds(b) {
       if (b) bounds = b;
+    },
+    /** キー入力の受け付けを切り替える（スマホを開いている間は止める） */
+    setInputEnabled(on) {
+      inputEnabled = Boolean(on);
+      if (!inputEnabled) keys.clear();
     },
     /** いま歩ける範囲（動作確認用。街に出られるかを外から測れるようにしてある） */
     getBounds: () => bounds,

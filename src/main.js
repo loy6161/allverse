@@ -7,6 +7,7 @@ import { createAvatar } from './avatar.js';
 import { preloadAvatars } from './avatar_glb.js';
 import { initJoinScreen, openCustomizer, setKnownRole } from './join.js';
 import { createShopBuildings, nearestSpot } from './shops3d.js';
+import { initPhone } from './phone.js';
 import { openShop, closeShop, isShopOpen } from './shopui.js';
 import { getWallet, onWalletChange, claimDailyBonus, claimEventBonus } from './wallet.js';
 import { openPlacePicker } from './placepick.js';
@@ -216,6 +217,8 @@ let ytLinkState = { on: false, linked: false };
 let helpUI = null;
 // 自分のアバターの小窓（2026-08-04追加）。一人称やシアター表示でも自分の動きが見える
 let selfView = null;
+/** スマホ（2026-08-08）。設定・持ち物・アプリの入口 */
+let phoneUI = null;
 let chatMode = 'local'; // 'local' … 独自チャット / 'youtube' … YouTubeへ一本化
 // キック/BAN/入場拒否の説明。設定されているときは、切断を「通信不良」として扱わない
 let removedReason = '';
@@ -1399,6 +1402,62 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
     e.preventDefault();
     enterShop(nearSpot.shop, nearSpot.tab);
   });
+
+  // ---- スマホ（2026-08-08・loyさん発案）----
+  // > 設定とかそういうの全部まとめたスマホがあるといいかも。……
+  // > 困ったらスマホ開けばいい、になるよね
+  //
+  // ★ 右上に散らばっていたボタンを**スマホの中へ移す**。ただし
+  //   **UI非表示（👁）・ネーム表示（🏷）・退室（🏃）は外に残す**（loyさん指定）。
+  //   👁 は押せなくなると戻せず、🏃 は緊急の出口なので、隠すと詰む。
+  //
+  // ⚠ 画面は**作り直していない**。元のボタンを見えない場所へ移し、
+  //   アプリを押したら「そのボタンを押す」だけにしてある。
+  //   作り直すと、権限の出し分け・保存・同期の細かい挙動を写し損ねる
+  {
+    const holder = document.createElement('div');
+    holder.style.display = 'none';
+    document.body.appendChild(holder);
+
+    /** 右上バーから、そのラベルのボタンを取り出してスマホ行きにする */
+    const grab = (match) => {
+      const btn = [...topBar.slot.querySelectorAll('button')].find(match);
+      if (btn) holder.appendChild(btn);
+      return btn;
+    };
+    const avatar = grab((b) => b.id === 'avatar-btn');
+    const help = grab((b) => b.textContent.trim() === '❓');
+    const room = grab((b) => b.textContent.trim() === '🚪');
+    const settings = grab((b) => b.textContent.trim() === '⚙');
+
+    const app = (id, name, icon, btn) => ({
+      id,
+      name,
+      icon,
+      run: () => btn && btn.click(),
+      show: () => Boolean(btn) && btn.style.display !== 'none',
+    });
+
+    phoneUI = initPhone({
+      apps: [
+        app('avatar', 'アバター', '👤', avatar),
+        { id: 'bag', name: '持ち物', icon: '🎒', inside: true, run: () => {} },
+        { id: 'wallet', name: 'ウォレット', icon: '💰', inside: true, run: () => {} },
+        app('settings', '設定', '⚙', settings),
+        app('room', 'ルーム', '🚪', room),
+        app('help', 'ヘルプ', '❓', help),
+      ],
+      getConfig: () => session.config,
+      onWear: (config) => {
+        session.config = { ...config };
+        applyMyLook(session.config);
+      },
+      // 開いている間は歩かせない（画面の裏で移動して迷子になるため）
+      onOpenChange: (open) => {
+        if (controls && controls.setInputEnabled) controls.setInputEnabled(!open);
+      },
+    });
+  }
 
   // スマホ対応（タッチ端末 or ?mobile=1 のときだけ有効化される）
   initMobile({ controls, chatRoot });
