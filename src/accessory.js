@@ -41,6 +41,18 @@ export function stripStaffOnly(raw, role) {
   return kept.join('+');
 }
 
+/**
+ * リボンの付け方（2026-08-07・loyさん要望）。位置は**本人から見た**左右。
+ * 3Dパーツは1つのままで、置き方（位置・大きさ）だけ変える（avatar_glb.js の wrapRibbon）
+ */
+export const RIBBON_POSITIONS = [
+  { id: 'l', label: '左' },
+  { id: 'c', label: '中央' },
+  { id: 'r', label: '右' },
+];
+export const RIBBON_SIZE_IDS = ['sm', 'lg'];
+export const RIBBON_SIZE_LABELS = { sm: '小', lg: '大' };
+
 /** 同時に付けられる数。増やしすぎると誰が誰だか分からなくなるので3つで止める */
 export const MAX_ACCESSORIES = 3;
 

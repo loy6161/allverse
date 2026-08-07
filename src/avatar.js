@@ -100,6 +100,11 @@ export function randomConfig() {
     streakPosition: STREAK_DEFAULT.position,
     streakWidth: STREAK_DEFAULT.width,
     hairGradColor: '',
+    // タイツの色（空＝服の色から自動。従来の見た目）
+    tightsColor: '',
+    // リボンの付け方（既定は今までと同じ位置・大きさ）
+    ribbonPos: 'l',
+    ribbonSize: 'sm',
     height: 'mid',
     // ランダムにしない。VRChat側に合わせた既定（右）から始める
     handedness: 'right',

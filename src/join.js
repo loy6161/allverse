@@ -5,6 +5,7 @@ import { getVisitorId } from './visitorid.js';
 import { avToConfig } from './net.js';
 import { normalizeHair } from './hair.js';
 import { STREAK_COUNTS, STREAK_POSITIONS, STREAK_WIDTHS } from './hairfx.js';
+import { RIBBON_POSITIONS, RIBBON_SIZE_IDS, RIBBON_SIZE_LABELS } from './accessory.js';
 import { fetchConfig, getConfig, renderLoginButton, getIdToken, isSignedIn } from './login.js';
 import { APP_NAME, APP_TAGLINE } from './brand.js';
 import { loadLocalPrefs, saveLocalPrefs, fetchServerPrefs, shouldUseServerPrefs } from './prefs.js';
@@ -710,6 +711,10 @@ function buildCustomizeScreen({
               <div class="swatch-row" id="shirtcolor-swatches"></div>
             </div>
             <div class="customize-row" data-tab="cloth">
+              <div class="customize-label">タイツの色</div>
+              <div class="swatch-row" id="tightscolor-swatches"></div>
+            </div>
+            <div class="customize-row" data-tab="cloth">
               <div class="customize-label">ペンライトの色</div>
               <div class="swatch-row" id="penlightcolor-swatches"></div>
             </div>
@@ -718,6 +723,14 @@ function buildCustomizeScreen({
             <div class="customize-row" data-tab="body">
               <div class="customize-label">アクセサリー</div>
               <div class="hairstyle-buttons" id="accessory-buttons"></div>
+            </div>
+            <div class="customize-row" data-tab="body" id="ribbonpos-row" style="display:none">
+              <div class="customize-label">リボンの位置</div>
+              <div class="hairstyle-buttons" id="ribbonpos-buttons"></div>
+            </div>
+            <div class="customize-row" data-tab="body" id="ribbonsize-row" style="display:none">
+              <div class="customize-label">リボンの大きさ</div>
+              <div class="hairstyle-buttons" id="ribbonsize-buttons"></div>
             </div>
             <div class="customize-row" data-tab="body">
               <div class="customize-label">身長</div>
@@ -876,6 +889,12 @@ function buildCustomizeScreen({
     for (const id of ['meshcolor-row', 'streakcount-row', 'streakpos-row', 'streakwidth-row']) {
       const el = document.getElementById(id);
       if (el) el.style.display = hasMesh ? '' : 'none';
+    }
+    // リボンの位置・大きさは、リボンを付けているときだけ出す
+    const hasRibbon = parseAccessories(config.accessory).includes('ribbon');
+    for (const id of ['ribbonpos-row', 'ribbonsize-row']) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = hasRibbon ? '' : 'none';
     }
     for (const id of ['eyetopcolorr-row', 'eyecolorr-row']) {
       const el = document.getElementById(id);
@@ -1094,9 +1113,17 @@ function buildCustomizeScreen({
   );
   // 目を左右で分けるか（運営専用）。分けたときだけ右目の色の行を出す
   buildButtonRow('eyesplit-buttons', [false, true], { false: '同じ', true: '左右で分ける' }, 'eyeSplit');
+  // リボンの付け方（2026-08-07追加）。位置は本人から見た左右
+  buildButtonRow(
+    'ribbonpos-buttons',
+    RIBBON_POSITIONS.map((x) => x.id),
+    Object.fromEntries(RIBBON_POSITIONS.map((x) => [x.id, x.label])),
+    'ribbonPos',
+  );
+  buildButtonRow('ribbonsize-buttons', RIBBON_SIZE_IDS, RIBBON_SIZE_LABELS, 'ribbonSize');
 
   // ---- 色スウォッチ ----
-  function buildSwatchRow(containerId, colors, configKey, allowNone = false) {
+  function buildSwatchRow(containerId, colors, configKey, allowNone = false, noneLabel = 'なし') {
     const el = document.getElementById(containerId);
     if (!el) return;
     selectableRows.push({ containerId, configKey, itemClass: 'swatch' });
@@ -1106,7 +1133,7 @@ function buildCustomizeScreen({
       btn.type = 'button';
       btn.dataset.value = '';
       btn.className = 'hair-btn' + (config[configKey] ? '' : ' selected');
-      btn.textContent = 'なし';
+      btn.textContent = noneLabel;
       btn.addEventListener('click', () => {
         config[configKey] = '';
         el.querySelectorAll('.swatch').forEach((x) => x.classList.remove('selected'));
@@ -1156,6 +1183,8 @@ function buildCustomizeScreen({
   buildSwatchRow('eyetopcolorr-swatches', AVATAR_PARTS.eyeColors, 'eyeTopColorR');
   // 髪の飾り（運営専用）。「なし」を選べるようにするため allowNone を立てる
   buildSwatchRow('hairgrad-swatches', AVATAR_PARTS.hairColors, 'hairGradColor', true);
+  // タイツの色。「なし」＝服の色から自動（従来の見た目）
+  buildSwatchRow('tightscolor-swatches', AVATAR_PARTS.shirtColors, 'tightsColor', true, '服に合わせる');
   buildSwatchRow('shirtcolor-swatches', AVATAR_PARTS.shirtColors, 'shirtColor');
   buildSwatchRow('penlightcolor-swatches', AVATAR_PARTS.penlightColors, 'penlightColor');
 

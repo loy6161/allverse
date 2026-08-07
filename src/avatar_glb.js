@@ -254,6 +254,42 @@ float tipAmount(vec3 p) {
   return mat;
 }
 
+/**
+ * リボンの付け方（2026-08-07・loyさん「リボンを左右中で選択。サイズも今が小で大も欲しい」）。
+ *
+ * ★ GLBは1つのまま。**置き方を変えるだけ**なので、位置と大きさを足しても
+ *   アセットも描画コールも増えない。
+ *
+ * ⚠ メッシュ自身の変形（位置・回転）は GLB のノードが持っていて、しかも X+90°回っている。
+ *   だから mesh.position を触るのではなく、**外側にグループを2枚かぶせて**
+ *   「結び目を原点に持ってくる → 拡大 → 置きたい場所へ動かす」の順で効かせる。
+ */
+const RIBBON_ANCHOR = new THREE.Vector3(0.19, 1.13, 0.02); // 結び目の位置（生成器の値）
+const RIBBON_SIZES = { sm: 1, lg: 1.5 };
+
+function wrapRibbon(mesh, pos, size) {
+  const inner = new THREE.Group();
+  inner.position.copy(RIBBON_ANCHOR).negate(); // 結び目を原点へ
+  inner.add(mesh);
+  const outer = new THREE.Group();
+  outer.add(inner);
+  const s = RIBBON_SIZES[size] || RIBBON_SIZES.sm;
+  outer.scale.setScalar(s);
+  if (pos === 'r') {
+    // 本人の右。左右を反転して置く（材質は両面描画なので裏返っても見た目は同じ）
+    outer.scale.x *= -1;
+    outer.position.set(-RIBBON_ANCHOR.x, RIBBON_ANCHOR.y, RIBBON_ANCHOR.z);
+  } else if (pos === 'c') {
+    // 中央（頭のてっぺん）。少し上げて、頭にめり込まないようにする。
+    // ⚠ 羽根は結び目から片側へ伸びる形なので、結び目を x=0 に置くと**見た目は右寄り**になる。
+    //   実測した見た目の中心（+0.07）ぶん戻して、正面から見て真ん中に来るようにする
+    outer.position.set(-0.07, RIBBON_ANCHOR.y + 0.04, RIBBON_ANCHOR.z - 0.02);
+  } else {
+    outer.position.copy(RIBBON_ANCHOR);
+  }
+  return outer;
+}
+
 export function createGlbAvatar(config) {
   const {
     bodyColor = '#ffdbac',
@@ -268,6 +304,11 @@ export function createGlbAvatar(config) {
     eyeTopColor = '',
     eyeColorR = '',
     eyeTopColorR = '',
+    // タイツ（脚）の色。空なら服の色から作る（従来どおり）
+    tightsColor = '',
+    // リボンの付け方（2026-08-07追加）。位置は本人から見た左右
+    ribbonPos = 'l',   // 'l' 左 / 'c' 中央 / 'r' 右
+    ribbonSize = 'sm', // 'sm' 小（従来）/ 'lg' 大
     // 髪の飾り（2026-08-07追加・管理者とVIPだけ）。空なら付けない
     hairGradColor = '',   // 毛先へ向かって移る色（グラデ）
     penlightColor = '',
@@ -290,7 +331,11 @@ export function createGlbAvatar(config) {
   root.add(body);
 
   // ---- 色の決定 ----
-  const bottomColor = new THREE.Color(shirtColor).multiplyScalar(0.3);
+  // タイツ（脚）の色（2026-08-07・loyさん「服（トップス）と脚のタイツで色分けたい」）。
+  // 未指定なら今までどおり**服の色を暗くしたもの**を使う（古い設定でも見た目が変わらない）
+  const bottomColor = tightsColor
+    ? new THREE.Color(tightsColor)
+    : new THREE.Color(shirtColor).multiplyScalar(0.3);
   // 目の色: 指定があればそれを使い、なければ髪色から導出（旧config互換）
   const eyeIrisColor = eyeColor
     ? new THREE.Color(eyeColor)
@@ -356,15 +401,20 @@ export function createGlbAvatar(config) {
   let eyeGroup = null;
   let loaded = false;
 
-  Promise.all(partsFor(config || {}).map(loadPart)).then((templates) => {
+  const partKeys = partsFor(config || {});
+  Promise.all(partKeys.map(loadPart)).then((templates) => {
     const meshes = [];
-    for (const template of templates) {
+    // リボンだけは付け方（位置・大きさ）を変えられるので、どのパーツ由来かを覚えておく
+    const ribbonMeshes = [];
+    templates.forEach((template, i) => {
       const inst = template.clone(true);
       inst.updateMatrixWorld(true);
       inst.traverse((o) => {
-        if (o.isMesh) meshes.push(o);
+        if (!o.isMesh) return;
+        meshes.push(o);
+        if (partKeys[i] === 'acc_ribbon') ribbonMeshes.push(o);
       });
-    }
+    });
 
     const eyeMeshes = [];
     for (const mesh of meshes) {
@@ -393,6 +443,10 @@ export function createGlbAvatar(config) {
       if (oname === 'eye' || oname === 'eyec' || oname === 'eyew'
         || oname === 'eyeR' || oname === 'eyecR') {
         eyeMeshes.push(mesh);
+        continue;
+      }
+      if (ribbonMeshes.includes(mesh)) {
+        body.add(wrapRibbon(mesh, ribbonPos, ribbonSize));
         continue;
       }
       body.add(mesh);

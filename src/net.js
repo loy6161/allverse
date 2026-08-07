@@ -3,6 +3,7 @@ import { getVisitorId } from './visitorid.js';
 import { formatAccessories } from './accessory.js';
 import { normalizeHair, legacyHairId } from './hair.js';
 import { STREAK_COUNTS, STREAK_POSITIONS, STREAK_WIDTHS, STREAK_DEFAULT } from './hairfx.js';
+import { RIBBON_POSITIONS, RIBBON_SIZE_IDS } from './accessory.js';
 
 // ------------------------------------------------------------------
 // アバターconfig（hex色形式） ⇔ av（プリセット番号形式）の相互変換
@@ -44,6 +45,8 @@ export function configToAv(config) {
   //   sn=本数 / sp=位置id / sw=太さid / hg=グラデ色。
   //   色は「0＝なし」にしたいので **番号+1** で送る（0のままだと黒と区別できない）
   const hg = AVATAR_PARTS.hairColors.indexOf(cfg.hairGradColor);
+  // タイツの色（2026-08-07追加）。0＝服の色から自動、1〜14＝色の番号+1
+  const bo = AVATAR_PARTS.shirtColors.indexOf(cfg.tightsColor);
   const et = AVATAR_PARTS.eyeColors.indexOf(cfg.eyeTopColor);
   const es = cfg.eyeSplit ? 1 : 0;
   const ec2 = AVATAR_PARTS.eyeColors.indexOf(cfg.eyeColorR);
@@ -67,6 +70,10 @@ export function configToAv(config) {
     sp: STREAK_POSITIONS.some((p) => p.id === cfg.streakPosition) ? cfg.streakPosition : STREAK_DEFAULT.position,
     sw: STREAK_WIDTHS.some((w) => w.id === cfg.streakWidth) ? cfg.streakWidth : STREAK_DEFAULT.width,
     hg: hg >= 0 ? hg + 1 : 0,
+    bo: bo >= 0 ? bo + 1 : 0,
+    // リボンの付け方（2026-08-07追加）
+    rp: RIBBON_POSITIONS.some((x) => x.id === cfg.ribbonPos) ? cfg.ribbonPos : 'l',
+    rz: RIBBON_SIZE_IDS.includes(cfg.ribbonSize) ? cfg.ribbonSize : 'sm',
     et: et >= 0 ? et : 0,
     es,
     ec2: es && ec2 >= 0 ? ec2 : (ec >= 0 ? ec : 0),
@@ -123,6 +130,10 @@ export function avToConfig(av) {
     streakPosition: STREAK_POSITIONS.some((p) => p.id === a.sp) ? a.sp : STREAK_DEFAULT.position,
     streakWidth: STREAK_WIDTHS.some((w) => w.id === a.sw) ? a.sw : STREAK_DEFAULT.width,
     hairGradColor: paletteOrNone(a.hg),
+    tightsColor: (Number.isInteger(a.bo) && a.bo >= 1 && a.bo <= AVATAR_PARTS.shirtColors.length
+      ? AVATAR_PARTS.shirtColors[a.bo - 1] : ''),
+    ribbonPos: RIBBON_POSITIONS.some((x) => x.id === a.rp) ? a.rp : 'l',
+    ribbonSize: RIBBON_SIZE_IDS.includes(a.rz) ? a.rz : 'sm',
     eyeTopColor: AVATAR_PARTS.eyeColors[etIdx],
     eyeSplit,
     eyeColorR: AVATAR_PARTS.eyeColors[ec2Idx],
