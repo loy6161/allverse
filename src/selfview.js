@@ -62,6 +62,14 @@ body.vc-ui-hidden .vc-selfview { display: none; }
 @media (max-width: 640px) {
   /* スマホは画面が狭く、動かせない（floatwinが無効）ので小さめに置く */
   .vc-selfview { width: 120px; height: 120px; left: 10px; bottom: 150px; }
+  /* ⚠ チャットログ／動画のコントロールを開くとこの位置に重なる
+     （2026-08-08 loyさん「スマホUIがぐちゃぐちゃ」で発覚。実機では小窓が
+     チャットの入力欄や動画のボタンの上に乗っていた）。
+     開いている間だけ退避させる。emotebar.js と同じ考え方 */
+  body.vc-m-chat-open .vc-selfview,
+  body.vc-m-video-open .vc-selfview {
+    display: none;
+  }
 }
 `;
   document.head.appendChild(style);

@@ -34,8 +34,43 @@ function injectStyle() {
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
-body.vc-vr-on > *:not(canvas):not(.vc-vr-hint) { display: none !important; }
+/* ⚠ スクリーンの映像の層（.vc-screen-layer）は**残す**。
+   映像はYouTubeのiframeで、キャンバスの穴から透かして見せているため、
+   ここを隠すとスクリーンが真っ暗になる（2026-08-08 loyさんの実機で発生） */
+body.vc-vr-on > *:not(canvas):not(.vc-vr-hint):not(.vc-screen-layer) { display: none !important; }
 body.vc-vr-on { overflow: hidden; background: #000; }
+/* ⚠ 縦持ちのまま二眼にすると、細長い絵が2枚並ぶだけで使えない
+   （2026-08-08 loyさん「縦画面の状態だと縦で分割しちゃう」）。
+   スマホのブラウザは画面の向きを固定できない（iOS Safari は orientation.lock が無い）ので、
+   **絵の方を90°回して**横長にする。端末を横に倒せばそのまま正しく見える */
+body.vc-vr-on.vc-vr-rot canvas {
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform-origin: 50% 50% !important;
+  transform: translate(-50%, -50%) rotate(90deg) !important;
+}
+body.vc-vr-on canvas { touch-action: none; }
+/* 映像の層をまとめた箱も、絵と同じだけ回す（中身の左右の並びは箱の中で決める） */
+body.vc-vr-on.vc-vr-rot .vc-vr-stage {
+  top: 50%;
+  left: 50%;
+  transform-origin: 50% 50%;
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+/* 案内も絵と同じだけ回す。⚠ 回さないと、端末を横に倒したときだけ文字が横倒しになる。
+   置き場所は**画面の端**（視界のまん中に文字を置かない） */
+body.vc-vr-on.vc-vr-rot .vc-vr-hint {
+  left: 14px !important;
+  right: auto !important;
+  bottom: auto !important;
+  top: 50% !important;
+  display: block !important;
+  white-space: nowrap;
+  transform-origin: 50% 50%;
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+body.vc-vr-on.vc-vr-rot .vc-vr-hint span:last-child { display: none; }
 `;
   document.head.appendChild(style);
 }
@@ -57,7 +92,10 @@ const EYE_HEIGHT = 1.5;
  *   onMessage?: (text:string)=>void,
  * }} opts
  */
-export function createVrView({ renderer, scene, camera, getPlayer, onChange = () => {}, onMessage = () => {} }) {
+export function createVrView({
+  renderer, scene, camera, getPlayer, screen = null,
+  onChange = () => {}, onMessage = () => {},
+}) {
   const stereo = new THREE.StereoCamera();
   stereo.eyeSep = EYE_SEP;
 
@@ -81,6 +119,43 @@ export function createVrView({ renderer, scene, camera, getPlayer, onChange = ()
   const up = new THREE.Vector3(0, 1, 0);
   /** 実際にカメラへ入れる姿勢（作業用） */
   const camQuat = new THREE.Quaternion();
+  /** 画面に出す姿勢。揺れを抑えるため、目標へ少しずつ寄せる */
+  const shown = new THREE.Quaternion();
+  /** 絵を90°回して出しているか（端末の回転ロックが入っているときに使う） */
+  let rotated = false;
+  /** 大きさの取得に使い回す（毎フレームの生成を避ける） */
+  const _size = new THREE.Vector2();
+
+  /**
+   * 画面の向き（度）。
+   * ⚠ **回転ロックをかけている端末**では、横に倒しても angle は 0 のまま。
+   *   その場合は絵の方を90°回して出しているので、ジャイロの計算にも同じ90°を足す。
+   *   これを足さないと「左右に首を振っても、画面が傾くだけで横を向けない」
+   *   （2026-08-08 loyさんの実機で発生）
+   */
+  function currentScreenAngle() {
+    const a = (window.screen && window.screen.orientation && window.screen.orientation.angle)
+      || window.orientation || 0;
+    return rotated ? a + 90 : a;
+  }
+
+  /**
+   * 画面いっぱいに横長で描くための下ごしらえ。
+   * 縦長のビューポートのときは**絵を回す**（端末の向きは固定できないため）。
+   */
+  function layout() {
+    if (!on) return;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    rotated = vh > vw;
+    document.body.classList.toggle('vc-vr-rot', rotated);
+    const w = rotated ? vh : vw;
+    const h = rotated ? vw : vh;
+    renderer.setSize(w, h);
+    camera.aspect = (w / 2) / h; // 片目ぶんの縦横比
+    camera.updateProjectionMatrix();
+    screenAngle = currentScreenAngle();
+  }
 
   /**
    * ジャイロの角度をカメラの姿勢に直す。
@@ -104,16 +179,25 @@ export function createVrView({ renderer, scene, camera, getPlayer, onChange = ()
     setFromDeviceOrientation(deg2rad(e.beta), deg2rad(e.alpha), deg2rad(e.gamma), deg2rad(screenAngle));
     if (!gyroReady) {
       gyroReady = true;
-      // ⚠ ジャイロの方位は**北が基準**なので、そのまま使うと
-      //   「ゴーグルを覗いたらステージが背中側」になりうる。
-      //   最初の1回で「二眼にした瞬間に向いていた方向」へ合わせ込む
-      const gyroYaw = new THREE.Euler().setFromQuaternion(orient, 'YXZ').y;
-      yawFix.setFromAxisAngle(up, baseYaw - gyroYaw);
+      recenter();
+      shown.copy(camQuat.copy(yawFix).multiply(orient)); // 最初は寄せずに合わせる
     }
   }
 
+  /**
+   * 正面を今向いている方へ合わせ直す（2026-08-08・loyさん
+   * 「時間がたつとジャイロずれてくるから、位置リセット必要かも」）。
+   *
+   * ⚠ ジャイロの方位は**北が基準**で、しかも磁気や積算の誤差で少しずつずれる。
+   *   ここで「いま向いている方向 ＝ 二眼にしたときの正面」に合わせ直す
+   */
+  function recenter() {
+    const gyroYaw = new THREE.Euler().setFromQuaternion(orient, 'YXZ').y;
+    yawFix.setFromAxisAngle(up, baseYaw - gyroYaw);
+  }
+
   function onScreenOrientation() {
-    screenAngle = (window.screen && window.screen.orientation && window.screen.orientation.angle) || window.orientation || 0;
+    layout();
   }
 
   /**
@@ -147,23 +231,27 @@ export function createVrView({ renderer, scene, camera, getPlayer, onChange = ()
     wakeLock = null;
   }
 
-  /** 抜け方の案内。二眼の**両目の下**に出す（片方だけだと目に入らない） */
+  /**
+   * 操作の案内。
+   * ⚠ 絵を90°回して出していることがあるので、案内も**同じだけ回す**。
+   *   回さないと、横に倒したときだけ文字が横倒しになる
+   */
   let hint = null;
   function showHint() {
     if (hint) return;
     hint = document.createElement('div');
     hint.className = 'vc-vr-hint';
-    hint.textContent = '画面をタップすると戻ります';
-    hint.style.cssText = 'position:fixed;left:0;right:0;bottom:10px;z-index:90;'
+    hint.style.cssText = 'position:fixed;left:0;right:0;bottom:12px;z-index:90;'
       + 'display:flex;justify-content:space-around;pointer-events:none;'
-      + 'font-size:11px;color:rgba(255,255,255,0.55);'
+      + 'font-size:11px;color:rgba(255,255,255,0.5);text-align:center;'
       + 'font-family:"Hiragino Kaku Gothic ProN","Yu Gothic UI",sans-serif;';
-    hint.innerHTML = '<span>画面をタップすると戻ります</span><span>画面をタップすると戻ります</span>';
+    const t = 'タップ＝正面に戻す ／ 長押し＝おわり';
+    hint.innerHTML = `<span>${t}</span><span>${t}</span>`;
     document.body.appendChild(hint);
     // 数秒で薄くする（ずっと出ていると視界の邪魔）
     setTimeout(() => {
-      if (hint) hint.style.opacity = '0.25';
-    }, 6000);
+      if (hint) hint.style.opacity = '0.22';
+    }, 8000);
   }
 
   function hideHint() {
@@ -171,8 +259,31 @@ export function createVrView({ renderer, scene, camera, getPlayer, onChange = ()
     hint = null;
   }
 
-  function onTapOut() {
-    if (on) stop();
+  /**
+   * 画面を触ったときの動き（2026-08-08 変更）。
+   *   短いタップ … 正面に戻す（ジャイロのずれ直し。loyさんの要望）
+   *   長押し     … 二眼をやめる
+   * ⚠ 「どこでもタップで終了」にすると、ずれ直しのたびに抜けてしまう。
+   *   逆に終了を難しくしすぎると**ゴーグルに入れたまま戻れない**ので、長押しにした
+   */
+  const LONG_PRESS_MS = 700;
+  let pressTimer = null;
+  let longFired = false;
+
+  function onPressStart() {
+    if (!on) return;
+    longFired = false;
+    pressTimer = setTimeout(() => {
+      longFired = true;
+      stop();
+    }, LONG_PRESS_MS);
+  }
+
+  function onPressEnd() {
+    if (pressTimer) clearTimeout(pressTimer);
+    pressTimer = null;
+    if (!on || longFired) return;
+    recenter(); // 短いタップ＝正面に戻す
   }
 
   async function start() {
@@ -189,9 +300,12 @@ export function createVrView({ renderer, scene, camera, getPlayer, onChange = ()
     baseYaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
     yawFix.identity();
     orient.identity();
-    onScreenOrientation();
+    shown.identity();
+    document.body.classList.add('vc-ui-hidden', 'vc-vr-on');
+    layout(); // ⚠ クラスを付けてから。縦長なら絵を90°回す
     window.addEventListener('deviceorientation', onDeviceOrientation);
     window.addEventListener('orientationchange', onScreenOrientation);
+    window.addEventListener('resize', onScreenOrientation);
     // 全画面（できる端末だけ）。iOS Safari は全画面にできないので、そのまま続ける
     try {
       if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
@@ -202,10 +316,13 @@ export function createVrView({ renderer, scene, camera, getPlayer, onChange = ()
       }
     } catch { /* iOS など。横向きは本人に回してもらう */ }
     keepAwake();
-    document.body.classList.add('vc-ui-hidden', 'vc-vr-on');
+    // スクリーンの映像を右目にも出す（DOMは1つしか置けないので、もう1枚 iframe を足す）
+    if (screen && screen.setStereo) screen.setStereo(true);
     showHint();
     // ⚠ 抜け道を必ず残す。ここを塞ぐと**ゴーグルに入れたまま戻れない**
-    window.addEventListener('pointerdown', onTapOut);
+    window.addEventListener('pointerdown', onPressStart);
+    window.addEventListener('pointerup', onPressEnd);
+    window.addEventListener('pointercancel', onPressEnd);
     onChange(true);
   }
 
@@ -214,21 +331,29 @@ export function createVrView({ renderer, scene, camera, getPlayer, onChange = ()
     on = false;
     window.removeEventListener('deviceorientation', onDeviceOrientation);
     window.removeEventListener('orientationchange', onScreenOrientation);
-    window.removeEventListener('pointerdown', onTapOut);
+    window.removeEventListener('resize', onScreenOrientation);
+    window.removeEventListener('pointerdown', onPressStart);
+    window.removeEventListener('pointerup', onPressEnd);
+    window.removeEventListener('pointercancel', onPressEnd);
+    if (pressTimer) clearTimeout(pressTimer);
+    pressTimer = null;
     releaseAwake();
+    if (screen && screen.setStereo) screen.setStereo(false); // 右目用のiframeを片付ける
     hideHint();
     const player = getPlayer();
     if (player) player.visible = true; // 二眼のあいだ消していた自分の姿を戻す
-    document.body.classList.remove('vc-ui-hidden', 'vc-vr-on');
+    rotated = false;
+    document.body.classList.remove('vc-ui-hidden', 'vc-vr-on', 'vc-vr-rot');
     try {
       if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
     } catch { /* 抜けられなくても操作はできる */ }
-    // 画面いっぱいに戻す（分割の設定を残さない）
+    // 画面いっぱいに戻す（分割と、回して出すために変えた大きさを元へ）
     renderer.setScissorTest(false);
-    const size = new THREE.Vector2();
-    renderer.getSize(size);
-    renderer.setViewport(0, 0, size.x, size.y);
-    renderer.setScissor(0, 0, size.x, size.y);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+    renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
     onChange(false);
   }
 
@@ -261,12 +386,20 @@ export function createVrView({ renderer, scene, camera, getPlayer, onChange = ()
         player.visible = false;
       }
       // ジャイロが来ていない端末（PCでの動作確認など）では、開始時の向きのまま固定する
-      if (gyroReady) camera.quaternion.copy(camQuat.copy(yawFix).multiply(orient));
-      else camera.quaternion.setFromAxisAngle(up, baseYaw);
+      if (gyroReady) {
+        camQuat.copy(yawFix).multiply(orient);
+        // ⚠ 生の値をそのまま入れると**細かく揺れ続ける**（2026-08-08 loyさん
+        //   「なんかゆらゆらする」）。少しずつ寄せて、手ぶれを吸わせる。
+        //   寄せを強くしすぎると遅れて見えるので 0.35 にしてある
+        shown.slerp(camQuat, 0.35);
+        camera.quaternion.copy(shown);
+      } else {
+        camera.quaternion.setFromAxisAngle(up, baseYaw);
+      }
       camera.updateMatrixWorld(true);
       stereo.update(camera);
 
-      const size = new THREE.Vector2();
+      const size = _size;
       renderer.getSize(size);
       const w = Math.floor(size.x / 2);
       const h = size.y;
@@ -281,6 +414,11 @@ export function createVrView({ renderer, scene, camera, getPlayer, onChange = ()
       renderer.render(scene, stereo.cameraR);
 
       renderer.setScissorTest(false);
+
+      // スクリーンの映像（キャンバスの穴から透ける層）も左右に置き直す
+      if (screen && screen.updateStereo) {
+        screen.updateStereo(stereo.cameraL, stereo.cameraR, { w: size.x, h, rotated });
+      }
     },
   };
 }

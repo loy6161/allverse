@@ -155,6 +155,9 @@ function injectStyle() {
       pointer-events: none;
     }
 
+    /* 折りたたみボタン（スマホ専用。既定は非表示＝PC/タブレットでは使わない） */
+    .vc-emote-toggle { display: none; }
+
     /* 画面が狭いと、下の段（チャット320 + エモート368 + 動画360 ＋ 余白）が
        横に並びきらず重なる（2026-08-03 loyさん指摘）。
        必要なのは約1096px。それを下回る幅では、エモートを**動画のコントロールの上の段**へ
@@ -188,9 +191,44 @@ function injectStyle() {
         height: 44px;
         font-size: 18px;
       }
-      /* チャットや動画コントロールを開いている間は、縦に長いエモートが被るので退避 */
+
+      /* ⚠ エモートは既定で畳んでおく（2026-08-08・loyさん「スマホUIがぐちゃぐちゃ」対応）。
+         以前は12個ぶん（最大約356px）を常時開いたまま右端に出していて、
+         画面の半分近くを占領し📱スマホのボタンとも重なっていた。
+         .vc-emote-toggle という丸ボタン1個だけを常時出し、押している間だけ本体を開く */
+      .vc-emote-bar { display: none; }
+      body.vc-m-emote-open .vc-emote-bar { display: flex; }
+
+      .vc-emote-toggle {
+        display: flex;
+        position: fixed;
+        right: 16px;
+        bottom: var(--m-emote-bottom);
+        z-index: 10;
+        width: var(--m-emote-toggle);
+        height: var(--m-emote-toggle);
+        border-radius: 50%;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        color: #ffffff;
+        background: rgba(10, 8, 24, 0.6);
+        border: 1px solid rgba(0, 255, 234, 0.45);
+        box-shadow: 0 0 10px rgba(0, 255, 234, 0.25);
+        cursor: pointer;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      body.vc-m-emote-open .vc-emote-toggle {
+        border-color: rgba(255, 0, 229, 0.75);
+        background: rgba(255, 0, 229, 0.18);
+      }
+
+      /* チャットや動画コントロールを開いている間は、開いたエモートが被るので退避 */
       body.vc-m-chat-open .vc-emote-bar,
-      body.vc-m-video-open .vc-emote-bar {
+      body.vc-m-video-open .vc-emote-bar,
+      body.vc-m-chat-open .vc-emote-toggle,
+      body.vc-m-video-open .vc-emote-toggle {
         display: none;
       }
     }
@@ -212,6 +250,23 @@ export function initEmoteBar({ onEmote }) {
 
   const bar = document.createElement('div');
   bar.className = 'vc-emote-bar';
+
+  // 折りたたみボタン（スマホ専用。CSSはPC/タブレットでは display:none のまま無効）。
+  // ⚠ 2026-08-08 loyさん「スマホUIがぐちゃぐちゃ」対応。
+  //   以前はスマホでも12個ぶんの列を常時開いたままにしていて、画面の半分近くを占領し、
+  //   📱スマホのボタンとも重なっていた。既定は畳んでおき、これを押した間だけ開く
+  const MOBILE_OPEN_CLASS = 'vc-m-emote-open';
+  const toggleBtn = document.createElement('button');
+  toggleBtn.type = 'button';
+  toggleBtn.className = 'vc-emote-toggle';
+  toggleBtn.title = 'エモートを開く';
+  toggleBtn.setAttribute('aria-label', 'エモートを開く');
+  toggleBtn.textContent = '\u{1F60A}'; // 😊
+  toggleBtn.addEventListener('click', () => {
+    const open = document.body.classList.toggle(MOBILE_OPEN_CLASS);
+    toggleBtn.textContent = open ? '\u{2716}' : '\u{1F60A}'; // ✖ / 😊
+    toggleBtn.title = open ? 'エモートを閉じる' : 'エモートを開く';
+  });
 
   const buttons = [];
   /**
@@ -337,12 +392,22 @@ export function initEmoteBar({ onEmote }) {
 
   render();
   document.body.appendChild(bar);
+  document.body.appendChild(toggleBtn);
+
+  /** 折りたたみを閉じる（スマホでエモートを押したあと・PCでは無害＝クラスが無いので何もしない） */
+  function closeMobile() {
+    document.body.classList.remove(MOBILE_OPEN_CLASS);
+    toggleBtn.textContent = '\u{1F60A}'; // 😊
+    toggleBtn.title = 'エモートを開く';
+  }
 
   function fire(id, btn) {
     if (!enabled || cooling) return;
     cooling = true;
 
     onEmote(id);
+    // スマホは押したら1つ発火して畳む（開いたままだと📱ボタン等と重なる時間が長引く）
+    closeMobile();
 
     if (btn) {
       btn.classList.add('vc-emote-fire');
@@ -385,6 +450,8 @@ export function initEmoteBar({ onEmote }) {
   function setEnabled(value) {
     enabled = !!value;
     bar.style.display = enabled ? '' : 'none';
+    toggleBtn.style.display = enabled ? '' : 'none';
+    if (!enabled) closeMobile();
     if (!cooling) {
       buttons.forEach((b) => {
         b.disabled = !enabled;
@@ -394,6 +461,8 @@ export function initEmoteBar({ onEmote }) {
 
   function destroy() {
     window.removeEventListener('keydown', onKeydown);
+    document.body.classList.remove(MOBILE_OPEN_CLASS);
+    toggleBtn.remove();
     bar.remove();
   }
 

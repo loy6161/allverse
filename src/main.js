@@ -1267,6 +1267,8 @@ function enterWorld({ name, config, eventId, roomNumber, idToken, entryCode, spa
     scene,
     camera,
     getPlayer: () => player,
+    // スクリーンの映像（YouTubeのiframe）を二眼にも出すために渡す
+    screen: liveScreen,
     onChange: (isOn) => {
       // 二眼の間は歩けない（観覧専用）。キーが押しっぱなしのまま入っても止まる
       if (controls && controls.setInputEnabled) controls.setInputEnabled(!isOn);
@@ -2204,8 +2206,9 @@ function loop() {
   // 二眼モード（スマホVR）。⚠ **両目ぶんで2回描く**ので、
   //   ブルームと自分の姿の小窓は止める（そのままだと確実にフレームが落ちる）
   if (vrView && vrView.isOn()) {
+    // ⚠ 映像の層は vrView.render() の中で左右に置き直している。
+    //   ここで liveScreen.update() を呼ぶと**片目ぶんの配置に戻ってしまう**
     vrView.render();
-    liveScreen.update();
     return;
   }
   if (bloom && bloomOn) bloom.render(scene, camera);
@@ -2218,6 +2221,9 @@ function loop() {
 loop();
 
 window.addEventListener('resize', () => {
+  // ⚠ 二眼モード中は**触らない**。あちらは画面が縦長のとき絵を90°回して出すため、
+  //   縦横を入れ替えた大きさを自分で決めている（ここで上書きすると縦長に戻ってしまう）
+  if (vrView && vrView.isOn()) return;
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);

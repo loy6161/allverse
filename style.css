@@ -108,6 +108,15 @@ html, body {
     --m-emote-bottom: calc(var(--m-bottom) + var(--m-chat-icon) + var(--m-gap));
     --m-video-h: 74px; /* 動画のコントロールの高さ */
 
+    /* エモートを畳んだ丸ボタン（2026-08-08追加）。
+       ⚠ 以前はエモート12個ぶん(最大約356px)を常時開いたまま右端に縦一列で出していて、
+       画面の半分近くを占領し📱スマホのボタンとも重なっていた（loyさん「スマホUIがぐちゃぐちゃ」）。
+       畳んだ状態はこの1個ぶんの高さだけ確保し、押したときだけ上に伸びるようにする */
+    --m-emote-toggle: 44px;
+    /* 📱スマホのボタンは、畳んだエモートのさらに上に積む。
+       エモートを開いている間だけ📱を隠すので（下のCSS）、開閉どちらでも重ならない */
+    --m-phone-bottom: calc(var(--m-emote-bottom) + var(--m-emote-toggle) + var(--m-gap));
+
     /* 開いて出てくるパネル（チャットログ・動画のコントロール）は左下の操作キーより上。
        横幅いっぱいに出すので操作キーを避ける必要がある */
     --m-panel-bottom: calc(var(--m-bottom) + var(--m-pad-h) + var(--m-gap));
@@ -124,13 +133,28 @@ html, body {
     font-size: 12px;
   }
 
-  /* 左上のルーム情報。右上のボタンと突き当たらないよう幅を制限する */
+  /* 左上のルーム情報。右上のツールバー（🏃🥽🏷👁）と重なっていた
+     （2026-08-08 loyさん「スマホUIがぐちゃぐちゃ」で発覚）。
+     原因は横1列のまま詰め込んでいたこと：会場名・人数・VC残高・空腹%が
+     1行に収まりきらず、幅を絞られた会場名だけが「VE...」と潰れ、
+     しかも折り返した2行目がツールバーの下に潜り込んでいた。
+     ⚠ 横に並べるのをやめて縦積みにする。1項目ずつなら細い幅でも潰れない */
   #room-info {
-    max-width: calc(100vw - 150px);
+    max-width: calc(100vw - 190px); /* 右のツールバー(約165px)+余白ぶん避ける */
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
   }
   #room-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    max-width: 100%;
+  }
+  /* VC残高・空腹%（main.jsがroom-infoに追加する）。
+     横並び前提の margin-left:10px が付いているが、縦積みでは不要なので消す */
+  #room-info span {
+    margin-left: 0 !important;
+    font-size: 11px;
   }
 }

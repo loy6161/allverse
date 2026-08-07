@@ -187,7 +187,13 @@ function injectStyle() {
 
 @media (max-width: 640px) {
   .vc-phone { right: 10px; left: 10px; width: auto; bottom: 84px; height: auto; max-height: 72vh; }
-  .vc-phone-btn { right: 10px; bottom: 168px; }
+  /* ⚠ 位置は固定pxではなく --m-phone-bottom（style.css）を使う。
+     畳んだエモートのすぐ上に積む計算式なので、エモート側の高さを変えても
+     ここが自動で追従する（2026-08-08 スマホUI整理） */
+  .vc-phone-btn { right: 10px; bottom: var(--m-phone-bottom); }
+  /* エモートを開いている間だけ📱を隠す。開いたエモートは一時的に上へ伸びて
+     このボタンの位置と被るため（loyさん「スマホUIがぐちゃぐちゃ」対応） */
+  body.vc-m-emote-open .vc-phone-btn { display: none; }
 }
 `;
   document.head.appendChild(style);

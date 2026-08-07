@@ -47,6 +47,8 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
   layer.style.inset = '0';
   layer.style.zIndex = '1'; // WebGLキャンバス(z=2)より後ろ
   layer.style.pointerEvents = 'none';
+  // ⚠ 二眼モードは画面のものを全部隠すが、**この層だけは残す**（映像がここにある）
+  layer.className = 'vc-screen-layer';
   document.body.appendChild(layer);
 
   const cssScene = new THREE.Scene();
@@ -454,11 +456,142 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     return currentVideoId;
   }
 
+  // ------------------------------------------------------------------
+  // 二眼（スマホVR）用のもう1枚（2026-08-08・loyさん「スクリーンの映像が見えない。真っ暗」）
+  //
+  // ⚠ 映像はYouTubeのiframeで、**WebGLの中には描けない**（別ドメインの映像は
+  //   テクスチャにできない）。だから3D空間に置いたDOMをキャンバスの穴から透かしている。
+  //   ところが二眼にすると穴が左右2つになり、**DOMは1つしか置けない**ので片目しか映らない。
+  //   → 右目用に**もう1枚 iframe を用意する**。⚠ 音は左だけ（右は必ず消音）。
+  //     再生位置は厳密には揃わないが、平面のスクリーンなので気になりにくい。
+  //     ⚠ 通信と負荷は2倍になる。二眼をやめたら必ず片付ける
+  // ------------------------------------------------------------------
+  let stereoOn = false;
+  let cssRendererR = null;
+  let holderR = null;
+  let iframeR = null;
+  /** 左右の層をまとめて入れる箱（回すのはこれ1つだけ） */
+  let stage = null;
+
+  function buildRightEye() {
+    if (cssRendererR) return;
+    stage = document.createElement('div');
+    stage.className = 'vc-screen-layer vc-vr-stage';
+    stage.style.cssText = 'position:fixed;z-index:1;pointer-events:none;overflow:hidden;';
+    document.body.appendChild(stage);
+    stage.appendChild(layer); // 左目の層を箱の中へ移す（抜けるときに戻す）
+    cssRendererR = new CSS3DRenderer();
+    const l = cssRendererR.domElement;
+    l.style.position = 'fixed';
+    l.style.inset = '0';
+    l.style.zIndex = '1';
+    l.style.pointerEvents = 'none';
+    l.className = 'vc-screen-layer';
+    stage.appendChild(l);
+    holderR = document.createElement('div');
+    holderR.style.width = `${PX_W}px`;
+    holderR.style.height = `${PX_H}px`;
+    holderR.style.background = '#000';
+    holderR.style.pointerEvents = 'none';
+    const objR = new CSS3DObject(holderR);
+    objR.position.set(SC.x, SC.y, SC.z);
+    objR.scale.setScalar(SC.width / PX_W);
+    cssSceneR.add(objR);
+  }
+
+  const cssSceneR = new THREE.Scene();
+
+  function mountRightIframe() {
+    if (!currentVideoId || !holderR) return;
+    if (iframeR) holderR.removeChild(iframeR);
+    iframeR = document.createElement('iframe');
+    iframeR.style.width = '100%';
+    iframeR.style.height = '100%';
+    iframeR.style.border = '0';
+    const origin = encodeURIComponent(location.origin);
+    // ⚠ 右目は**必ず消音**（mute=1）。音が二重に鳴ると聞けたものではない
+    iframeR.src = `https://www.youtube.com/embed/${currentVideoId}`
+      + `?autoplay=1&mute=1&playsinline=1&rel=0&controls=0&cc_load_policy=0&origin=${origin}`;
+    iframeR.allow = 'autoplay; encrypted-media';
+    holderR.appendChild(iframeR);
+  }
+
+  function clearRightEye() {
+    if (iframeR && holderR) holderR.removeChild(iframeR);
+    iframeR = null;
+    if (cssRendererR && cssRendererR.domElement.parentNode) {
+      cssRendererR.domElement.parentNode.removeChild(cssRendererR.domElement);
+    }
+    cssRendererR = null;
+    holderR = null;
+    // 左目の層を元の場所（body直下・画面いっぱい）へ戻してから箱を片付ける
+    if (stage) {
+      document.body.appendChild(layer);
+      layer.style.position = 'fixed';
+      layer.style.inset = '0';
+      layer.style.left = '';
+      layer.style.top = '';
+      layer.style.width = '';
+      layer.style.height = '';
+      layer.style.transform = '';
+      stage.remove();
+      stage = null;
+    }
+  }
+
+  /** 二眼モードの入り／切り。呼ぶのは vrview 側 */
+  function setStereo(on) {
+    if (on === stereoOn) return;
+    stereoOn = Boolean(on);
+    if (stereoOn) {
+      buildRightEye();
+      mountRightIframe();
+    } else {
+      clearRightEye();
+      // 片目に戻すので、レイヤーの大きさも戻す
+      cssRenderer.setSize(window.innerWidth, window.innerHeight);
+      layer.style.clipPath = '';
+      layer.style.transform = '';
+    }
+  }
+
   function update() {
     cssRenderer.render(cssScene, camera);
   }
 
+  /**
+   * 二眼で1フレーム描く（2026-08-08）。
+   * 左右それぞれのカメラで、画面の左半分・右半分に置く。
+   * @param {THREE.Camera} camL
+   * @param {THREE.Camera} camR
+   * @param {{w:number,h:number,rotated:boolean}} view 描画領域（回して出しているかも渡す）
+   */
+  function updateStereo(camL, camR, view) {
+    if (!stereoOn || !cssRendererR) return;
+    const halfW = Math.floor(view.w / 2);
+    // ⚠ **回す箱を1つだけ**にする（2026-08-08）。
+    //   層ごとに left と rotate を当てると、回転の原点が層の中心になるので
+    //   右目の層が画面の外へ飛んでいく（実測: 画面幅375なのに left=399 の位置に出た）。
+    //   箱を回して、その中に左右を並べるのが正しい
+    if (!stage) return;
+    stage.style.width = `${view.w}px`;
+    stage.style.height = `${view.h}px`;
+    for (const [rend, cam, offset] of [[cssRenderer, camL, 0], [cssRendererR, camR, halfW]]) {
+      const el = rend.domElement;
+      rend.setSize(halfW, view.h);
+      el.style.position = 'absolute';
+      el.style.inset = 'auto';
+      el.style.left = `${offset}px`;
+      el.style.top = '0px';
+      el.style.width = `${halfW}px`;
+      el.style.height = `${view.h}px`;
+      el.style.transform = '';
+      rend.render(rend === cssRenderer ? cssScene : cssSceneR, cam);
+    }
+  }
+
   window.addEventListener('resize', () => {
+    if (stereoOn) return; // 二眼中は updateStereo が毎フレーム決める
     cssRenderer.setSize(window.innerWidth, window.innerHeight);
   });
 
@@ -467,6 +600,7 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
 
   return {
     play, setVideo, getVideo, clearVideo, reload, update,
+    setStereo, updateStereo,
     setInteractive, toggleInteractive, player,
   };
 }
