@@ -543,9 +543,13 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     iframeR.allow = 'autoplay; encrypted-media';
     iframeR.addEventListener('load', () => {
       commandR('mute', []);
-      syncRightTime();
-      // 読み込み直後は左目もまだ動き出したところなので、少し置いてもう一度合わせる
+      // ⚠ **画質を落とす**（同じ配信を2本受けるので、少しでも軽く・細くする）。
+      //   聞いてもらえないことがあるが、効かなくても害はない
+      commandR('setPlaybackQuality', ['small']);
+      listenRight();
+      // 読み込み直後だけは、位置を知らなくても1回合わせておく
       setTimeout(syncRightTime, 2500);
+      setTimeout(() => commandR('setPlaybackQuality', ['small']), 3000);
     });
     holderR.appendChild(iframeR);
     startRightSync();
@@ -562,32 +566,78 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     } catch { /* 届かなくても映像は出る */ }
   }
 
+  /** 右目のいまの再生位置（右目のプレイヤーから届く） */
+  let rightTime = null;
+  let rightListening = false;
+
+  /**
+   * 右目のプレイヤーから状態をもらえるようにする。
+   * ⚠ 位置を知らないと「ずれているときだけ直す」ができず、
+   *   定期的に無条件でシークすることになる。**それが致命的だった**（下記）
+   */
+  function listenRight() {
+    if (!rightListening) {
+      rightListening = true;
+      window.addEventListener('message', (e) => {
+        if (e.origin !== 'https://www.youtube-nocookie.com') return;
+        let d;
+        try {
+          d = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+        } catch {
+          return;
+        }
+        if (d && d.info && typeof d.info.currentTime === 'number') rightTime = d.info.currentTime;
+      });
+    }
+    const ping = () => {
+      if (!iframeR || !iframeR.contentWindow) return;
+      try {
+        iframeR.contentWindow.postMessage(
+          JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
+          'https://www.youtube-nocookie.com',
+        );
+      } catch { /* 届かなくても映像は出る */ }
+    };
+    ping();
+    setTimeout(ping, 1500);
+  }
+
   /**
    * 右目の再生位置を左目に合わせる。
-   * ⚠ 左右は**別のプレイヤー**なので、放っておくと数十秒ずれる
-   *   （2026-08-08 実測: 左は木のシーン、右は花畑のシーンになった）。
-   *   平面のスクリーンとはいえ、左右で違う絵が出ると見ていられない
+   *
+   * ⚠⚠ **ずれているときだけ**動かす（2026-08-08・loyさんの実機で判明）。
+   *   10秒ごとに無条件でシークしていたら、シークのたびに読み込み直しが起きて
+   *   **両目とも「読み込み中」のまま**になった（loyさん「数秒だけいけた
+   *   けど両方読み込み中になった」）。
+   *   同じ動画を同じ速さで流しているので、いちど合えばそうそうズレない。
    * ⚠ ライブ配信では位置合わせが効かない（常に最前）。そのときは害もない
    */
+  const RIGHT_SYNC_TOLERANCE = 2.5; // これ以上ずれたら直す（秒）
   function syncRightTime() {
     if (!iframeR || !hasState || !state) return;
     const t = Number(state.currentTime);
     if (!Number.isFinite(t)) return;
+    // 右目の位置が分かっていて、ずれが小さいなら**触らない**
+    if (Number.isFinite(rightTime) && Math.abs(rightTime - t) < RIGHT_SYNC_TOLERANCE) return;
     commandR('seekTo', [t, true]);
     commandR('playVideo', []);
   }
 
-  /** ずれ直しを回し続ける（重い処理ではないので、ゆっくりで十分） */
-  const RIGHT_SYNC_MS = 10000;
+  /** ずれ直しの見回り。⚠ 見に行くだけで、ずれていなければ何もしない */
+  const RIGHT_SYNC_MS = 20000;
   let rightSyncTimer = null;
   function startRightSync() {
     if (rightSyncTimer) clearInterval(rightSyncTimer);
-    rightSyncTimer = setInterval(syncRightTime, RIGHT_SYNC_MS);
+    rightSyncTimer = setInterval(() => {
+      listenRight(); // 位置を教えてもらい直す
+      syncRightTime();
+    }, RIGHT_SYNC_MS);
   }
 
   function stopRightSync() {
     if (rightSyncTimer) clearInterval(rightSyncTimer);
     rightSyncTimer = null;
+    rightTime = null;
   }
 
   function clearRightEye() {
