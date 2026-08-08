@@ -284,7 +284,7 @@ export function createVrView({
       + 'display:flex;justify-content:space-around;pointer-events:none;'
       + 'font-size:11px;color:rgba(255,255,255,0.5);text-align:center;'
       + 'font-family:"Hiragino Kaku Gothic ProN","Yu Gothic UI",sans-serif;';
-    const t = 'なぞる＝向き ／ 1回＝正面 ／ 2回＝おわり ／ 2本指＝上下を直す';
+    const t = 'なぞる＝向き ／ 1回＝正面 ／ 2回＝おわり ／ 2本指＝上下 ／ 3本指＝右目の映像';
     hint.innerHTML = `<span>${t}</span><span>${t}</span>`;
     document.body.appendChild(hint);
     // 数秒で薄くする（ずっと出ていると視界の邪魔）
@@ -325,6 +325,18 @@ export function createVrView({
   function onPressStart(e) {
     if (!on) return;
     if (e.pointerId != null) touching.add(e.pointerId);
+    // 3本目の指が触れた＝**右目の映像を出す／消す**の切り替え。
+    // ⚠ 同じ配信を2本受けるので、細い回線では左目が途切れる。
+    //   そのときゴーグルから出さずに切れるようにしておく（覚える）
+    if (touching.size === 3) {
+      if (screen && screen.setRightEye) {
+        const next = !screen.getRightEye();
+        screen.setRightEye(next);
+        onMessage(next ? 'VR: 右目にも映像を出します' : 'VR: 映像は左目だけにします（そのぶん軽くなります）');
+      }
+      dragging = true;
+      return;
+    }
     // 2本目の指が触れた＝**上下がさかさまなときの逃げ道**（首の向きの基準を180°足す）
     if (touching.size === 2) {
       rotStep = (rotStep + 1) % 2;

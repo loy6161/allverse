@@ -7,6 +7,9 @@ import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer
 //   （2026-08-06: 動画が入っていない会場ではスクリーンごと出さない方針にした）
 export const DEMO_VIDEO_ID = 'unrobrGhlv0'; // clubVERSE関連動画（loyさん指定）
 
+/** VRの右目にも映像を出すか（本人の選択を覚えておく場所） */
+const RIGHT_EYE_KEY = 'vc.vr.rightEye';
+
 // ステージのLEDスクリーン位置に合わせたYouTube埋め込みレイヤー（CSS3D方式）
 // - 入場前: 空（背後のWebGL製「VERSE CITY」スクリーンが見える）
 // - play() 呼び出しで iframe を生成して再生開始（入場ボタンのクリックが
@@ -490,6 +493,12 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
   //     ⚠ 通信と負荷は2倍になる。二眼をやめたら必ず片付ける
   // ------------------------------------------------------------------
   let stereoOn = false;
+  /** 右目にも映像を出すか（回線が細いときは切れる。覚える） */
+  let rightEyeWanted = true;
+  try {
+    const saved = localStorage.getItem(RIGHT_EYE_KEY);
+    if (saved !== null) rightEyeWanted = saved === '1';
+  } catch { /* 読めなくても既定でよい */ }
   let cssRendererR = null;
   let holderR = null;
   let iframeR = null;
@@ -503,14 +512,23 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     l.style.pointerEvents = 'none';
     l.className = 'vc-screen-layer';
     stage.appendChild(l);
+    // ⚠⚠ 右目の入れ物は**わざと小さく作る**（2026-08-08・loyさん「左が読み込みになる」）。
+    //   YouTubeは**プレイヤーの大きさを見て画質を決める**ので、小さく作れば
+    //   自動的に低い画質を配信してくる。`setPlaybackQuality` の指定は
+    //   聞いてもらえないことが多く、当てにならなかった。
+    //   小さく作って、3D側で引き伸ばして同じ大きさに見せる。
+    //   ⚠ 右目の画がやや粗くなるが、**左目が途切れる方がずっと悪い**
+    //     （同じ配信を2本受けるので、回線は左目と取り合いになる）
+    const PX_W_R = 426; // 240p相当。左目(1120px)の約1/2.6
+    const PX_H_R = Math.round((PX_W_R * SC.height) / SC.width);
     holderR = document.createElement('div');
-    holderR.style.width = `${PX_W}px`;
-    holderR.style.height = `${PX_H}px`;
+    holderR.style.width = `${PX_W_R}px`;
+    holderR.style.height = `${PX_H_R}px`;
     holderR.style.background = '#000';
     holderR.style.pointerEvents = 'none';
     const objR = new CSS3DObject(holderR);
     objR.position.set(SC.x, SC.y, SC.z);
-    objR.scale.setScalar(SC.width / PX_W);
+    objR.scale.setScalar(SC.width / PX_W_R);
     cssSceneR.add(objR);
   }
 
@@ -538,7 +556,7 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
    *   多少ずれても立体視は壊れないが、気になるようなら右目を消す判断もある
    */
   function mountRightIframe() {
-    if (!currentVideoId || !holderR) return;
+    if (!currentVideoId || !holderR || !rightEyeWanted) return;
     if (iframeR) holderR.removeChild(iframeR);
     iframeR = document.createElement('iframe');
     iframeR.style.width = '100%';
@@ -627,8 +645,14 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
    */
   /** これ以上ずれたら、飛ばして直す（秒）。飛ばすと読み込み直しになるので大きめ */
   const RIGHT_JUMP_AT = 3.0;
-  /** ここまで合っていれば、何もしない（秒） */
-  const RIGHT_OK = 0.05;
+  /**
+   * ここまで合っていれば、何もしない（秒）。
+   * ⚠ 細かく合わせにいくほど右目が先読みを増やし、**左目の分の回線を食う**
+   *   （2026-08-08 loyさん「左が読み込みになる」）。
+   *   0.15秒は5フレームぶん。平面のスクリーンなら見て分からない範囲で、
+   *   ここを緩めるぶん左目が安定する
+   */
+  const RIGHT_OK = 0.15;
   /**
    * 追い込みに使う速さ。
    * ⚠ YouTubeは**決まった値しか受け付けない**（0.25/0.5/0.75/1/1.25/…）。
@@ -685,7 +709,8 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     // ⚠⚠ **必要なぶんだけ**速さを当てて、自分で等速に戻す（2026-08-08）。
     //   速さは1.25/0.75しか選べないので、当てっぱなしだと必ず行き過ぎる。
     //   「どれだけずれているか」から**当てる時間**を計算するのが正しい
-    const ms = Math.min(Math.abs(d) / CATCH_PER_SEC, 2.5) * 1000;
+    // ⚠ 速さを変えている間は先読みが増えて回線を食う。当てる時間には上限を置く
+    const ms = Math.min(Math.abs(d) / CATCH_PER_SEC, 1.2) * 1000;
     setRightRate(d > 0 ? RIGHT_FAST : RIGHT_SLOW);
     rateTimer = setTimeout(() => {
       rateTimer = null;
@@ -845,6 +870,28 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
   return {
     play, setVideo, getVideo, clearVideo, reload, update,
     setStereo, updateStereo,
+    /**
+     * 右目にも映像を出すか（2026-08-08）。
+     * ⚠ 同じ配信を2本受けるので、細い回線では**左目が途切れる**ことがある。
+     *   そのときは false にすると、左目だけになって確実に流れる（右目は黒い板）。
+     *   覚えるので、次に入ったときも同じ設定で始まる
+     */
+    setRightEye(on) {
+      const v = Boolean(on);
+      if (v === rightEyeWanted) return;
+      rightEyeWanted = v;
+      try {
+        localStorage.setItem(RIGHT_EYE_KEY, v ? '1' : '0');
+      } catch { /* 覚えられなくても、その場では効く */ }
+      if (!stereoOn) return;
+      if (v) mountRightIframe();
+      else {
+        stopRightSync();
+        if (iframeR && holderR) holderR.removeChild(iframeR);
+        iframeR = null;
+      }
+    },
+    getRightEye: () => rightEyeWanted,
     setInteractive, toggleInteractive, player,
   };
 }
