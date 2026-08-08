@@ -42,20 +42,25 @@ body.vc-vr-on { overflow: hidden; background: #000; }
 /* ⚠ 縦持ちのまま二眼にすると、細長い絵が2枚並ぶだけで使えない
    （2026-08-08 loyさん「縦画面の状態だと縦で分割しちゃう」）。
    スマホのブラウザは画面の向きを固定できない（iOS Safari は orientation.lock が無い）ので、
-   **絵の方を90°回して**横長にする。端末を横に倒せばそのまま正しく見える */
+   **絵の方を90°回して**横長にする。端末を横に倒せばそのまま正しく見える。
+
+   ⚠⚠ 回す向きは**端末を倒す向きと逆**（2026-08-08 loyさん「さかさま」で判明）。
+   端末を右に倒す＝画面が時計回りに90°回るので、絵を**反時計回りに90°**回して
+   打ち消す。同じ向きに回すと足し算になって**ちょうど180°＝上下さかさま**になる。
+   ここは「打ち消す」が正しい、と覚えること */
 body.vc-vr-on.vc-vr-rot canvas {
   position: fixed !important;
   top: 50% !important;
   left: 50% !important;
   transform-origin: 50% 50% !important;
-  transform: translate(-50%, -50%) rotate(90deg) !important;
-}
-/* 左に倒して持つ人は逆向きに回す（同じ向きに回すと絵が上下さかさまになる） */
-body.vc-vr-on.vc-vr-rot.vc-vr-rot-ccw canvas {
   transform: translate(-50%, -50%) rotate(-90deg) !important;
 }
+/* 左に倒して持つ人は逆向き（こちらも倒す向きを打ち消す） */
+body.vc-vr-on.vc-vr-rot.vc-vr-rot-ccw canvas {
+  transform: translate(-50%, -50%) rotate(90deg) !important;
+}
 body.vc-vr-on.vc-vr-rot.vc-vr-rot-ccw .vc-vr-stage {
-  transform: translate(-50%, -50%) rotate(-90deg);
+  transform: translate(-50%, -50%) rotate(90deg);
 }
 body.vc-vr-on canvas { touch-action: none; }
 /* 映像の層をまとめた箱も、絵と同じだけ回す（中身の左右の並びは箱の中で決める） */
@@ -63,18 +68,24 @@ body.vc-vr-on.vc-vr-rot .vc-vr-stage {
   top: 50%;
   left: 50%;
   transform-origin: 50% 50%;
-  transform: translate(-50%, -50%) rotate(90deg);
+  transform: translate(-50%, -50%) rotate(-90deg);
 }
 /* 案内も絵と同じだけ回す。⚠ 回さないと、端末を横に倒したときだけ文字が横倒しになる。
    置き場所は**画面の端**（視界のまん中に文字を置かない） */
 body.vc-vr-on.vc-vr-rot .vc-vr-hint {
-  left: 14px !important;
-  right: auto !important;
+  left: auto !important;
+  right: 14px !important;
   bottom: auto !important;
   top: 50% !important;
   display: block !important;
   white-space: nowrap;
   transform-origin: 50% 50%;
+  transform: translate(50%, -50%) rotate(-90deg);
+}
+/* 左に倒して持つときは反対側の端へ（どちらでも視界の下にくるように） */
+body.vc-vr-on.vc-vr-rot.vc-vr-rot-ccw .vc-vr-hint {
+  left: 14px !important;
+  right: auto !important;
   transform: translate(-50%, -50%) rotate(90deg);
 }
 body.vc-vr-on.vc-vr-rot .vc-vr-hint span:last-child { display: none; }
@@ -339,9 +350,11 @@ export function createVrView({
     movedPx += Math.abs(dx) + Math.abs(dy);
     if (movedPx < DRAG_PX) return;
     dragging = true;
-    // 横に倒して持っているときは、指の上下が世界の左右になる
+    // 横に倒して持っているときは、指の上下が世界の左右になる。
+    // ⚠ 向きは**絵の回し方に合わせる**（右倒しは絵を反時計回りに回しているので、
+    //   画面を下へなぞる＝絵の中では左へ動かすことになる）
     let along = dx;
-    if (rotated) along = holdAngle < 0 ? -dy : dy;
+    if (rotated) along = holdAngle < 0 ? dy : -dy;
     baseYaw -= along * 0.006;
     recenter();
   }

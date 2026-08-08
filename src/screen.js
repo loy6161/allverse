@@ -508,21 +508,6 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
 
   const cssSceneR = new THREE.Scene();
 
-  function mountRightIframe() {
-    if (!currentVideoId || !holderR) return;
-    if (iframeR) holderR.removeChild(iframeR);
-    iframeR = document.createElement('iframe');
-    iframeR.style.width = '100%';
-    iframeR.style.height = '100%';
-    iframeR.style.border = '0';
-    const origin = encodeURIComponent(location.origin);
-    // ⚠ 右目は**必ず消音**（mute=1）。音が二重に鳴ると聞けたものではない
-    iframeR.src = `https://www.youtube.com/embed/${currentVideoId}`
-      + `?autoplay=1&mute=1&playsinline=1&rel=0&controls=0&cc_load_policy=0&origin=${origin}`;
-    iframeR.allow = 'autoplay; encrypted-media';
-    holderR.appendChild(iframeR);
-  }
-
   function clearRightEye() {
     if (iframeR && holderR) holderR.removeChild(iframeR);
     iframeR = null;
@@ -551,21 +536,29 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
    */
   function syncRightEye() {
     if (!stereoOn) return;
-    if (!currentVideoId) {
-      if (iframeR && holderR) holderR.removeChild(iframeR);
-      iframeR = null;
-      return;
-    }
-    mountRightIframe();
+    // ⚠ いまは右目に映像を出していない（上の setStereo の理由を参照）。
+    //   残っているものがあれば片付けるだけにする
+    if (iframeR && holderR) holderR.removeChild(iframeR);
+    iframeR = null;
   }
 
-  /** 二眼モードの入り／切り。呼ぶのは vrview 側 */
+  /**
+   * 二眼モードの入り／切り。呼ぶのは vrview 側。
+   *
+   * ⚠⚠ **右目には映像を出さない**（2026-08-08・loyさんの実機で決定）。
+   *   同じ動画を2本同時に読ませたら、スマホでは**両方とも「読み込み中」のまま**になった
+   *   （loyさん「スクリーンの動画は読み込み中になっちゃうね」）。
+   *   ライブ配信を2本ぶん受けるのは、回線にも端末にも重すぎる。
+   *   → 右目は**黒い板**にして、映像は左目だけにする。iframe は1本のままなので、
+   *     二眼にしても再生は途切れない。
+   *   ⚠ 片目だけに映る見え方が耐えられるかは実機で見て決める。
+   *     駄目なら「VR中は映像を出さない（音だけ）」に倒す
+   */
   function setStereo(on) {
     if (on === stereoOn) return;
     stereoOn = Boolean(on);
     if (stereoOn) {
       buildRightEye();
-      mountRightIframe();
     } else {
       clearRightEye();
       // 片目に戻すので、レイヤーの大きさも戻す
