@@ -64,6 +64,7 @@
     <select id="sample">
       <option value="samples/frame1.jpg">サンプル1（立ち）</option>
       <option value="samples/frame2.jpg">サンプル2（ポーズ）</option>
+      <option value="samples/frame3.jpg">サンプル3（最新）</option>
     </select>
   </div>
   <div class="row">
@@ -80,8 +81,8 @@
   <div class="row"><label>色の許容</label><input type="range" id="tol" min="0.002" max="0.08" step="0.002" value="0.02"><span class="val" id="tolV"></span></div>
   <div class="row"><label>枠を隠す</label><input type="range" id="inset" min="0" max="0.02" step="0.001" value="0.0025"><span class="val" id="insetV"></span></div>
   <div class="row"><label>向きを補う</label><input type="checkbox" id="fixflip" checked>
-    <span class="note">レンジが全域のフレーム用</span></div>
-  <div class="row"><label>空白の境目</label><input type="range" id="empty" min="0.80" max="0.999" step="0.005" value="0.94"><span class="val" id="emptyV"></span></div>
+    <span class="note">深度が逆向きのフレーム用</span></div>
+  <div class="row"><label>空白の境目</label><input type="range" id="empty" min="0.80" max="0.999" step="0.005" value="0.99"><span class="val" id="emptyV"></span></div>
   <div class="row">
     <button id="reset">向きを戻す</button>
     <button id="raw">元の絵を見る</button>
@@ -292,16 +293,21 @@ float readDepth(int view, vec2 uv) {
   //   拾われて箱が真っ黒に塗り潰された）。素材に合わせて下げられるようにしてある
   if (p >= uEmpty) return 1.5;
   int ax = viewAxis(view);
-  float a = (uRangeMin[ax] + 1.0) * 0.5;
-  float b = (uRangeMax[ax] + 1.0) * 0.5;
+  // ⚠ `uRangeMin[ax]` のような**添字が変わる読み方は避ける**。環境によって値が壊れる。
+  //   成分は if で選ぶ（2026-08-08）
+  float lo = ax == 0 ? uRangeMin.x : (ax == 1 ? uRangeMin.y : uRangeMin.z);
+  float hi = ax == 0 ? uRangeMax.x : (ax == 1 ? uRangeMax.y : uRangeMax.z);
+  float a = (lo + 1.0) * 0.5;
+  float b = (hi + 1.0) * 0.5;
   if (viewFlipped(view)) { float t = 1.0 - b; b = 1.0 - a; a = t; }
   float n = clamp((p - 0.02) / (0.98 - 0.02), 0.0, 1.0);
-  // ⚠⚠ 送信側の「軸の反転」は **lo と hi の入れ替え**で実装されている。
-  //   そのため **レンジが全域（−1〜1）のフレームでは反転が効かない**（入れ替えても同じ）。
-  //   その状態のフレームは Back / Left / Top の深度が表と同じ向きのまま届くので、
-  //   Front と Back が交わらず、立体が1画素も出ない（2026-08-08 実測して判明）。
-  //   ここで補えるようにしておく。切り詰めが効いているフレームでは OFF のままでよい
-  if (uFixFlip > 0.5 && viewFlipped(view)) n = 1.0 - n;
+  // ⚠⚠ **深度が全方向で逆向きに入っているフレームがある**（2026-08-08 実測）。
+  //   仕様は「近い＝小さい値」だが、もらったフレームは「近い＝大きい値」だった。
+  //   そのままだと Front から見た表面と Back から見た表面が**すれ違って交わらず**、
+  //   立体が1画素も出ない。ここでまとめて向きを直せるようにしてある。
+  //   （数値で確かめた例: Front の最も手前が z=+0.28、Back の最も手前が z=−0.29。
+  //     人物は両方の内側にいるはずなのに、互いに「そこには無い」と言っていた）
+  if (uFixFlip > 0.5) n = 1.0 - n;
   return a + n * max(b - a, 1e-4);
 }
 
