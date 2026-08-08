@@ -612,24 +612,61 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
    *   同じ動画を同じ速さで流しているので、いちど合えばそうそうズレない。
    * ⚠ ライブ配信では位置合わせが効かない（常に最前）。そのときは害もない
    */
-  const RIGHT_SYNC_TOLERANCE = 2.5; // これ以上ずれたら直す（秒）
+  /** これ以上ずれたら、飛ばして直す（秒）。飛ばすと読み込み直しになるので大きめ */
+  const RIGHT_JUMP_AT = 3.0;
+  /** ここまで合っていれば、何もしない（秒） */
+  const RIGHT_OK = 0.2;
+  /** 追い込みに使う速さ */
+  const RIGHT_FAST = 1.25;
+  const RIGHT_SLOW = 0.75;
+  let rightRate = 1;
+
+  function setRightRate(v) {
+    if (v === rightRate) return;
+    rightRate = v;
+    commandR('setPlaybackRate', [v]);
+  }
+
   function syncRightTime() {
     if (!iframeR || !hasState || !state) return;
     const t = Number(state.currentTime);
     if (!Number.isFinite(t)) return;
-    // 右目の位置が分かっていて、ずれが小さいなら**触らない**
-    if (Number.isFinite(rightTime) && Math.abs(rightTime - t) < RIGHT_SYNC_TOLERANCE) return;
-    commandR('seekTo', [t, true]);
-    commandR('playVideo', []);
+    if (!Number.isFinite(rightTime)) {
+      // 位置がまだ分からない間は、1回だけ飛ばして合わせる
+      commandR('seekTo', [t, true]);
+      commandR('playVideo', []);
+      return;
+    }
+    const d = t - rightTime; // 正＝右目が遅れている
+    if (Math.abs(d) > RIGHT_JUMP_AT) {
+      // 大きく離れたときだけ飛ばす
+      setRightRate(1);
+      commandR('seekTo', [t, true]);
+      commandR('playVideo', []);
+      return;
+    }
+    // ⚠⚠ 小さなずれは**飛ばさずに、速さで詰める**（2026-08-08・loyさん
+    //   「0.5〜1秒くらいずれるね」）。飛ばすと読み込み直しが入って画が止まるので、
+    //   少し速く（遅く）流して、追いついたら等速に戻す。
+    //   右目は音を出していないので、速さを変えても聞こえ方に影響しない
+    if (Math.abs(d) <= RIGHT_OK) setRightRate(1);
+    else setRightRate(d > 0 ? RIGHT_FAST : RIGHT_SLOW);
   }
 
-  /** ずれ直しの見回り。⚠ 見に行くだけで、ずれていなければ何もしない */
-  const RIGHT_SYNC_MS = 20000;
+  /**
+   * ずれ直しの見回り。
+   * ⚠ 速さで詰める方式なので**こまめに見る**（飛ばさないので、見るだけなら軽い）
+   */
+  const RIGHT_SYNC_MS = 2000;
   let rightSyncTimer = null;
+  let syncTicks = 0;
   function startRightSync() {
     if (rightSyncTimer) clearInterval(rightSyncTimer);
+    syncTicks = 0;
     rightSyncTimer = setInterval(() => {
-      listenRight(); // 位置を教えてもらい直す
+      syncTicks += 1;
+      // 位置を教えてもらい直すのは、ときどきでよい
+      if (syncTicks % 5 === 1) listenRight();
       syncRightTime();
     }, RIGHT_SYNC_MS);
   }
@@ -638,6 +675,7 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     if (rightSyncTimer) clearInterval(rightSyncTimer);
     rightSyncTimer = null;
     rightTime = null;
+    rightRate = 1;
   }
 
   function clearRightEye() {
