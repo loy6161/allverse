@@ -39,43 +39,15 @@ function injectStyle() {
 /* ⚠ スクリーンの映像の層（.vc-screen-layer）は**残す**。
    映像はYouTubeのiframeで、キャンバスの穴から透かして見せているため、
    ここを隠すとスクリーンが真っ暗になる（2026-08-08 loyさんの実機で発生） */
-body.vc-vr-on > *:not(canvas):not(.vc-vr-hint):not(.vc-screen-layer) { display: none !important; }
+body.vc-vr-on > *:not(canvas):not(.vc-vr-hint):not(.vc-screen-layer):not(.vc-vr-turn) {
+  display: none !important;
+}
 body.vc-vr-on { overflow: hidden; background: #000; }
-/* ⚠ 縦持ちのまま二眼にすると、細長い絵が2枚並ぶだけで使えない
-   （2026-08-08 loyさん「縦画面の状態だと縦で分割しちゃう」）。
-   スマホのブラウザは画面の向きを固定できない（iOS Safari は orientation.lock が無い）ので、
-   **絵の方を90°回して**横長にする。端末を横に倒せばそのまま正しく見える。
-
-   ⚠⚠ 回す向きは**端末を倒す向きと逆**（右に倒すなら絵は反時計回り）。同じ向きに回すと
-   足し算になって**ちょうど180°＝上下さかさま**になる。
-   ⚠⚠ **回す角度は JS が直接あてる**。端末の持ち方をこちらで当てにいくのを何度も外したので、
-   **その場で上下をひっくり返せる操作（2本指でたたく）**を用意し、選んだ向きを覚える。
-   ここ（CSS）で決めるのは置き方だけで、角度は style.transform に入れる */
-body.vc-vr-on.vc-vr-rot canvas {
-  position: fixed !important;
-  top: 50% !important;
-  left: 50% !important;
-  transform-origin: 50% 50% !important;
-}
 body.vc-vr-on canvas { touch-action: none; }
-/* 映像の層をまとめた箱も、絵と同じだけ回す（中身の左右の並びは箱の中で決める） */
-body.vc-vr-on.vc-vr-rot .vc-vr-stage {
-  top: 50%;
-  left: 50%;
-  transform-origin: 50% 50%;
-}
-/* 案内も絵と同じだけ回す。⚠ 回さないと、端末を横に倒したときだけ文字が横倒しになる。
-   置き場所は**画面の端**（視界のまん中に文字を置かない） */
-body.vc-vr-on.vc-vr-rot .vc-vr-hint {
-  left: 50% !important;
-  right: auto !important;
-  bottom: auto !important;
-  top: 50% !important;
-  display: block !important;
-  white-space: nowrap;
-  transform-origin: 50% 50%;
-}
-body.vc-vr-on.vc-vr-rot .vc-vr-hint span:last-child { display: none; }
+/* ⚠⚠ **絵は回さない**（2026-08-08・作り直し）。
+   「縦持ちのままでも二眼にできるように絵を90°回す」という仕掛けを入れたら、
+   さかさま・左右の入れ替わり・映像のずれが立て続けに起き、実機で3回とも直せなかった。
+   横向きにしてもらうのが唯一まっすぐな解き方。縦のときは案内を出すだけにする */
 `;
   document.head.appendChild(style);
 }
@@ -111,7 +83,7 @@ export function createVrView({
   /** ジャイロから作った姿勢 */
   const orient = new THREE.Quaternion();
   /** 端末の持ち方（度）。0=縦持ち / 90=右に倒す / -90=左に倒す。ジャイロから自分で判定する */
-  let holdAngle = 0;
+  let usedAngle = 0;
   /** 端末を持ち上げた姿勢（-90°回転）を打ち消すための固定回転 */
   const q1 = new THREE.Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2);
   const zee = new THREE.Vector3(0, 0, 1);
@@ -128,11 +100,13 @@ export function createVrView({
   const camQuat = new THREE.Quaternion();
   /** 画面に出す姿勢。揺れを抑えるため、目標へ少しずつ寄せる */
   const shown = new THREE.Quaternion();
-  /** 絵を90°回して出しているか（端末の回転ロックが入っているときに使う） */
-  let rotated = false;
+  /** いま縦長の画面か（縦のままだと二眼にならないので、案内を出す） */
+  let portrait = false;
+  /** 「横にしてください」の案内 */
+  let turnHint = null;
   /**
-   * 本人が足した回転（90°きざみ・0〜3）。2本指でたたくと増える。
-   * ⚠ 端末とゴーグルの組み合わせで正しい向きが変わるので、**覚えておく**
+   * 本人が足した回転（0=そのまま / 1=上下ひっくり返す）。2本指でたたくと切り替わる。
+   * ⚠ ゴーグルによっては上下が逆に入るので、**その場で直せる逃げ道**として残す。覚える
    */
   let rotStep = 0;
   try {
@@ -143,45 +117,27 @@ export function createVrView({
   const _size = new THREE.Vector2();
 
   /**
-   * 端末をどう持っているか（度）。0=縦持ち / 90・-90=横持ち。
+   * 端末の画面がどちらを向いているか（度）。
    *
-   * ⚠ **OSの「画面の向き」は当てにならない**（2026-08-08・実機で2回外した）。
-   *   回転ロックをかけていると、端末を横に倒しても angle は 0 のままだからだ。
-   *   さらに、右に倒したか左に倒したかで補正の符号が逆になり、外すと
-   *   「左右に首を振っても傾くだけで横を向けない」という症状になる。
-   *   → **ジャイロの gamma（左右の傾き）から、実際の持ち方を自分で判定する**。
-   *     gamma は端末を右に倒すと +90 に、左に倒すと -90 に近づく
+   * ⚠⚠ **絵を回すのはやめた**（2026-08-08・作り直し）。
+   *   「縦持ちのまま二眼にできるように、絵の方を90°回す」という仕掛けを入れたせいで、
+   *   さかさま・左右の入れ替わり・映像のずれが立て続けに起き、実機で3回とも直せなかった。
+   *   **横向きにしてもらう**のが唯一まっすぐな解き方で、そうすれば
+   *   画面の向き（screen.orientation.angle）も素直に取れる。
+   *   縦のままの人には「横にしてください」と出す（回す仕掛けは持たない）。
    */
-  function holdAngleFromGamma(gammaDeg, betaDeg) {
-    // 画面がほぼ真上／真下を向いているときは判定できないので、前の判定を保つ
-    if (Math.abs(betaDeg) > 75) return holdAngle;
-    if (gammaDeg > 40) return 90; // 右に倒している
-    if (gammaDeg < -40) return -90; // 左に倒している
-    if (Math.abs(gammaDeg) < 25) return 0; // 縦持ち
-    return holdAngle; // どっちつかずの間は変えない（ぱたぱた切り替わらないように）
+  function screenAngleDeg() {
+    const a = (window.screen && window.screen.orientation && window.screen.orientation.angle);
+    if (Number.isFinite(a)) return a;
+    return Number(window.orientation) || 0;
   }
 
   /**
-   * 画面いっぱいに横長で描くための下ごしらえ。
-   * 縦長のビューポートのときは**絵を回す**（端末の向きは固定できないため）。
+   * ジャイロの計算に使う角度。
+   * ⚠ 2本指でたたくと180°足せる（上下がさかさまに見えるときの逃げ道）。覚える
    */
-  /**
-   * いま絵を何度回して出すか。
-   * ⚠ 端末の持ち方をこちらで当てにいって**2回外している**（loyさん「さかさま」×2）。
-   *   自動の推し当ては「たぶんこの向き」までにして、**本人が90°ずつ回せる**ようにした。
-   *   選んだぶん（rotStep）は覚えるので、次からは開いた瞬間に正しい向きになる
-   */
-  function currentRotDeg() {
-    // ⚠ 足せるのは**180°だけ**（2026-08-08）。90°ずつ回せるようにしたら、
-    //   横長の絵を縦長の画面にそのまま置く角度（0°/180°）が選べてしまい、
-    //   画面からはみ出した。**画面に必ず収まる2つ**から選ばせるのが正しい。
-    //   ・縦長の画面（絵を回して出す）… 90° か 270°
-    //   ・横長の画面（そのまま出す）  … 0° か 180°
-    const flip = (rotStep % 2) * 180;
-    if (!rotated) return flip;
-    // 倒した向きを打ち消す向きが基本（右に倒したなら絵は反時計回り）
-    const auto = holdAngle < 0 ? 90 : 270;
-    return (auto + flip) % 360;
+  function currentScreenAngle() {
+    return (screenAngleDeg() + (rotStep % 2) * 180 + 360) % 360;
   }
 
   /**
@@ -192,37 +148,20 @@ export function createVrView({
    *   中心がずれる（実測: 画面375×812に対して left=-187 / top=-406 まで飛び出した）。
    *   要素の大きさは自分で知っているので、**マージンで半分ずらす**のが確実
    */
-  function applyRotation() {
-    const deg = currentRotDeg();
-    const w = rotated ? window.innerHeight : window.innerWidth;
-    const h = rotated ? window.innerWidth : window.innerHeight;
-    for (const el of [renderer.domElement, document.querySelector('.vc-vr-stage')]) {
-      if (!el) continue;
-      el.style.marginLeft = `${-w / 2}px`;
-      el.style.marginTop = `${-h / 2}px`;
-      el.style.transform = deg ? `rotate(${deg}deg)` : '';
-    }
-    if (hint) {
-      // 案内は視界の下（回したあとの下）へ回り込ませる。
-      // 小さな要素なので、こちらは translate のままで実害がない
-      hint.style.transform = rotated
-        ? `translate(-50%, -50%) rotate(${deg}deg) translateY(${Math.round(h / 2) - 26}px)`
-        : '';
-    }
-  }
-
+  /**
+   * 画面いっぱいに描くための下ごしらえ。
+   * ⚠ **回さない。画面の大きさそのまま**に描く。縦持ちのときは細長い二眼になるが、
+   *   その状態は「横にしてください」の案内で抜けてもらう（回す仕掛けは持たない）
+   */
   function layout() {
     if (!on) return;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    rotated = vh > vw;
-    document.body.classList.toggle('vc-vr-rot', rotated);
-    const w = rotated ? vh : vw;
-    const h = rotated ? vw : vh;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
     renderer.setSize(w, h);
     camera.aspect = (w / 2) / h; // 片目ぶんの縦横比
     camera.updateProjectionMatrix();
-    applyRotation();
+    portrait = h > w;
+    if (turnHint) turnHint.style.display = portrait ? 'flex' : 'none';
   }
 
   /**
@@ -244,27 +183,21 @@ export function createVrView({
     // ⚠ PCのChromeでも**値が空のまま**このイベントが飛んでくる（2026-08-08 実測）。
     //   0として扱うと真下を向いてしまうので、値が無いときは何もしない
     if (e.alpha == null && e.beta == null && e.gamma == null) return;
-    // 持ち方（縦か、右倒しか、左倒しか）をジャイロ自身から決める。
-    // ⚠ OSの画面の向きは回転ロックで嘘をつくので使わない
-    const nextHold = holdAngleFromGamma(e.gamma || 0, e.beta || 0);
-    const heldChanged = nextHold !== holdAngle;
-    if (heldChanged) {
-      holdAngle = nextHold;
-      layout(); // 倒した向きに合わせて、絵の回し方も変える
-    }
+    // 画面の向きは**OSに聞く**（横向きにしてもらう前提なので、素直に正しい値が来る）
+    const nextAngle = currentScreenAngle();
+    const angleChanged = nextAngle !== usedAngle;
+    usedAngle = nextAngle;
     // ⚠⚠ 引数の順は **alpha, beta, gamma**。
     //   ここを beta, alpha の順で渡していたため、**左右に首を振っても傾くだけ**という
     //   症状になっていた（2026-08-08・イベントを合成して測って発見。
     //   「首を60°振っても水平角0°、前に30°傾けたら水平角が-30°」で入れ替わりが確定）
-    setFromDeviceOrientation(deg2rad(e.alpha), deg2rad(e.beta), deg2rad(e.gamma), deg2rad(holdAngle));
+    setFromDeviceOrientation(deg2rad(e.alpha), deg2rad(e.beta), deg2rad(e.gamma), deg2rad(usedAngle));
     if (!gyroReady) {
       gyroReady = true;
       recenter();
       shown.copy(camQuat.copy(yawFix).multiply(orient)); // 最初は寄せずに合わせる
-    } else if (heldChanged) {
-      // ⚠ 持ち方（縦・右倒し・左倒し）が変わると**方位の基準ごと変わる**。
-      //   合わせ直さないと、倒し方を変えただけで真後ろを向く
-      //   （2026-08-08 実測: 左倒しにすると水平角が180°ずれた）
+    } else if (angleChanged) {
+      // 画面の向きが変わると方位の基準ごと変わるので、正面を取り直す
       recenter();
     }
   }
@@ -317,10 +250,31 @@ export function createVrView({
   }
 
   /**
-   * 操作の案内。
-   * ⚠ 絵を90°回して出していることがあるので、案内も**同じだけ回す**。
-   *   回さないと、横に倒したときだけ文字が横倒しになる
+   * 「横にしてください」の案内。
+   * ⚠ 縦のままだと二眼として使えない。絵を回す仕掛けは**持たない**と決めたので、
+   *   ここで気づいてもらう（回転ロックをかけている人はロックを外す必要がある）
    */
+  function showTurnHint() {
+    if (turnHint) return;
+    turnHint = document.createElement('div');
+    turnHint.className = 'vc-vr-turn';
+    turnHint.style.cssText = 'position:fixed;inset:0;z-index:95;display:none;'
+      + 'align-items:center;justify-content:center;text-align:center;line-height:2;'
+      + 'background:rgba(3,4,10,0.86);color:#eaf6ff;font-size:15px;padding:24px;'
+      + 'font-family:"Hiragino Kaku Gothic ProN","Yu Gothic UI",sans-serif;';
+    turnHint.innerHTML = '<div>📱 <b>スマホを横向きにしてください</b><br>'
+      + '<span style="font-size:12px;color:rgba(220,235,255,0.7)">'
+      + '横にならないときは、画面の向きのロックを外してください<br>'
+      + '（iPhone: 画面の右上から下へスワイプ → 🔒のボタン）</span></div>';
+    document.body.appendChild(turnHint);
+  }
+
+  function hideTurnHint() {
+    if (turnHint) turnHint.remove();
+    turnHint = null;
+  }
+
+  /** 操作の案内 */
   let hint = null;
   function showHint() {
     if (hint) return;
@@ -349,7 +303,7 @@ export function createVrView({
    *   なぞる       … 正面の向きを変える
    *   1回たたく    … 正面に戻す（ジャイロのずれ直し）
    *   2回たたく    … 二眼をやめる
-   *   **2本指でたたく … 絵の向きを90°回す**（合う向きになるまで押す。覚える）
+   *   **2本指でたたく … 上下がさかさまなときに直す**（覚える）
    * ⚠ 終了を長押しにしていたら、指を置いたままで勝手に終わった（実測）ので2回たたく方式に。
    *   逆に終了を難しくしすぎると**ゴーグルに入れたまま戻れない**ので、これ以上は複雑にしない
    */
@@ -371,13 +325,14 @@ export function createVrView({
   function onPressStart(e) {
     if (!on) return;
     if (e.pointerId != null) touching.add(e.pointerId);
-    // 2本目の指が触れた＝**絵の向きを90°回す**
+    // 2本目の指が触れた＝**上下がさかさまなときの逃げ道**（首の向きの基準を180°足す）
     if (touching.size === 2) {
-      rotStep = (rotStep + 1) % 2; // 上下をひっくり返すだけ（画面から出ないように）
+      rotStep = (rotStep + 1) % 2;
       try {
         localStorage.setItem(ROT_KEY, String(rotStep));
-      } catch { /* 覚えられなくても、その場では回る */ }
-      applyRotation();
+      } catch { /* 覚えられなくても、その場では効く */ }
+      usedAngle = currentScreenAngle();
+      recenter();
       dragging = true; // このあとの指離しを「たたいた」と数えない
       return;
     }
@@ -395,8 +350,6 @@ export function createVrView({
    *
    * ⚠ 動かすのは**正面の基準**だけで、首の動き（ジャイロ）はそのまま。
    *   画面を回すのではなく「世界の向きをずらす」ので、酔いは増えない
-   * ⚠ 絵を90°回して出しているときは、指の動きも同じだけ回して読む
-   *   （横に倒して持っているので、**画面の縦方向**が実際の左右になる）
    */
   function onPressMove(e) {
     if (!on) return;
@@ -407,18 +360,8 @@ export function createVrView({
     movedPx += Math.abs(dx) + Math.abs(dy);
     if (movedPx < DRAG_PX) return;
     dragging = true;
-    // 横に倒して持っているときは、指の上下が世界の左右になる。
-    // ⚠ 向きは**絵の回し方に合わせる**（右倒しは絵を反時計回りに回しているので、
-    //   画面を下へなぞる＝絵の中では左へ動かすことになる）
-    // ⚠ 指の動きは**いま絵を何度回しているか**で読み替える（本人が回した分も含む）
-    let along = dx;
-    if (rotated) {
-      const deg = currentRotDeg();
-      if (deg === 90) along = dy;
-      else if (deg === 270) along = -dy;
-      else if (deg === 180) along = -dx;
-    }
-    baseYaw -= along * 0.006;
+    // 横向きの画面で使う前提なので、**指の横の動きがそのまま左右**でよい
+    baseYaw -= dx * 0.006;
     recenter();
   }
 
@@ -484,15 +427,16 @@ export function createVrView({
     orient.identity();
     shown.identity();
     document.body.classList.add('vc-ui-hidden', 'vc-vr-on');
-    layout(); // ⚠ クラスを付けてから。縦長なら絵を90°回す
+    usedAngle = currentScreenAngle();
     window.addEventListener('deviceorientation', onDeviceOrientation);
     window.addEventListener('orientationchange', onScreenOrientation);
     window.addEventListener('resize', onScreenOrientation);
     onChange(true);
+    showTurnHint();
     showHint();
+    layout(); // ⚠ 案内を作ってから。縦のままなら「横にしてください」を出す
     try {
       keepAwake();
-      // スクリーンの映像を右目にも出す（DOMは1つしか置けないので、もう1枚 iframe を足す）
       if (screen && screen.setStereo) screen.setStereo(true);
     } catch { /* 映像が出なくても、会場は見られる */ }
 
@@ -528,19 +472,13 @@ export function createVrView({
     releaseAwake();
     if (screen && screen.setStereo) screen.setStereo(false); // 右目用のiframeを片付ける
     hideHint();
+    hideTurnHint();
     const player = getPlayer();
     if (player) player.visible = true; // 二眼のあいだ消していた自分の姿を戻す
-    rotated = false;
-    holdAngle = 0;
+    portrait = false;
+    usedAngle = 0;
     touching.clear();
-    // 回して出していたぶんを戻す
-    for (const el of [renderer.domElement, document.querySelector('.vc-vr-stage')]) {
-      if (!el) continue;
-      el.style.transform = '';
-      el.style.marginLeft = '';
-      el.style.marginTop = '';
-    }
-    document.body.classList.remove('vc-ui-hidden', 'vc-vr-on', 'vc-vr-rot');
+    document.body.classList.remove('vc-ui-hidden', 'vc-vr-on');
     try {
       if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
     } catch { /* 抜けられなくても操作はできる */ }
@@ -565,7 +503,7 @@ export function createVrView({
   return {
     isOn: () => on,
     /** 動作確認用の覗き口。ジャイロが届いているか・持ち方をどう判定したかを外から見る */
-    debug: () => ({ on, gyroReady, holdAngle, rotated, baseYaw }),
+    debug: () => ({ on, gyroReady, usedAngle, portrait, rotStep, baseYaw }),
     /**
      * この端末で出すか。
      * ⚠ `window.DeviceOrientationEvent` は**PCのChromeにも存在する**（値が来ないだけ）ので、
@@ -624,7 +562,7 @@ export function createVrView({
 
       // スクリーンの映像（キャンバスの穴から透ける層）も左右に置き直す
       if (screen && screen.updateStereo) {
-        screen.updateStereo(stereo.cameraL, stereo.cameraR, { w: size.x, h, rotated });
+        screen.updateStereo(stereo.cameraL, stereo.cameraR, { w: size.x, h });
       }
     },
   };

@@ -562,6 +562,8 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     } else {
       clearRightEye();
       // 片目に戻すので、レイヤーの大きさも戻す
+      lastStereoW = 0;
+      lastStereoH = 0;
       cssRenderer.setSize(window.innerWidth, window.innerHeight);
       layer.style.clipPath = '';
       layer.style.transform = '';
@@ -579,26 +581,39 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
    * @param {THREE.Camera} camR
    * @param {{w:number,h:number,rotated:boolean}} view 描画領域（回して出しているかも渡す）
    */
+  /** 前に置いたときの大きさ（同じなら触らない） */
+  let lastStereoW = 0;
+  let lastStereoH = 0;
+
   function updateStereo(camL, camR, view) {
     if (!stereoOn || !cssRendererR) return;
     const halfW = Math.floor(view.w / 2);
-    // ⚠ **回す箱を1つだけ**にする（2026-08-08）。
-    //   層ごとに left と rotate を当てると、回転の原点が層の中心になるので
-    //   右目の層が画面の外へ飛んでいく（実測: 画面幅375なのに left=399 の位置に出た）。
-    //   箱を回して、その中に左右を並べるのが正しい
-    stage.style.inset = 'auto';
-    stage.style.width = `${view.w}px`;
-    stage.style.height = `${view.h}px`;
+    // ⚠⚠ **大きさが変わったときだけ**位置と大きさを触る（2026-08-08）。
+    //   毎フレーム style を書き直していたら、そのたびに iframe が置き直しになり、
+    //   **動画が再生に入れず「読み込み中」のまま**になった（loyさんの実機）。
+    //   ここは1秒に60回走る場所なので、「同じ値でも代入」は許されない
+    const sizeChanged = halfW !== lastStereoW || view.h !== lastStereoH;
+    if (sizeChanged) {
+      lastStereoW = halfW;
+      lastStereoH = view.h;
+      stage.style.inset = 'auto';
+      stage.style.left = '0px';
+      stage.style.top = '0px';
+      stage.style.width = `${view.w}px`;
+      stage.style.height = `${view.h}px`;
+    }
     for (const [rend, cam, offset] of [[cssRenderer, camL, 0], [cssRendererR, camR, halfW]]) {
       const el = rend.domElement;
-      rend.setSize(halfW, view.h);
-      el.style.position = 'absolute';
-      el.style.inset = 'auto';
-      el.style.left = `${offset}px`;
-      el.style.top = '0px';
-      el.style.width = `${halfW}px`;
-      el.style.height = `${view.h}px`;
-      el.style.transform = '';
+      if (sizeChanged) {
+        rend.setSize(halfW, view.h);
+        el.style.position = 'absolute';
+        el.style.inset = 'auto';
+        el.style.left = `${offset}px`;
+        el.style.top = '0px';
+        el.style.width = `${halfW}px`;
+        el.style.height = `${view.h}px`;
+        el.style.transform = '';
+      }
       rend.render(rend === cssRenderer ? cssScene : cssSceneR, cam);
     }
   }
