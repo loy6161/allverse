@@ -518,33 +518,9 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
    *   さらに**画質を落とす**よう頼む（同じ配信を2本受けるので、帯域を少しでも減らす）。
    *   ⚠ 画質の指定は聞いてもらえないことがある。効かなくても害はない
    */
-  function mountRightIframe() {
-    if (!currentVideoId || !holderR) return;
-    if (iframeR) holderR.removeChild(iframeR);
-    iframeR = document.createElement('iframe');
-    iframeR.style.width = '100%';
-    iframeR.style.height = '100%';
-    iframeR.style.border = '0';
-    const origin = encodeURIComponent(location.origin);
-    iframeR.src = `https://www.youtube.com/embed/${currentVideoId}`
-      + `?autoplay=1&mute=1&playsinline=1&rel=0&controls=0&cc_load_policy=0`
-      + `&enablejsapi=1&origin=${origin}`;
-    iframeR.allow = 'autoplay; encrypted-media';
-    iframeR.addEventListener('load', () => {
-      const post = (func, args) => {
-        try {
-          iframeR.contentWindow.postMessage(
-            JSON.stringify({ event: 'command', func, args }),
-            'https://www.youtube.com',
-          );
-        } catch { /* 届かなくても映像は出る */ }
-      };
-      post('mute', []);
-      post('setPlaybackQuality', ['small']);
-      setTimeout(() => post('setPlaybackQuality', ['small']), 2000);
-    });
-    holderR.appendChild(iframeR);
-  }
+  // ⚠ 右目に映像を出す関数はここにあったが、消した（2026-08-08）。
+  //   同じ動画で2つ目のプレイヤーを作ると YouTube が1つ目を巻き戻すため、
+  //   置いておいても使えない。理由は上の setStereo のコメントに残してある。
 
   function clearRightEye() {
     if (iframeR && holderR) holderR.removeChild(iframeR);
@@ -574,28 +550,30 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
    */
   function syncRightEye() {
     if (!stereoOn) return;
-    if (!currentVideoId) {
-      if (iframeR && holderR) holderR.removeChild(iframeR);
-      iframeR = null;
-      return;
-    }
-    mountRightIframe();
+    // ⚠ 右目に映像は置かない（上の setStereo の理由）。残っていれば片付けるだけ
+    if (iframeR && holderR) holderR.removeChild(iframeR);
+    iframeR = null;
   }
 
   /**
    * 二眼モードの入り／切り。呼ぶのは vrview 側。
    *
-   * ⚠ 右目にも映像を出す（loyさん「動画が左しか流れてない」）。
-   *   一度これで「読み込み中のまま」になったが、本当の原因は
-   *   **毎フレーム層の style を書き直していたこと**（下の updateStereo を参照）。
-   *   そちらを直したので2本立てに戻した。⚠ 右は必ず消音・画質は落とす
+   * ⚠⚠ **右目には映像を出せない**（2026-08-08・切り分けて確定）。
+   *   同じ動画で2つ目のプレイヤーを作ると、**YouTubeが1つ目を止めて巻き戻す**。
+   *   実測の手順と結果:
+   *     ・二眼にすると左目の再生位置が 42秒 → 2.3秒 に戻った
+   *     ・`setStereo(true)` だけでは戻らない（2本目がまだDOMに出ていないため）
+   *     ・二眼の描画（updateStereo）が回り始めると戻る
+   *       ＝ 2本目が本当に読み込まれた瞬間に、1本目が巻き戻る
+   *   → 右目は**黒い板**にする。これはこちらの都合ではなく、YouTubeの仕組みの限界。
+   *   ⚠ 両目に映像を出したいなら、**配信を自前で持つ**しかない（video要素にできれば
+   *     WebGLのテクスチャとして両目に描ける）。ALLVERSE parallel の方向と繋がる話
    */
   function setStereo(on) {
     if (on === stereoOn) return;
     stereoOn = Boolean(on);
     if (stereoOn) {
       buildRightEye();
-      mountRightIframe();
     } else {
       clearRightEye();
       // 片目に戻すので、レイヤーの大きさも戻す
