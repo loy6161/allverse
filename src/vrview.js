@@ -23,6 +23,8 @@ import * as THREE from 'three';
 // ============================================================
 
 const STYLE_ID = 'vc-vr-style';
+/** 本人が選んだ「絵の回し方」を覚えておく場所 */
+const ROT_KEY = 'vc.vr.rotStep';
 
 /**
  * 二眼の間は**画面のものを全部消す**。
@@ -44,23 +46,16 @@ body.vc-vr-on { overflow: hidden; background: #000; }
    スマホのブラウザは画面の向きを固定できない（iOS Safari は orientation.lock が無い）ので、
    **絵の方を90°回して**横長にする。端末を横に倒せばそのまま正しく見える。
 
-   ⚠⚠ 回す向きは**端末を倒す向きと逆**（2026-08-08 loyさん「さかさま」で判明）。
-   端末を右に倒す＝画面が時計回りに90°回るので、絵を**反時計回りに90°**回して
-   打ち消す。同じ向きに回すと足し算になって**ちょうど180°＝上下さかさま**になる。
-   ここは「打ち消す」が正しい、と覚えること */
+   ⚠⚠ 回す向きは**端末を倒す向きと逆**（右に倒すなら絵は反時計回り）。同じ向きに回すと
+   足し算になって**ちょうど180°＝上下さかさま**になる。
+   ⚠⚠ **回す角度は JS が直接あてる**。端末の持ち方をこちらで当てにいくのを何度も外したので、
+   **その場で上下をひっくり返せる操作（2本指でたたく）**を用意し、選んだ向きを覚える。
+   ここ（CSS）で決めるのは置き方だけで、角度は style.transform に入れる */
 body.vc-vr-on.vc-vr-rot canvas {
   position: fixed !important;
   top: 50% !important;
   left: 50% !important;
   transform-origin: 50% 50% !important;
-  transform: translate(-50%, -50%) rotate(-90deg) !important;
-}
-/* 左に倒して持つ人は逆向き（こちらも倒す向きを打ち消す） */
-body.vc-vr-on.vc-vr-rot.vc-vr-rot-ccw canvas {
-  transform: translate(-50%, -50%) rotate(90deg) !important;
-}
-body.vc-vr-on.vc-vr-rot.vc-vr-rot-ccw .vc-vr-stage {
-  transform: translate(-50%, -50%) rotate(90deg);
 }
 body.vc-vr-on canvas { touch-action: none; }
 /* 映像の層をまとめた箱も、絵と同じだけ回す（中身の左右の並びは箱の中で決める） */
@@ -68,25 +63,17 @@ body.vc-vr-on.vc-vr-rot .vc-vr-stage {
   top: 50%;
   left: 50%;
   transform-origin: 50% 50%;
-  transform: translate(-50%, -50%) rotate(-90deg);
 }
 /* 案内も絵と同じだけ回す。⚠ 回さないと、端末を横に倒したときだけ文字が横倒しになる。
    置き場所は**画面の端**（視界のまん中に文字を置かない） */
 body.vc-vr-on.vc-vr-rot .vc-vr-hint {
-  left: auto !important;
-  right: 14px !important;
+  left: 50% !important;
+  right: auto !important;
   bottom: auto !important;
   top: 50% !important;
   display: block !important;
   white-space: nowrap;
   transform-origin: 50% 50%;
-  transform: translate(50%, -50%) rotate(-90deg);
-}
-/* 左に倒して持つときは反対側の端へ（どちらでも視界の下にくるように） */
-body.vc-vr-on.vc-vr-rot.vc-vr-rot-ccw .vc-vr-hint {
-  left: 14px !important;
-  right: auto !important;
-  transform: translate(-50%, -50%) rotate(90deg);
 }
 body.vc-vr-on.vc-vr-rot .vc-vr-hint span:last-child { display: none; }
 `;
@@ -143,6 +130,15 @@ export function createVrView({
   const shown = new THREE.Quaternion();
   /** 絵を90°回して出しているか（端末の回転ロックが入っているときに使う） */
   let rotated = false;
+  /**
+   * 本人が足した回転（90°きざみ・0〜3）。2本指でたたくと増える。
+   * ⚠ 端末とゴーグルの組み合わせで正しい向きが変わるので、**覚えておく**
+   */
+  let rotStep = 0;
+  try {
+    const saved = Number(localStorage.getItem(ROT_KEY));
+    if (Number.isFinite(saved)) rotStep = ((saved % 2) + 2) % 2;
+  } catch { /* 読めなくても既定でよい */ }
   /** 大きさの取得に使い回す（毎フレームの生成を避ける） */
   const _size = new THREE.Vector2();
 
@@ -169,19 +165,64 @@ export function createVrView({
    * 画面いっぱいに横長で描くための下ごしらえ。
    * 縦長のビューポートのときは**絵を回す**（端末の向きは固定できないため）。
    */
+  /**
+   * いま絵を何度回して出すか。
+   * ⚠ 端末の持ち方をこちらで当てにいって**2回外している**（loyさん「さかさま」×2）。
+   *   自動の推し当ては「たぶんこの向き」までにして、**本人が90°ずつ回せる**ようにした。
+   *   選んだぶん（rotStep）は覚えるので、次からは開いた瞬間に正しい向きになる
+   */
+  function currentRotDeg() {
+    // ⚠ 足せるのは**180°だけ**（2026-08-08）。90°ずつ回せるようにしたら、
+    //   横長の絵を縦長の画面にそのまま置く角度（0°/180°）が選べてしまい、
+    //   画面からはみ出した。**画面に必ず収まる2つ**から選ばせるのが正しい。
+    //   ・縦長の画面（絵を回して出す）… 90° か 270°
+    //   ・横長の画面（そのまま出す）  … 0° か 180°
+    const flip = (rotStep % 2) * 180;
+    if (!rotated) return flip;
+    // 倒した向きを打ち消す向きが基本（右に倒したなら絵は反時計回り）
+    const auto = holdAngle < 0 ? 90 : 270;
+    return (auto + flip) % 360;
+  }
+
+  /**
+   * 絵・映像の層・案内に、同じ回転をあてる。
+   *
+   * ⚠ 中心合わせに `translate(-50%,-50%)` を使わない（2026-08-08 実測して変更）。
+   *   パーセントは**回す前の大きさ**を基準にするので、90°回すと縦横がひっくり返って
+   *   中心がずれる（実測: 画面375×812に対して left=-187 / top=-406 まで飛び出した）。
+   *   要素の大きさは自分で知っているので、**マージンで半分ずらす**のが確実
+   */
+  function applyRotation() {
+    const deg = currentRotDeg();
+    const w = rotated ? window.innerHeight : window.innerWidth;
+    const h = rotated ? window.innerWidth : window.innerHeight;
+    for (const el of [renderer.domElement, document.querySelector('.vc-vr-stage')]) {
+      if (!el) continue;
+      el.style.marginLeft = `${-w / 2}px`;
+      el.style.marginTop = `${-h / 2}px`;
+      el.style.transform = deg ? `rotate(${deg}deg)` : '';
+    }
+    if (hint) {
+      // 案内は視界の下（回したあとの下）へ回り込ませる。
+      // 小さな要素なので、こちらは translate のままで実害がない
+      hint.style.transform = rotated
+        ? `translate(-50%, -50%) rotate(${deg}deg) translateY(${Math.round(h / 2) - 26}px)`
+        : '';
+    }
+  }
+
   function layout() {
     if (!on) return;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     rotated = vh > vw;
     document.body.classList.toggle('vc-vr-rot', rotated);
-    // ⚠ 回す向きは**持ち方に合わせる**。逆に回すと絵が上下さかさまになる
-    document.body.classList.toggle('vc-vr-rot-ccw', rotated && holdAngle < 0);
     const w = rotated ? vh : vw;
     const h = rotated ? vw : vh;
     renderer.setSize(w, h);
     camera.aspect = (w / 2) / h; // 片目ぶんの縦横比
     camera.updateProjectionMatrix();
+    applyRotation();
   }
 
   /**
@@ -289,7 +330,7 @@ export function createVrView({
       + 'display:flex;justify-content:space-around;pointer-events:none;'
       + 'font-size:11px;color:rgba(255,255,255,0.5);text-align:center;'
       + 'font-family:"Hiragino Kaku Gothic ProN","Yu Gothic UI",sans-serif;';
-    const t = 'なぞる＝向きを変える ／ 1回たたく＝正面 ／ 2回たたく＝おわり';
+    const t = 'なぞる＝向き ／ 1回＝正面 ／ 2回＝おわり ／ 2本指＝上下を直す';
     hint.innerHTML = `<span>${t}</span><span>${t}</span>`;
     document.body.appendChild(hint);
     // 数秒で薄くする（ずっと出ていると視界の邪魔）
@@ -304,11 +345,13 @@ export function createVrView({
   }
 
   /**
-   * 画面を触ったときの動き（2026-08-08 変更）。
-   *   短いタップ … 正面に戻す（ジャイロのずれ直し。loyさんの要望）
-   *   長押し     … 二眼をやめる
-   * ⚠ 「どこでもタップで終了」にすると、ずれ直しのたびに抜けてしまう。
-   *   逆に終了を難しくしすぎると**ゴーグルに入れたまま戻れない**ので、長押しにした
+   * 画面を触ったときの動き（2026-08-08）。
+   *   なぞる       … 正面の向きを変える
+   *   1回たたく    … 正面に戻す（ジャイロのずれ直し）
+   *   2回たたく    … 二眼をやめる
+   *   **2本指でたたく … 絵の向きを90°回す**（合う向きになるまで押す。覚える）
+   * ⚠ 終了を長押しにしていたら、指を置いたままで勝手に終わった（実測）ので2回たたく方式に。
+   *   逆に終了を難しくしすぎると**ゴーグルに入れたまま戻れない**ので、これ以上は複雑にしない
    */
   /** これ以上動かしたら「なぞった」とみなす（px） */
   const DRAG_PX = 12;
@@ -322,8 +365,22 @@ export function createVrView({
   let lastTapX = 0;
   let lastTapY = 0;
 
+  /** いま画面に触れている指（2本指を見分けるため） */
+  const touching = new Set();
+
   function onPressStart(e) {
     if (!on) return;
+    if (e.pointerId != null) touching.add(e.pointerId);
+    // 2本目の指が触れた＝**絵の向きを90°回す**
+    if (touching.size === 2) {
+      rotStep = (rotStep + 1) % 2; // 上下をひっくり返すだけ（画面から出ないように）
+      try {
+        localStorage.setItem(ROT_KEY, String(rotStep));
+      } catch { /* 覚えられなくても、その場では回る */ }
+      applyRotation();
+      dragging = true; // このあとの指離しを「たたいた」と数えない
+      return;
+    }
     dragging = false;
     movedPx = 0;
     lastX = e.clientX;
@@ -353,14 +410,21 @@ export function createVrView({
     // 横に倒して持っているときは、指の上下が世界の左右になる。
     // ⚠ 向きは**絵の回し方に合わせる**（右倒しは絵を反時計回りに回しているので、
     //   画面を下へなぞる＝絵の中では左へ動かすことになる）
+    // ⚠ 指の動きは**いま絵を何度回しているか**で読み替える（本人が回した分も含む）
     let along = dx;
-    if (rotated) along = holdAngle < 0 ? dy : -dy;
+    if (rotated) {
+      const deg = currentRotDeg();
+      if (deg === 90) along = dy;
+      else if (deg === 270) along = -dy;
+      else if (deg === 180) along = -dx;
+    }
     baseYaw -= along * 0.006;
     recenter();
   }
 
   function onPressEnd(e) {
     if (!on) return;
+    if (e && e.pointerId != null) touching.delete(e.pointerId);
     if (dragging) {
       // なぞったあとは「たたいた」数に入れない（続けてたたくと終了してしまう）
       lastTapAt = 0;
@@ -468,7 +532,15 @@ export function createVrView({
     if (player) player.visible = true; // 二眼のあいだ消していた自分の姿を戻す
     rotated = false;
     holdAngle = 0;
-    document.body.classList.remove('vc-ui-hidden', 'vc-vr-on', 'vc-vr-rot', 'vc-vr-rot-ccw');
+    touching.clear();
+    // 回して出していたぶんを戻す
+    for (const el of [renderer.domElement, document.querySelector('.vc-vr-stage')]) {
+      if (!el) continue;
+      el.style.transform = '';
+      el.style.marginLeft = '';
+      el.style.marginTop = '';
+    }
+    document.body.classList.remove('vc-ui-hidden', 'vc-vr-on', 'vc-vr-rot');
     try {
       if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
     } catch { /* 抜けられなくても操作はできる */ }

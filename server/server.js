@@ -3150,7 +3150,16 @@ const httpServer = http.createServer(async (req, res) => {
     try {
       const data = await readFile(filePath);
       const ext = path.extname(filePath).toLowerCase();
-      res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
+      // ⚠ **JS・HTML・CSSはキャッシュさせない**（2026-08-08 追加）。
+      //   直したはずの不具合が実機で直らない、という事故が起きた。
+      //   スマホのブラウザは古いファイルを掴んだままになりやすく、
+      //   「直っていないのか、届いていないのか」の切り分けに時間を溶かす。
+      //   3Dモデルや画像は大きくて変わらないので、こちらは今までどおり任せる
+      const noStore = ['.js', '.html', '.css', '.json'].includes(ext);
+      res.writeHead(200, {
+        'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+        'Cache-Control': noStore ? 'no-store, must-revalidate' : 'public, max-age=3600',
+      });
       res.end(data);
       return;
     } catch {
