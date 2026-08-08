@@ -508,6 +508,44 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
 
   const cssSceneR = new THREE.Scene();
 
+  /**
+   * 右目にも映像を出す（2026-08-08 再挑戦）。
+   *
+   * ⚠ 一度これで「両方とも読み込み中のまま」になったが、**本当の原因は別**だった
+   *   （毎フレーム層の style を書き直していて、そのたびに iframe が置き直しになっていた）。
+   *   そちらを直したので、もう一度2本立てる。
+   * ⚠ 右目は**必ず消音**（音が二重に鳴ると聞けたものではない）。
+   *   さらに**画質を落とす**よう頼む（同じ配信を2本受けるので、帯域を少しでも減らす）。
+   *   ⚠ 画質の指定は聞いてもらえないことがある。効かなくても害はない
+   */
+  function mountRightIframe() {
+    if (!currentVideoId || !holderR) return;
+    if (iframeR) holderR.removeChild(iframeR);
+    iframeR = document.createElement('iframe');
+    iframeR.style.width = '100%';
+    iframeR.style.height = '100%';
+    iframeR.style.border = '0';
+    const origin = encodeURIComponent(location.origin);
+    iframeR.src = `https://www.youtube.com/embed/${currentVideoId}`
+      + `?autoplay=1&mute=1&playsinline=1&rel=0&controls=0&cc_load_policy=0`
+      + `&enablejsapi=1&origin=${origin}`;
+    iframeR.allow = 'autoplay; encrypted-media';
+    iframeR.addEventListener('load', () => {
+      const post = (func, args) => {
+        try {
+          iframeR.contentWindow.postMessage(
+            JSON.stringify({ event: 'command', func, args }),
+            'https://www.youtube.com',
+          );
+        } catch { /* 届かなくても映像は出る */ }
+      };
+      post('mute', []);
+      post('setPlaybackQuality', ['small']);
+      setTimeout(() => post('setPlaybackQuality', ['small']), 2000);
+    });
+    holderR.appendChild(iframeR);
+  }
+
   function clearRightEye() {
     if (iframeR && holderR) holderR.removeChild(iframeR);
     iframeR = null;
@@ -536,29 +574,28 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
    */
   function syncRightEye() {
     if (!stereoOn) return;
-    // ⚠ いまは右目に映像を出していない（上の setStereo の理由を参照）。
-    //   残っているものがあれば片付けるだけにする
-    if (iframeR && holderR) holderR.removeChild(iframeR);
-    iframeR = null;
+    if (!currentVideoId) {
+      if (iframeR && holderR) holderR.removeChild(iframeR);
+      iframeR = null;
+      return;
+    }
+    mountRightIframe();
   }
 
   /**
    * 二眼モードの入り／切り。呼ぶのは vrview 側。
    *
-   * ⚠⚠ **右目には映像を出さない**（2026-08-08・loyさんの実機で決定）。
-   *   同じ動画を2本同時に読ませたら、スマホでは**両方とも「読み込み中」のまま**になった
-   *   （loyさん「スクリーンの動画は読み込み中になっちゃうね」）。
-   *   ライブ配信を2本ぶん受けるのは、回線にも端末にも重すぎる。
-   *   → 右目は**黒い板**にして、映像は左目だけにする。iframe は1本のままなので、
-   *     二眼にしても再生は途切れない。
-   *   ⚠ 片目だけに映る見え方が耐えられるかは実機で見て決める。
-   *     駄目なら「VR中は映像を出さない（音だけ）」に倒す
+   * ⚠ 右目にも映像を出す（loyさん「動画が左しか流れてない」）。
+   *   一度これで「読み込み中のまま」になったが、本当の原因は
+   *   **毎フレーム層の style を書き直していたこと**（下の updateStereo を参照）。
+   *   そちらを直したので2本立てに戻した。⚠ 右は必ず消音・画質は落とす
    */
   function setStereo(on) {
     if (on === stereoOn) return;
     stereoOn = Boolean(on);
     if (stereoOn) {
       buildRightEye();
+      mountRightIframe();
     } else {
       clearRightEye();
       // 片目に戻すので、レイヤーの大きさも戻す
