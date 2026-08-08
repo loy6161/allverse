@@ -62,9 +62,10 @@
   <h2>フレーム</h2>
   <div class="row">
     <select id="sample">
-      <option value="samples/frame1.jpg">サンプル1（立ち）</option>
-      <option value="samples/frame2.jpg">サンプル2（ポーズ）</option>
-      <option value="samples/frame3.jpg">サンプル3（最新）</option>
+      <option value="samples/frame1.jpg">参考1（チャット圧縮）</option>
+      <option value="samples/frame2.jpg">参考2（チャット圧縮）</option>
+      <option value="samples/packed_sample.png" selected>正式サンプル（4K・マーク無し）</option>
+      <option value="samples/frame3.jpg">参考3（チャット圧縮）</option>
     </select>
   </div>
   <div class="row">
@@ -283,8 +284,10 @@ bool viewFlipped(int view) { return view == 1 || view == 2 || view == 4; }
  * 深度を読む。返り値が 1.5 なら「この画素には何も無い」（仕様 §4）
  */
 float readDepth(int view, vec2 uv) {
+  // ⚠⚠ 切り詰めの外に出た座標を「何も無い」にしてはいけない（2026-08-08）。
+  //   Unity側の受信シェーダーは **端に寄せて（clamp して）読む**。
+  //   ここを「無し」にすると、切り詰めが効いたフレームでは内側の点がほぼ全部消える
   vec2 cu = toCellUv(view, uv);
-  if (any(lessThan(cu, vec2(0.0))) || any(greaterThan(cu, vec2(1.0)))) return 1.5;
   vec2 img = cellUvToImage(depthCell(view), cu);
   float p = texture(uFrame, img).r;
   // 「何も無い」の印（仕様では 1.0、判定は 0.995）。
@@ -293,7 +296,7 @@ float readDepth(int view, vec2 uv) {
   //   拾われて箱が真っ黒に塗り潰された）。素材に合わせて下げられるようにしてある
   if (p >= uEmpty) return 1.5;
   int ax = viewAxis(view);
-  // ⚠ `uRangeMin[ax]` のような**添字が変わる読み方は避ける**。環境によって値が壊れる。
+  // ⚠ uRangeMin[ax] のような**添字が変わる読み方は避ける**。環境によって値が壊れる。
   //   成分は if で選ぶ（2026-08-08）
   float lo = ax == 0 ? uRangeMin.x : (ax == 1 ? uRangeMin.y : uRangeMin.z);
   float hi = ax == 0 ? uRangeMax.x : (ax == 1 ? uRangeMax.y : uRangeMax.z);
@@ -351,7 +354,6 @@ vec3 surfaceColor(vec3 q, vec3 rayDir) {
     float w = dot(-rayDir, normals[v]);
     if (w <= bestW) continue;
     vec2 cu = toCellUv(v, uv);
-    if (any(lessThan(cu, vec2(0.0))) || any(greaterThan(cu, vec2(1.0)))) continue;
     bestW = w;
     best = texture(uFrame, cellUvToImage(colorCell(v), cu)).rgb;
   }
@@ -642,7 +644,7 @@ function frame() {
   }
 }
 frame();
-loadImage('samples/frame1.jpg');
+loadImage('samples/packed_sample.png');
 </script>
 </body>
 </html>
