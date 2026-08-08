@@ -86,6 +86,7 @@
   <div class="row"><label>空白の境目</label><input type="range" id="empty" min="0.80" max="0.999" step="0.005" value="0.99"><span class="val" id="emptyV"></span></div>
   <div class="row">
     <button id="reset">向きを戻す</button>
+    <button id="mode">面で見る</button>
     <button id="raw">元の絵を見る</button>
   </div>
   <p class="note">ドラッグで回す／ホイールで寄る。⚠ 位置合わせマーク（マゼンタの枠）が
@@ -424,6 +425,100 @@ void main() {
   frag = vec4(surfaceColor(q, rd), 1.0);
 }`;
 
+
+/**
+ * 点群モード（2026-08-08 追加）。
+ *
+ * ★ なぜ用意したか
+ *   5方向の深度が互いに噛み合わないフレームでも、**各方向の深度をそのまま3Dに置けば
+ *   形は見える**。交差（5方向すべてが内側と言う点を探す）は、どこか1方向でも
+ *   ずれていると何も出ないが、点群はずれた方向だけがずれて写るだけで済む。
+ *   「まず見えること」を優先する道。
+ */
+const PVS = `#version 300 es
+precision highp float;
+uniform sampler2D uFrame;
+uniform vec3 uRangeMin;
+uniform vec3 uRangeMax;
+uniform float uColumns;
+uniform float uInset;
+uniform float uEmpty;
+uniform float uFixFlip;
+uniform float uGrid;      // 1辺あたりの点の数
+uniform mat3  uRot;
+uniform float uDist;
+uniform float uAspect;
+uniform float uPointSize;
+out vec3 vColor;
+
+const float STRIP = 1.0 / 45.0;
+
+vec2 cellUvToImage(int cell, vec2 uv) {
+  float usable = 1.0 - STRIP;
+  float h = usable * 0.5;
+  float col = mod(float(cell), uColumns);
+  float row = (float(cell) < uColumns) ? 1.0 : 0.0;
+  vec2 in01 = clamp(uv, 0.0, 1.0) * (1.0 - 2.0 * uInset) + uInset;
+  return vec2((col + in01.x) / uColumns, 1.0 - ((row > 0.5 ? h : 0.0) + in01.y * h));
+}
+
+void main() {
+  int g = int(uGrid);
+  int per = g * g;
+  int view = gl_VertexID / per;
+  int idx = gl_VertexID - view * per;
+  vec2 cell = (vec2(float(idx % g), float(idx / g)) + 0.5) / float(g);
+
+  // 深度を読む（タイルの中の座標そのまま＝切り詰め済みの絵をそのまま使う）
+  float p = texture(uFrame, cellUvToImage(view + int(uColumns), cell)).r;
+  if (p >= uEmpty) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return; }
+  float n = clamp((p - 0.02) / 0.96, 0.0, 1.0);
+  if (uFixFlip > 0.5) n = 1.0 - n;
+
+  // 切り詰めを戻して volume 座標へ
+  vec3 lo = (uRangeMin + 1.0) * 0.5;
+  vec3 hi = (uRangeMax + 1.0) * 0.5;
+  float u = mix(0.0, 1.0, cell.x), v = mix(0.0, 1.0, cell.y);
+  vec3 q;
+  if (view == 0) {        // Front: x,y はタイル、z が深度
+    q.x = mix(lo.x, hi.x, u) * 2.0 - 1.0;
+    q.y = mix(lo.y, hi.y, v) * 2.0 - 1.0;
+    q.z = mix(lo.z, hi.z, n) * 2.0 - 1.0;
+  } else if (view == 1) { // Back
+    q.x = mix(hi.x, lo.x, u) * 2.0 - 1.0;
+    q.y = mix(lo.y, hi.y, v) * 2.0 - 1.0;
+    q.z = mix(hi.z, lo.z, n) * 2.0 - 1.0;
+  } else if (view == 2) { // Left
+    q.z = mix(lo.z, hi.z, u) * 2.0 - 1.0;
+    q.y = mix(lo.y, hi.y, v) * 2.0 - 1.0;
+    q.x = mix(hi.x, lo.x, n) * 2.0 - 1.0;
+  } else if (view == 3) { // Right
+    q.z = mix(hi.z, lo.z, u) * 2.0 - 1.0;
+    q.y = mix(lo.y, hi.y, v) * 2.0 - 1.0;
+    q.x = mix(lo.x, hi.x, n) * 2.0 - 1.0;
+  } else {                // Top
+    q.x = mix(lo.x, hi.x, u) * 2.0 - 1.0;
+    q.z = mix(lo.z, hi.z, v) * 2.0 - 1.0;
+    q.y = mix(hi.y, lo.y, n) * 2.0 - 1.0;
+  }
+
+  vColor = texture(uFrame, cellUvToImage(view, cell)).rgb;
+
+  // カメラは原点から uDist 離れた位置。uRot は見る向き
+  vec3 rel = uRot * q - vec3(0.0, 0.0, uDist);
+  if (rel.z > -0.05) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return; }
+  float f = 1.6;
+  float w = -rel.z;
+  gl_Position = vec4(rel.x * f / uAspect, rel.y * f, w * 0.1, w);
+  gl_PointSize = uPointSize;
+}`;
+
+const PFS = `#version 300 es
+precision highp float;
+in vec3 vColor;
+out vec4 frag;
+void main() { frag = vec4(vColor, 1.0); }`;
+
 // ---- WebGL の下ごしらえ ----------------------------------------------------
 
 const canvas = document.getElementById('gl');
@@ -474,6 +569,25 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
   new Uint8Array([255, 255, 255, 255]));
 
+// 点群のプログラム
+let pprog = null;
+try {
+  pprog = gl.createProgram();
+  gl.attachShader(pprog, compile(gl.VERTEX_SHADER, PVS));
+  gl.attachShader(pprog, compile(gl.FRAGMENT_SHADER, PFS));
+  gl.linkProgram(pprog);
+  if (!gl.getProgramParameter(pprog, gl.LINK_STATUS)) {
+    throw new Error(gl.getProgramInfoLog(pprog) || 'point link failed');
+  }
+} catch (e) {
+  errEl.textContent = '点群: ' + String(e.message || e);
+}
+const PU = {};
+for (const n of ['uFrame', 'uRangeMin', 'uRangeMax', 'uColumns', 'uInset', 'uEmpty',
+  'uFixFlip', 'uGrid', 'uRot', 'uDist', 'uAspect', 'uPointSize']) {
+  PU[n] = pprog ? gl.getUniformLocation(pprog, n) : null;
+}
+
 const U = {};
 for (const n of ['uFrame', 'uRangeMin', 'uRangeMax', 'uColumns', 'uInset', 'uSteps',
   'uRefine', 'uTol', 'uRot', 'uDist', 'uRes', 'uShowRaw', 'uEmpty', 'uFixFlip']) {
@@ -487,6 +601,7 @@ let yaw = 0;
 let pitch = 0;
 let dist = 2.6;
 // 0=立体 / 1=元の絵 / 2=深度の確認。?mode=raw / ?mode=depth で最初から切り替えられる
+let pointMode = new URLSearchParams(location.search).get('view') !== 'solid';
 let showRaw = ({ raw: 1, depth: 2 })[new URLSearchParams(location.search).get('mode')] || 0;
 let videoEl = null;
 let frames = 0;
@@ -568,6 +683,10 @@ canvas.addEventListener('wheel', (e) => {
   dist = Math.max(1.2, Math.min(6, dist + e.deltaY * 0.002));
 }, { passive: false });
 
+document.getElementById('mode').addEventListener('click', (e) => {
+  pointMode = !pointMode;
+  e.target.textContent = pointMode ? '面で見る' : '点で見る';
+});
 document.getElementById('reset').addEventListener('click', () => { yaw = 0; pitch = 0; dist = 2.6; });
 document.getElementById('raw').addEventListener('click', (e) => {
   showRaw = (showRaw + 1) % 3;
@@ -616,7 +735,45 @@ function frame() {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoEl);
   }
   gl.viewport(0, 0, w, h);
+
+  // 点群モード（交差を使わず、各方向の深度をそのまま置く）
+  if (pointMode && pprog) {
+    gl.clearColor(0.02, 0.03, 0.06, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.useProgram(pprog);
+    // ⚠ 面のプログラム用に有効にした頂点属性が残っていると、点群の描画が
+    //   「足りない頂点データ」を要求されて丸ごと捨てられる（2026-08-08）
+    gl.disableVertexAttribArray(0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(PU.uFrame, 0);
+    gl.uniform3fv(PU.uRangeMin, header.rangeMin);
+    gl.uniform3fv(PU.uRangeMax, header.rangeMax);
+    gl.uniform1f(PU.uColumns, header.split === 2 ? 3 : 5);
+    gl.uniform1f(PU.uInset, parseFloat(document.getElementById('inset').value));
+    gl.uniform1f(PU.uEmpty, parseFloat(document.getElementById('empty').value));
+    gl.uniform1f(PU.uFixFlip, document.getElementById('fixflip').checked ? 1 : 0);
+    const grid = 128;
+    gl.uniform1f(PU.uGrid, grid);
+    gl.uniformMatrix3fv(PU.uRot, false, rotMat(yaw, pitch));
+    gl.uniform1f(PU.uDist, dist);
+    gl.uniform1f(PU.uAspect, w / h);
+    gl.uniform1f(PU.uPointSize, 3.0);
+    gl.drawArrays(gl.POINTS, 0, grid * grid * 5);
+    gl.disable(gl.DEPTH_TEST);
+    frames += 1;
+    const now2 = performance.now();
+    if (now2 - lastFpsAt > 1000) {
+      document.getElementById('fps').textContent = `${Math.round((frames * 1000) / (now2 - lastFpsAt))} fps`;
+      frames = 0;
+      lastFpsAt = now2;
+    }
+    return;
+  }
+
   gl.useProgram(prog);
+  gl.enableVertexAttribArray(0);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.uniform1i(U.uFrame, 0);
