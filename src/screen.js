@@ -304,6 +304,8 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
   };
 
   let hasState = false; // プレイヤーから情報が届いた＝操作を受け付けられる合図
+  /** state.currentTime が届いた時刻（二眼の左右合わせで、いまの位置に直すために使う） */
+  let stateAt = 0;
 
   window.addEventListener('message', (e) => {
     if (e.origin !== 'https://www.youtube.com') return;
@@ -316,7 +318,13 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     if (!data || !data.info) return;
     hasState = true;
     const info = data.info;
-    if (typeof info.currentTime === 'number') state.currentTime = info.currentTime;
+    if (typeof info.currentTime === 'number') {
+      state.currentTime = info.currentTime;
+      // ⚠ **いつの値か**を覚えておく（2026-08-08）。位置は数百ミリ秒おきにしか届かないので、
+      //   左右をそのまま引き算すると、届いた時刻の差がそのまま「ずれ」に化ける。
+      //   二眼の左右合わせでは、この時刻を使って「いまの位置」に直してから比べる
+      stateAt = performance.now();
+    }
 
     // ---- ライブ配信かどうかの判定 ----
     //
@@ -568,6 +576,8 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
 
   /** 右目のいまの再生位置（右目のプレイヤーから届く） */
   let rightTime = null;
+  /** その値が届いた時刻 */
+  let rightAt = 0;
   let rightListening = false;
 
   /**
@@ -586,7 +596,10 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
         } catch {
           return;
         }
-        if (d && d.info && typeof d.info.currentTime === 'number') rightTime = d.info.currentTime;
+        if (d && d.info && typeof d.info.currentTime === 'number') {
+          rightTime = d.info.currentTime;
+          rightAt = performance.now();
+        }
       });
     }
     const ping = () => {
@@ -615,11 +628,19 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
   /** これ以上ずれたら、飛ばして直す（秒）。飛ばすと読み込み直しになるので大きめ */
   const RIGHT_JUMP_AT = 3.0;
   /** ここまで合っていれば、何もしない（秒） */
-  const RIGHT_OK = 0.2;
-  /** 追い込みに使う速さ */
+  const RIGHT_OK = 0.05;
+  /**
+   * 追い込みに使う速さ。
+   * ⚠ YouTubeは**決まった値しか受け付けない**（0.25/0.5/0.75/1/1.25/…）。
+   *   1.1 のような細かい指定は等速に丸められる（2026-08-08 実測）。
+   *   なので「速さを細かくする」のではなく、**当てる時間を細かくする**
+   */
   const RIGHT_FAST = 1.25;
   const RIGHT_SLOW = 0.75;
+  /** 1秒あたりどれだけ詰まるか（1.25倍・0.75倍のとき） */
+  const CATCH_PER_SEC = 0.25;
   let rightRate = 1;
+  let rateTimer = null;
 
   function setRightRate(v) {
     if (v === rightRate) return;
@@ -627,37 +648,56 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     commandR('setPlaybackRate', [v]);
   }
 
+  /**
+   * いまの再生位置を、**届いた時刻から今までの経過ぶん進めて**見積もる。
+   * ⚠ 位置は数百ミリ秒おきにしか届かない。そのまま引き算すると、
+   *   届いた時刻の差（最大で数百ミリ秒）がまるごと「ずれ」に化ける。
+   *   ここを直すだけで、見かけのずれがかなり小さくなる
+   */
+  function estimate(value, at, rate) {
+    if (!Number.isFinite(value) || !at) return NaN;
+    return value + ((performance.now() - at) / 1000) * rate;
+  }
+
   function syncRightTime() {
     if (!iframeR || !hasState || !state) return;
-    const t = Number(state.currentTime);
-    if (!Number.isFinite(t)) return;
+    if (rateTimer) return; // 追い込み中は、終わるまで触らない
+    const left = estimate(Number(state.currentTime), stateAt, 1);
+    if (!Number.isFinite(left)) return;
     if (!Number.isFinite(rightTime)) {
       // 位置がまだ分からない間は、1回だけ飛ばして合わせる
-      commandR('seekTo', [t, true]);
+      commandR('seekTo', [left, true]);
       commandR('playVideo', []);
       return;
     }
-    const d = t - rightTime; // 正＝右目が遅れている
+    const right = estimate(rightTime, rightAt, rightRate);
+    const d = left - right; // 正＝右目が遅れている
     if (Math.abs(d) > RIGHT_JUMP_AT) {
-      // 大きく離れたときだけ飛ばす
       setRightRate(1);
-      commandR('seekTo', [t, true]);
+      commandR('seekTo', [left, true]);
       commandR('playVideo', []);
       return;
     }
-    // ⚠⚠ 小さなずれは**飛ばさずに、速さで詰める**（2026-08-08・loyさん
-    //   「0.5〜1秒くらいずれるね」）。飛ばすと読み込み直しが入って画が止まるので、
-    //   少し速く（遅く）流して、追いついたら等速に戻す。
-    //   右目は音を出していないので、速さを変えても聞こえ方に影響しない
-    if (Math.abs(d) <= RIGHT_OK) setRightRate(1);
-    else setRightRate(d > 0 ? RIGHT_FAST : RIGHT_SLOW);
+    if (Math.abs(d) <= RIGHT_OK) {
+      setRightRate(1);
+      return;
+    }
+    // ⚠⚠ **必要なぶんだけ**速さを当てて、自分で等速に戻す（2026-08-08）。
+    //   速さは1.25/0.75しか選べないので、当てっぱなしだと必ず行き過ぎる。
+    //   「どれだけずれているか」から**当てる時間**を計算するのが正しい
+    const ms = Math.min(Math.abs(d) / CATCH_PER_SEC, 2.5) * 1000;
+    setRightRate(d > 0 ? RIGHT_FAST : RIGHT_SLOW);
+    rateTimer = setTimeout(() => {
+      rateTimer = null;
+      setRightRate(1);
+    }, ms);
   }
 
   /**
    * ずれ直しの見回り。
    * ⚠ 速さで詰める方式なので**こまめに見る**（飛ばさないので、見るだけなら軽い）
    */
-  const RIGHT_SYNC_MS = 2000;
+  const RIGHT_SYNC_MS = 900;
   let rightSyncTimer = null;
   let syncTicks = 0;
   function startRightSync() {
@@ -666,7 +706,7 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     rightSyncTimer = setInterval(() => {
       syncTicks += 1;
       // 位置を教えてもらい直すのは、ときどきでよい
-      if (syncTicks % 5 === 1) listenRight();
+      if (syncTicks % 8 === 1) listenRight();
       syncRightTime();
     }, RIGHT_SYNC_MS);
   }
@@ -674,7 +714,10 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
   function stopRightSync() {
     if (rightSyncTimer) clearInterval(rightSyncTimer);
     rightSyncTimer = null;
+    if (rateTimer) clearTimeout(rateTimer);
+    rateTimer = null;
     rightTime = null;
+    rightAt = 0;
     rightRate = 1;
   }
 
