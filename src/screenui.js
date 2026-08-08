@@ -151,7 +151,7 @@ function injectStyle() {
       min-height: 14px;
     }
 
-    @media (max-width: 640px) {
+    @media (max-width: 640px), (max-height: 480px) {
       /* このパネルを開くボタン(📺)は動画のコントロールの中にあるので、
          そのコントロール自身より上の段に出す */
       .vc-screen-panel {

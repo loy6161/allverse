@@ -98,7 +98,7 @@ function injectStyle() {
   position: fixed; inset: 0; z-index: 59;
   background: rgba(3,4,10,0.55); backdrop-filter: blur(3px);
 }
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 480px) {
   .vc-shop-panel { width: calc(100vw - 20px); max-height: 82vh; }
   .vc-shop-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
 }

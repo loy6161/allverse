@@ -99,7 +99,7 @@ function injectStyle() {
 body.vc-ui-hidden .vc-yt { display: none; }
 
 /* スマホは埋め込みが使えないので、開くボタンだけの小さな帯にする */
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 480px) {
   .vc-yt {
     right: 12px; left: 12px; width: auto;
     bottom: var(--m-panel2-bottom, 96px);

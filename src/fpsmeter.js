@@ -43,7 +43,7 @@ function injectStyle() {
 .vc-fps.vc-hidden { display: none; }
 /* UI非表示（Hキー）に追従する */
 body.vc-ui-hidden .vc-fps { display: none; }
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 480px) {
   .vc-fps { left: 8px; top: 76px; font-size: 10px; }
 }
 `;

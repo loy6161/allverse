@@ -2241,6 +2241,8 @@ window.__vc = {
   world,
   // スクリーン（動画）の覗き口。二眼の右目に映像が渡っているかを外から確かめる用
   liveScreen,
+  // スマホVR（二眼）の覗き口。ジャイロが届いているかを外から確かめる用
+  get vrView() { return vrView; },
   get controls() { return controls; },
   get player() { return player; },
   // 自分の姿の小窓（2026-08-04追加）。描画が止まる環境でも
@@ -2254,6 +2256,9 @@ window.__vc = {
   // 街の読み込み（2026-08-06追加）。描画が止まる環境でも手で1回進められる
   updateVenue,
   get city() { return city; },
+  // 運営メッセージ（2026-08-08追加）。実際のイベント配信を待たずに
+  // .set({level,text}) で表示を確かめられるようにする覗き口
+  get noticeBar() { return noticeBar; },
   ensureCity,
   // NPCの人数（2026-08-06追加）。負荷テストで一気に増やすときの入口
   applyNpcCount,

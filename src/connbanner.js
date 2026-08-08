@@ -67,7 +67,7 @@ function injectStyle() {
 }
 .vc-conn-reload:hover { background: rgba(255,255,255,0.22); }
 
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 480px) {
   .vc-conn { font-size: 12px; padding: 8px 12px; top: 8px; }
 }
 `;

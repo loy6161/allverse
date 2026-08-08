@@ -1,10 +1,12 @@
 // mobile.js
 // スマホ向け操作UI（バーチャルジョイスティック／ピンチズーム／チャットと動画操作の折りたたみ）
 //
-// 画面の使い方（2026-07-30 指定）:
+// 画面の使い方（2026-07-30 指定 → 2026-08-08 iPhone実機指摘で改定）:
 //   下から  操作キー(左) ＋ チャットアイコン(右) … 一番下の段
-//           エモート … チャットアイコンの真上に縦一列（emotebar.js 側で指定）
-//   右上から UI非表示 / ネームプレート → アバター変更 → ⚙(動画のコントロール)
+//           その真上に 😊エモート → ⚙コントロール → 📱スマホ の縦一列
+//           （loyさん実機指摘「縦にスマホ、コントローラー、エモート、チャット、の順がいいんじゃない」。
+//            積み方は style.css の --m-* 変数が決める）
+//   右上から UI非表示 / ネームプレート → アバター変更
 // チャットと動画のコントロールは同時に開かない（どちらも横幅いっぱいを使うため）。
 // タッチ端末（または ?mobile=1）のときだけ initMobile() が UI を構築する。
 // PC(マウスのみ)環境では何もせず { enabled: false } を返す。
@@ -74,14 +76,18 @@ function injectStyle() {
       filter: brightness(1.2);
     }
 
-    /* 動画のコントロールを開く歯車。右上のアバター変更ボタンの真下に置く */
+    /* 動画のコントロールを開く歯車（2026-08-08 位置変更）。
+       ⚠ 以前は右上(top:95px)の単独ボタンで「上すぎる」と指摘された（loyさん実機指摘）。
+       右下の縦列（📱→⚙→😊→💬）の一員として、エモートのすぐ上に積む。
+       位置はここではなく style.css の --m-gear-bottom / --m-gear-size で決まる
+       （1か所で積み方を変えれば全部が追従する、他の3つと同じ方式） */
     .vc-m-gear {
       position: fixed;
-      top: 95px;
-      right: 12px;
-      z-index: 13;
-      width: 34px;
-      height: 34px;
+      right: 16px;
+      bottom: var(--m-gear-bottom);
+      z-index: 10;
+      width: var(--m-gear-size);
+      height: var(--m-gear-size);
       display: none; /* 出すのは狭い画面のときだけ（下の media query） */
       align-items: center;
       justify-content: center;
@@ -101,7 +107,7 @@ function injectStyle() {
       box-shadow: 0 0 10px rgba(255, 176, 92, 0.6);
     }
 
-    @media (max-width: 640px) {
+    @media (max-width: 640px), (max-height: 480px) {
       /* join-screen: 縦長パネルを画面内で縦スクロールできるようにする */
       #join-screen {
         align-items: flex-start;

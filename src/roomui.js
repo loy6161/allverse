@@ -48,7 +48,7 @@ function injectStyle() {
 .vc-room-hidden { display: none; }
 
 /* スマホでは、このパネルを開くボタンが入っている動画のコントロールより上の段に出す */
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 480px) {
   .vc-room-panel {
     right: 12px; left: 12px; width: auto;
     bottom: var(--m-panel2-bottom);

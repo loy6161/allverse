@@ -126,7 +126,7 @@ body.vc-ui-hidden .vc-topbar .vc-ui-toggle {
 }
 body.vc-ui-hidden .vc-topbar .vc-ui-toggle:hover { opacity: 1; }
 
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 480px) {
   .vc-topbar {
     top: 10px; right: 10px;
     gap: 6px;

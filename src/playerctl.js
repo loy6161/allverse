@@ -131,7 +131,7 @@ function injectStyle() {
       font-variant-numeric: tabular-nums;
     }
 
-    @media (max-width: 640px) {
+    @media (max-width: 640px), (max-height: 480px) {
       /* スマホでは画面が狭いので出しっぱなしにしない。
          右上の ⚙ を押したときだけ、操作キーより上に開く（積み方は style.css の変数） */
       .vc-video-panel {

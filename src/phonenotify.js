@@ -50,7 +50,7 @@ function injectStyle() {
   overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
   -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 480px) {
   .vc-toast-wrap { top: 8px; right: 8px; left: 8px; width: auto; }
 }
 `;

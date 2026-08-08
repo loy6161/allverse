@@ -118,7 +118,7 @@ function injectStyle() {
     body.${THEATER_CLASS} .vc-theater-hint { display: block; }
     body.${HIDDEN_CLASS} .vc-theater-hint { display: none; }
 
-    @media (max-width: 640px) {
+    @media (max-width: 640px), (max-height: 480px) {
       /* 右上の隅。アバター変更ボタンはこの真下に並ぶ（style.css 側で位置指定） */
       .vc-ui-toggle { top: 12px; right: 12px; width: 34px; height: 34px; }
       .vc-name-toggle { top: 12px; right: 54px; width: 34px; height: 34px; }

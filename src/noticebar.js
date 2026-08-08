@@ -70,7 +70,7 @@ function injectStyle() {
   font-weight: bold;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 480px) {
   .vc-notice { top: 48px; width: calc(100vw - 16px); font-size: 12px; padding: 8px 11px; }
   .vc-notice-emergency { top: 0; width: 100vw; }
 }
@@ -161,8 +161,15 @@ export function initNoticeBar() {
     }
 
     // 幅が足りない（狭い画面）。従来どおり画面中央・HUDの下へ
+    // ⚠ 2026-08-08 loyさん実機指摘「横画面の時に運営メッセージでボタンが見えない」。
+    //   HUD（左上の会場名）の下にしか逃がしていなかったため、横画面（幅より高さが
+    //   小さい端末）では右上のツールバー(.vc-topbar)の方が幅が広く、中央寄せの
+    //   お知らせ帯（最大680px）がツールバーの下に潜り込んで見た目上ボタンを覆っていた。
+    //   HUDとツールバーの両方より下へ逃がす
     const hud = document.getElementById('hud');
-    const b = hud ? hud.getBoundingClientRect().bottom : 60;
+    const hudBottom = hud ? hud.getBoundingClientRect().bottom : 60;
+    const barBottom = bar ? bar.getBoundingClientRect().bottom : 0;
+    const b = Math.max(hudBottom, barBottom);
     el.style.top = `${Math.max(16, Math.round(b) + 10)}px`;
     el.style.left = '50%';
     el.style.width = '';

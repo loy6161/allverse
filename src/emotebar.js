@@ -173,7 +173,7 @@ function injectStyle() {
       }
     }
 
-    @media (max-width: 640px) {
+    @media (max-width: 640px), (max-height: 480px) {
       /* スマホは右下のチャットアイコンの真上から縦一列に伸ばす。
          幅をチャットアイコン(56px)と揃えて、右端で一直線に並ぶようにしている */
       .vc-emote-bar {
@@ -197,7 +197,15 @@ function injectStyle() {
          画面の半分近くを占領し📱スマホのボタンとも重なっていた。
          .vc-emote-toggle という丸ボタン1個だけを常時出し、押している間だけ本体を開く */
       .vc-emote-bar { display: none; }
-      body.vc-m-emote-open .vc-emote-bar { display: flex; }
+      /* ⚠ 2026-08-08 loyさん実機指摘「エモート開いた後に閉じるボタンがエモートに重なってる」。
+         開いたバー(.vc-emote-bar)と閉じるボタン(.vc-emote-toggle)がどちらも
+         bottom: var(--m-emote-bottom) の同じ位置を基準にしていたため、バーの下端と
+         閉じるボタンが完全に重なっていた。開いている間はトグル1個分＋余白ぶん
+         バーを上へ持ち上げて、トグル（閉じるボタン）をバーの下に露出させる */
+      body.vc-m-emote-open .vc-emote-bar {
+        display: flex;
+        bottom: calc(var(--m-emote-bottom) + var(--m-emote-toggle) + var(--m-gap));
+      }
 
       .vc-emote-toggle {
         display: flex;

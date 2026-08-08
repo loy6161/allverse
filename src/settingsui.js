@@ -65,7 +65,7 @@ function injectStyle() {
 }
 
 /* スマホでは、開くボタンが入っている段より上に出す（他のパネルと同じ積み方） */
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 480px) {
   .vc-set-panel {
     right: 12px; left: 12px; width: auto;
     top: auto;

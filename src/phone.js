@@ -185,7 +185,7 @@ function injectStyle() {
    （!important が勝つ）、押しても何も起きないように見える（2026-08-08 レビュー指摘） */
 .vc-log-minus { color: #ff9aa2; }
 
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 480px) {
   .vc-phone { right: 10px; left: 10px; width: auto; bottom: 84px; height: auto; max-height: 72vh; }
   /* ⚠ 位置は固定pxではなく --m-phone-bottom（style.css）を使う。
      畳んだエモートのすぐ上に積む計算式なので、エモート側の高さを変えても

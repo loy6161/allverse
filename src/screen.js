@@ -40,16 +40,28 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     width: place.width || 14,
     height: place.height || 7,
   };
+  /**
+   * 映像の層を入れる箱。
+   * ⚠ **最初から必ず作って、中に入れたまま動かさない**（2026-08-08 修正）。
+   *   二眼に切り替えるときに層を別の親へ移していたら、iframe が付け直しになって
+   *   **再生が止まり、音も消えた**（loyさん「二眼にすると再生が止まって音もミュートになる」）。
+   *   DOMの引っ越しは iframe の読み込みやり直しになるので、二度とやらない。
+   *   普段はこの箱が画面いっぱい・変換なしなので、あってもなくても同じ見え方になる
+   */
+  const stage = document.createElement('div');
+  stage.className = 'vc-screen-layer vc-vr-stage';
+  stage.style.cssText = 'position:fixed;inset:0;z-index:1;pointer-events:none;';
+  document.body.appendChild(stage);
+
   const cssRenderer = new CSS3DRenderer();
   cssRenderer.setSize(window.innerWidth, window.innerHeight);
   const layer = cssRenderer.domElement;
-  layer.style.position = 'fixed';
+  layer.style.position = 'absolute';
   layer.style.inset = '0';
-  layer.style.zIndex = '1'; // WebGLキャンバス(z=2)より後ろ
   layer.style.pointerEvents = 'none';
   // ⚠ 二眼モードは画面のものを全部隠すが、**この層だけは残す**（映像がここにある）
   layer.className = 'vc-screen-layer';
-  document.body.appendChild(layer);
+  stage.appendChild(layer);
 
   const cssScene = new THREE.Scene();
 
@@ -473,21 +485,13 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
   let cssRendererR = null;
   let holderR = null;
   let iframeR = null;
-  /** 左右の層をまとめて入れる箱（回すのはこれ1つだけ） */
-  let stage = null;
 
   function buildRightEye() {
     if (cssRendererR) return;
-    stage = document.createElement('div');
-    stage.className = 'vc-screen-layer vc-vr-stage';
-    stage.style.cssText = 'position:fixed;z-index:1;pointer-events:none;overflow:hidden;';
-    document.body.appendChild(stage);
-    stage.appendChild(layer); // 左目の層を箱の中へ移す（抜けるときに戻す）
     cssRendererR = new CSS3DRenderer();
     const l = cssRendererR.domElement;
-    l.style.position = 'fixed';
+    l.style.position = 'absolute';
     l.style.inset = '0';
-    l.style.zIndex = '1';
     l.style.pointerEvents = 'none';
     l.className = 'vc-screen-layer';
     stage.appendChild(l);
@@ -527,19 +531,16 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     }
     cssRendererR = null;
     holderR = null;
-    // 左目の層を元の場所（body直下・画面いっぱい）へ戻してから箱を片付ける
-    if (stage) {
-      document.body.appendChild(layer);
-      layer.style.position = 'fixed';
-      layer.style.inset = '0';
-      layer.style.left = '';
-      layer.style.top = '';
-      layer.style.width = '';
-      layer.style.height = '';
-      layer.style.transform = '';
-      stage.remove();
-      stage = null;
-    }
+    // ⚠ 層は**動かさない**（動かすと iframe が付け直しになって再生が止まる）。
+    //   箱と層の大きさ・位置だけ、画面いっぱいの普段の姿へ戻す
+    stage.style.width = '';
+    stage.style.height = '';
+    stage.style.inset = '0';
+    layer.style.left = '';
+    layer.style.top = '';
+    layer.style.width = '';
+    layer.style.height = '';
+    layer.style.transform = '';
   }
 
   /**
@@ -592,7 +593,7 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
     //   層ごとに left と rotate を当てると、回転の原点が層の中心になるので
     //   右目の層が画面の外へ飛んでいく（実測: 画面幅375なのに left=399 の位置に出た）。
     //   箱を回して、その中に左右を並べるのが正しい
-    if (!stage) return;
+    stage.style.inset = 'auto';
     stage.style.width = `${view.w}px`;
     stage.style.height = `${view.h}px`;
     for (const [rend, cam, offset] of [[cssRenderer, camL, 0], [cssRendererR, camR, halfW]]) {

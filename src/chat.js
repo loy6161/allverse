@@ -172,7 +172,7 @@ function injectStyle() {
 
     /* スマホは掴んで動かせないので、箱にせず従来どおりの積み方に戻す。
        積み方は style.css / mobile.js の --m-* 変数が決めている（2026-08-03） */
-    @media (max-width: 640px) {
+    @media (max-width: 640px), (max-height: 480px) {
       #chat-root {
         /* auto にすると、中身が幅100%を親に問い合わせて潰れる（実測252px）。
            スマホは横いっぱいで使うので、明示的に指定する */

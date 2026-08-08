@@ -59,7 +59,7 @@ function injectStyle() {
 .vc-selfview.vc-hidden { display: none; }
 /* UI非表示（Hキー）に追従する */
 body.vc-ui-hidden .vc-selfview { display: none; }
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 480px) {
   /* スマホは画面が狭く、動かせない（floatwinが無効）ので小さめに置く */
   .vc-selfview { width: 120px; height: 120px; left: 10px; bottom: 150px; }
   /* ⚠ チャットログ／動画のコントロールを開くとこの位置に重なる
