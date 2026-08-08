@@ -518,11 +518,80 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
    *   さらに**画質を落とす**よう頼む（同じ配信を2本受けるので、帯域を少しでも減らす）。
    *   ⚠ 画質の指定は聞いてもらえないことがある。効かなくても害はない
    */
-  // ⚠ 右目に映像を出す関数はここにあったが、消した（2026-08-08）。
-  //   同じ動画で2つ目のプレイヤーを作ると YouTube が1つ目を巻き戻すため、
-  //   置いておいても使えない。理由は上の setStereo のコメントに残してある。
+  /**
+   * 右目にも映像を出す（2026-08-08・**別ドメインで解決**）。
+   *
+   * ⚠⚠ 左目と**同じ www.youtube.com** で2本目を作ると、YouTube が1本目を止めて
+   *   巻き戻す（実測: 42秒 → 2.3秒）。ところが **www.youtube-nocookie.com** にすると
+   *   別のプレイヤーとして扱われ、**1本目はそのまま再生を続ける**（実測で確認）。
+   *   同じ中身が配信されている別ドメインなので、映像は同じものが出る。
+   * ⚠ 右目は**必ず消音**（音が二重に鳴ると聞けたものではない）。
+   * ⚠ 再生位置は厳密には揃わない（別プレイヤーなので）。平面のスクリーンなので
+   *   多少ずれても立体視は壊れないが、気になるようなら右目を消す判断もある
+   */
+  function mountRightIframe() {
+    if (!currentVideoId || !holderR) return;
+    if (iframeR) holderR.removeChild(iframeR);
+    iframeR = document.createElement('iframe');
+    iframeR.style.width = '100%';
+    iframeR.style.height = '100%';
+    iframeR.style.border = '0';
+    const origin = encodeURIComponent(location.origin);
+    iframeR.src = `https://www.youtube-nocookie.com/embed/${currentVideoId}`
+      + `?autoplay=1&mute=1&playsinline=1&rel=0&controls=0&cc_load_policy=0`
+      + `&enablejsapi=1&origin=${origin}`;
+    iframeR.allow = 'autoplay; encrypted-media';
+    iframeR.addEventListener('load', () => {
+      commandR('mute', []);
+      syncRightTime();
+      // 読み込み直後は左目もまだ動き出したところなので、少し置いてもう一度合わせる
+      setTimeout(syncRightTime, 2500);
+    });
+    holderR.appendChild(iframeR);
+    startRightSync();
+  }
+
+  /** 右目のプレイヤーへ命令を送る */
+  function commandR(func, args = []) {
+    if (!iframeR || !iframeR.contentWindow) return;
+    try {
+      iframeR.contentWindow.postMessage(
+        JSON.stringify({ event: 'command', func, args }),
+        'https://www.youtube-nocookie.com',
+      );
+    } catch { /* 届かなくても映像は出る */ }
+  }
+
+  /**
+   * 右目の再生位置を左目に合わせる。
+   * ⚠ 左右は**別のプレイヤー**なので、放っておくと数十秒ずれる
+   *   （2026-08-08 実測: 左は木のシーン、右は花畑のシーンになった）。
+   *   平面のスクリーンとはいえ、左右で違う絵が出ると見ていられない
+   * ⚠ ライブ配信では位置合わせが効かない（常に最前）。そのときは害もない
+   */
+  function syncRightTime() {
+    if (!iframeR || !hasState || !state) return;
+    const t = Number(state.currentTime);
+    if (!Number.isFinite(t)) return;
+    commandR('seekTo', [t, true]);
+    commandR('playVideo', []);
+  }
+
+  /** ずれ直しを回し続ける（重い処理ではないので、ゆっくりで十分） */
+  const RIGHT_SYNC_MS = 10000;
+  let rightSyncTimer = null;
+  function startRightSync() {
+    if (rightSyncTimer) clearInterval(rightSyncTimer);
+    rightSyncTimer = setInterval(syncRightTime, RIGHT_SYNC_MS);
+  }
+
+  function stopRightSync() {
+    if (rightSyncTimer) clearInterval(rightSyncTimer);
+    rightSyncTimer = null;
+  }
 
   function clearRightEye() {
+    stopRightSync();
     if (iframeR && holderR) holderR.removeChild(iframeR);
     iframeR = null;
     if (cssRendererR && cssRendererR.domElement.parentNode) {
@@ -550,30 +619,31 @@ export function initLiveScreen(camera, scene, place = {}, opts = {}) {
    */
   function syncRightEye() {
     if (!stereoOn) return;
-    // ⚠ 右目に映像は置かない（上の setStereo の理由）。残っていれば片付けるだけ
-    if (iframeR && holderR) holderR.removeChild(iframeR);
-    iframeR = null;
+    if (!currentVideoId) {
+      if (iframeR && holderR) holderR.removeChild(iframeR);
+      iframeR = null;
+      return;
+    }
+    mountRightIframe();
   }
 
   /**
    * 二眼モードの入り／切り。呼ぶのは vrview 側。
    *
-   * ⚠⚠ **右目には映像を出せない**（2026-08-08・切り分けて確定）。
-   *   同じ動画で2つ目のプレイヤーを作ると、**YouTubeが1つ目を止めて巻き戻す**。
-   *   実測の手順と結果:
-   *     ・二眼にすると左目の再生位置が 42秒 → 2.3秒 に戻った
-   *     ・`setStereo(true)` だけでは戻らない（2本目がまだDOMに出ていないため）
-   *     ・二眼の描画（updateStereo）が回り始めると戻る
-   *       ＝ 2本目が本当に読み込まれた瞬間に、1本目が巻き戻る
-   *   → 右目は**黒い板**にする。これはこちらの都合ではなく、YouTubeの仕組みの限界。
-   *   ⚠ 両目に映像を出したいなら、**配信を自前で持つ**しかない（video要素にできれば
-   *     WebGLのテクスチャとして両目に描ける）。ALLVERSE parallel の方向と繋がる話
+   * ★ 右目にも映像を出す。**別ドメイン（youtube-nocookie）を使う**のが鍵。
+   *   切り分けの記録:
+   *     ・同じ www.youtube.com で2本目を作ると、左目が 42秒 → 2.3秒 に巻き戻された
+   *     ・`setStereo(true)` だけでは戻らない（2本目がまだDOMに出ていないため）。
+   *       二眼の描画が回って**2本目が本当に読み込まれた瞬間**に戻る
+   *     ・全画面／層のstyle変更／層のサイズ変更／描画1回、はいずれも無関係だった
+   *     ・**www.youtube-nocookie.com にしたら巻き戻らなくなった**（別プレイヤー扱い）
    */
   function setStereo(on) {
     if (on === stereoOn) return;
     stereoOn = Boolean(on);
     if (stereoOn) {
       buildRightEye();
+      mountRightIframe();
     } else {
       clearRightEye();
       // 片目に戻すので、レイヤーの大きさも戻す
